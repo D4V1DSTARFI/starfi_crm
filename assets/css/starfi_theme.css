@@ -1,0 +1,320 @@
+/* STARFI 2.0 - Theme Variables & Core Styles */
+@font-face {
+    font-family: 'Gotham';
+    src: url('../../docs/identidad_visual/tipografia/GothamMedium.ttf') format('truetype');
+    font-weight: 500;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Gotham';
+    src: url('../../docs/identidad_visual/tipografia/GothamBookItalic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+:root {
+    /* Paleta Oficial STARFI 2.0 */
+    --starfi-primary: #E85B14;
+    /* Naranja Brillante */
+    --starfi-primary-hover: #CC4A0E;
+    /* Oscurecimiento para hover */
+
+    --starfi-dark: #37414A;
+    /* Gris Pizarra Oscuro */
+    --starfi-danger: #CC2919;
+    /* Rojo Carmesí */
+    --starfi-secondary-hover: #D23D26;
+    /* Rojo Terracota */
+
+    --starfi-bg-light: #f4f6f9;
+    /* Background General */
+    --starfi-text-main: #212529;
+    --starfi-text-inverse: #ffffff;
+
+    /* Tipografía */
+    --font-heading: 'Gotham', sans-serif;
+    --font-body: 'Gotham', sans-serif;
+}
+
+body {
+    font-family: var(--font-body);
+    background-color: var(--starfi-bg-light);
+    color: var(--starfi-text-main);
+}
+
+/* Detectar cuando el contenido está anidado en un iframe */
+body.in-iframe {
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: white !important;
+}
+
+.in-iframe-hide {
+    display: none !important;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.brand-font,
+.modal-title {
+    font-family: var(--font-heading) !important;
+}
+
+/* Iconography Hover Rule */
+.icon-starfi-hover {
+    color: var(--starfi-dark);
+    transition: color 0.2s ease-in-out;
+    cursor: pointer;
+}
+
+.icon-starfi-hover:hover {
+    color: var(--starfi-primary) !important;
+}
+
+/* Helpers */
+.text-starfi-primary {
+    color: var(--starfi-primary) !important;
+}
+
+.text-starfi-dark {
+    color: var(--starfi-dark) !important;
+}
+
+.text-starfi-danger {
+    color: var(--starfi-danger) !important;
+}
+
+.border-starfi-danger {
+    border-color: var(--starfi-danger) !important;
+}
+
+.border-starfi-primary {
+    border-color: var(--starfi-primary) !important;
+}
+
+.border-starfi-dark {
+    border-color: var(--starfi-dark) !important;
+}
+
+.bg-starfi-primary {
+    background-color: var(--starfi-primary) !important;
+    color: var(--starfi-text-inverse) !important;
+}
+
+.bg-starfi-dark {
+    background-color: var(--starfi-dark) !important;
+    color: var(--starfi-text-inverse) !important;
+}
+
+/* Base Buttons */
+.btn-starfi-primary {
+    background-color: var(--starfi-primary);
+    color: var(--starfi-text-inverse);
+    border: none;
+    border-radius: 6px;
+    transition: all 0.2s ease-in-out;
+}
+
+.btn-starfi-primary:hover {
+    background-color: var(--starfi-primary-hover);
+    color: var(--starfi-text-inverse);
+}
+
+.btn-outline-starfi-primary {
+    color: var(--starfi-primary);
+    border-color: var(--starfi-primary);
+    transition: all 0.2s ease-in-out;
+}
+
+.btn-outline-starfi-primary:hover {
+    color: var(--starfi-text-inverse);
+    background-color: var(--starfi-primary);
+    border-color: var(--starfi-primary);
+}
+
+.btn-starfi-danger {
+    background-color: var(--starfi-danger);
+    color: var(--starfi-text-inverse);
+    border: none;
+    border-radius: 6px;
+}
+
+.btn-starfi-danger:hover {
+    background-color: var(--starfi-secondary-hover);
+    color: var(--starfi-text-inverse);
+}
+
+.btn-outline-starfi-danger {
+    color: var(--starfi-danger);
+    border-color: var(--starfi-danger);
+    transition: all 0.2s ease-in-out;
+}
+
+.btn-outline-starfi-danger:hover {
+    color: var(--starfi-text-inverse);
+    background-color: var(--starfi-danger);
+    border-color: var(--starfi-danger);
+}
+
+.btn-starfi-dark {
+    background-color: var(--starfi-dark);
+    color: var(--starfi-text-inverse);
+    border: none;
+    border-radius: 6px;
+}
+
+.btn-starfi-dark:hover {
+    background-color: #2a3239;
+    /* Más oscuro para hover */
+    color: var(--starfi-text-inverse);
+}
+
+.btn-outline-starfi-dark {
+    color: var(--starfi-dark);
+    border-color: var(--starfi-dark);
+    transition: all 0.2s ease-in-out;
+}
+
+.btn-outline-starfi-dark:hover {
+    color: var(--starfi-text-inverse);
+    background-color: var(--starfi-dark);
+    border-color: var(--starfi-dark);
+}
+
+/* Premium Gradient Navbar */
+.navbar-starfi {
+    background: linear-gradient(135deg, #0c0704 0%, #bd341c 50%, #b83a13 100%) !important;
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1) !important;
+    padding: 0.5rem 1rem;
+    z-index: 1030 !important;
+    overflow: visible !important;
+}
+
+.navbar-starfi .dropdown-menu {
+    z-index: 1031 !important;
+    overflow: visible !important;
+}
+
+/* User Profile Pill Style */
+.user-profile-pill {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50px;
+    padding: 2px 15px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    color: white !important;
+    text-decoration: none !important;
+}
+
+.user-profile-pill:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Active Link Underline (Premium) */
+.nav-link.active-premium {
+    position: relative;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+}
+
+.nav-link.active-premium::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: 15%;
+    width: 70%;
+    height: 3px;
+    background-color: #ffffff;
+    border-radius: 10px;
+}
+
+/* Modern Glass Buttons */
+.btn-glass {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    backdrop-filter: blur(5px);
+}
+
+.btn-glass:hover,
+.btn-glass:focus {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #ffffff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Nav Tabs Overrides */
+.nav-tabs .nav-link {
+    color: var(--starfi-dark);
+    font-weight: 500;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--starfi-primary-hover);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--starfi-primary) !important;
+    font-weight: bold;
+}
+
+/* SweetAlert2 Force Top Level Over Modals */
+.swal2-container {
+    z-index: 999999 !important;
+}
+
+/* DataTables & Pagination Overrides */
+.page-item.active .page-link {
+    background-color: var(--starfi-primary) !important;
+    border-color: var(--starfi-primary) !important;
+    color: white !important;
+}
+
+.page-link {
+    color: var(--starfi-dark);
+}
+
+.page-link:hover {
+    color: var(--starfi-primary);
+}
+
+/* Custom Dual-Tone SVGs for Module Cards */
+.starfi-icon {
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.svg-dark {
+    transition: stroke 0.3s ease, fill 0.3s ease;
+}
+
+.svg-accent {
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    transform-origin: center;
+}
+
+.module-card:hover .starfi-icon {
+    transform: scale(1.1) translateY(-5px);
+}
+
+.module-card:hover .svg-dark {
+    stroke: var(--starfi-primary);
+}
+
+.module-card:hover .svg-accent {
+    transform: scale(1.15);
+}
