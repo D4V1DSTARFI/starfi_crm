@@ -92,6 +92,9 @@ if ($res_sedes) {
                 </h2>
                 <div>
                     <?php if ($agente['rol'] === 'MASTER'): ?>
+                    <button class="btn btn-success shadow-sm me-2" id="btnEmitirOrden">
+                        <i class="fa-solid fa-file-invoice me-2"></i>Emitir Orden de Cobro
+                    </button>
                     <button class="btn btn-primary bg-primary border-primary me-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTarifasSede">
                         <i class="fa-solid fa-file-invoice-dollar me-2"></i>Configurar Tarifas
                     </button>
@@ -383,6 +386,60 @@ if ($res_sedes) {
                 $.post('back_waba_billing.php', data, function(res) {
                     if (res.status === 'success') {
                         Swal.fire('Guardado', res.message, 'success');
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }, 'json');
+            });
+
+            // Lógica Emitir Orden
+            $('#btnEmitirOrden').click(function() {
+                let id_sede = $('#filterSede').val();
+                if (!id_sede || id_sede == '0') {
+                    Swal.fire('Atención', 'Por favor seleccione una sede específica en los filtros antes de emitir una orden.', 'warning');
+                    return;
+                }
+
+                Swal.fire({ title: 'Analizando deudas...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+
+                $.post('back_waba_billing.php', { action: 'check_last_order', id_sede: id_sede }, function(res) {
+                    Swal.close();
+                    if (res.status === 'success') {
+                        let msg = `Se generará una orden desde el <b>${res.fecha_desde}</b> hasta el <b>${res.fecha_hasta}</b>.`;
+                        let btnText = 'Sí, Generar Orden';
+                        let actionToCall = 'generate_order';
+                        
+                        if (res.tiene_pendiente) {
+                            msg = `Existe una orden PENDIENTE del periodo anterior (ID #${res.pendiente_id}).<br><br>¿Deseas <b>fusionar</b> esa deuda en esta nueva orden global hasta el <b>${res.fecha_hasta}</b>?`;
+                            btnText = 'Sí, Fusionar y Generar';
+                        }
+
+                        Swal.fire({
+                            title: 'Emisión de Orden de Cobro',
+                            html: msg,
+                            icon: 'question',
+                            showCancelButton: true,
+                            confirmButtonText: btnText,
+                            cancelButtonText: 'Cancelar'
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                Swal.fire({ title: 'Procesando...', text: 'Consultando a Meta y emitiendo factura', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                                
+                                $.post('back_waba_billing.php', { 
+                                    action: actionToCall, 
+                                    id_sede: id_sede, 
+                                    fecha_desde: res.fecha_desde, 
+                                    fecha_hasta: res.fecha_hasta,
+                                    orden_pendiente_id: res.pendiente_id
+                                }, function(orderRes) {
+                                    if (orderRes.status === 'success') {
+                                        Swal.fire('Orden Creada', `Monto Total: ${orderRes.monto_total} USD<br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`, 'success');
+                                    } else {
+                                        Swal.fire('Error', orderRes.message, 'error');
+                                    }
+                                }, 'json');
+                            }
+                        });
                     } else {
                         Swal.fire('Error', res.message, 'error');
                     }
