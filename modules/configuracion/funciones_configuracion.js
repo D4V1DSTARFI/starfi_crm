@@ -268,6 +268,7 @@ function loadSedes() {
                                 <div class="d-flex border-top">
                                     <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarSede(${s.id})"><i class="fa-solid fa-pen"></i></button>
                                     <button class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="WhatsApp API" onclick="configurarAPI(${s.id})"><i class="fa-brands fa-whatsapp"></i></button>
+                                    <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Plantillas Meta" onclick="gestionarPlantillas(${s.id})"><i class="fa-solid fa-layer-group"></i></button>
                                     <button class="btn btn-link text-warning text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Generar Token Externo" onclick="generarToken(${s.id})"><i class="fa-solid fa-key"></i></button>
                                     <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarSede(${s.id})"><i class="fa-solid fa-trash"></i></button>
                                 </div>
@@ -365,6 +366,152 @@ function generarToken(id_sede) {
                                    <div style="background:#f4f4f4; padding:10px; border-radius:5px; word-break: break-all; font-family: monospace; font-weight:bold;">${res.token}</div>`,
                             icon: 'success'
                         });
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }
+            });
+        }
+    });
+}
+
+function gestionarPlantillas(id_sede) {
+    $('#plantillas_id_sede').val(id_sede);
+    mostrarListaPlantillas();
+    
+    var modalEl = document.getElementById('modalPlantillasMeta');
+    var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    myModal.show();
+    
+    cargarPlantillasDeMeta();
+}
+
+function mostrarCrearPlantilla() {
+    $('#vistaListaPlantillas').hide();
+    $('#vistaCrearPlantilla').fadeIn();
+    $('#new_template_name').val('');
+    $('#new_template_body').val('');
+}
+
+function mostrarListaPlantillas() {
+    $('#vistaCrearPlantilla').hide();
+    $('#vistaListaPlantillas').fadeIn();
+}
+
+function cargarPlantillasDeMeta() {
+    let id_sede = $('#plantillas_id_sede').val();
+    let tbody = $('#tablaPlantillasMeta tbody');
+    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando plantillas desde Meta...</td></tr>');
+    
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'get_meta_templates', id_sede: id_sede },
+        success: function(res) {
+            if(res.status === 'success') {
+                tbody.empty();
+                if(!res.data || res.data.length === 0) {
+                    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted">No hay plantillas registradas en Meta.</td></tr>');
+                    return;
+                }
+                
+                res.data.forEach(t => {
+                    let badgeColor = 'bg-secondary';
+                    if (t.status === 'APPROVED') badgeColor = 'bg-success';
+                    else if (t.status === 'REJECTED') badgeColor = 'bg-danger';
+                    else if (t.status === 'PENDING') badgeColor = 'bg-warning text-dark';
+                    
+                    let html = `
+                        <tr>
+                            <td class="fw-bold text-dark">${t.name}</td>
+                            <td><span class="badge bg-light text-dark border">${t.category}</span></td>
+                            <td>${t.language}</td>
+                            <td><span class="badge ${badgeColor}">${t.status}</span></td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline-danger" onclick="eliminarPlantilla('${t.name}')" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.append(html);
+                });
+            } else {
+                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${res.message}</td></tr>`);
+            }
+        },
+        error: function() {
+            tbody.html('<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Error de conexión al cargar plantillas.</td></tr>');
+        }
+    });
+}
+
+function guardarNuevaPlantilla() {
+    let id_sede = $('#plantillas_id_sede').val();
+    let name = $('#new_template_name').val().trim();
+    let category = $('#new_template_category').val();
+    let lang = $('#new_template_lang').val();
+    let body = $('#new_template_body').val().trim();
+    
+    if(!name || !body) {
+        Swal.fire('Atención', 'El nombre y el cuerpo son obligatorios', 'warning');
+        return;
+    }
+    
+    Swal.fire({
+        title: 'Creando Plantilla',
+        html: 'Enviando a revisión a Meta...',
+        allowOutsideClick: false,
+        didOpen: () => { Swal.showLoading(); }
+    });
+    
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { 
+            action: 'create_meta_template', 
+            id_sede: id_sede,
+            name: name,
+            category: category,
+            language: lang,
+            body: body
+        },
+        success: function(res) {
+            if(res.status === 'success') {
+                Swal.fire('¡Éxito!', 'Plantilla creada y enviada a revisión.', 'success');
+                mostrarListaPlantillas();
+                cargarPlantillasDeMeta();
+            } else {
+                Swal.fire('Error', res.message, 'error');
+            }
+        }
+    });
+}
+
+function eliminarPlantilla(name) {
+    Swal.fire({
+        title: '¿Eliminar Plantilla?',
+        text: `Se eliminará la plantilla '${name}' de Meta de forma permanente.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Sí, eliminar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            let id_sede = $('#plantillas_id_sede').val();
+            
+            Swal.fire({ title: 'Eliminando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+            
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'delete_meta_template', id_sede: id_sede, name: name },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        Swal.fire('Eliminada', 'Plantilla eliminada de Meta.', 'success');
+                        cargarPlantillasDeMeta();
                     } else {
                         Swal.fire('Error', res.message, 'error');
                     }
