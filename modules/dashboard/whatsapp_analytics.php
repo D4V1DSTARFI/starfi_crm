@@ -279,11 +279,16 @@ if ($res_sedes) {
             let mktCount = 0;
             let utilCount = 0;
             
-            // Analizar Costos (conversation_analytics)
+            // Analizar Costos (pricing_analytics y conversation_analytics)
+            if(data.pricing_analytics && data.pricing_analytics.data) {
+                let pricing = data.pricing_analytics.data[0]?.data_points || [];
+                pricing.forEach(dp => {
+                    if (dp.cost) totalCost += parseFloat(dp.cost);
+                });
+            }
             if(data.conversation_analytics && data.conversation_analytics.data) {
                 let convs = data.conversation_analytics.data[0]?.data_points || [];
                 convs.forEach(dp => {
-                    if (dp.cost) totalCost += parseFloat(dp.cost);
                     if (dp.conversation_category === 'MARKETING' && dp.conversation) mktCount += parseInt(dp.conversation);
                     if (dp.conversation_category === 'UTILITY' && dp.conversation) utilCount += parseInt(dp.conversation);
                 });

@@ -34,12 +34,14 @@ if ($action === 'get_analytics') {
             exit;
         }
 
+        $fecha_hasta_mas_uno = date('Y-m-d', strtotime($fecha_hasta . ' +1 day'));
+
         // Meta Endpoint base (costos, mensajes y lista de plantillas)
-        $fields = "conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates";
+        $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY),conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates";
         
         // Si hay una plantilla seleccionada, solicitamos también sus métricas
         if (!empty($id_plantilla)) {
-            $fields .= ",template_analytics.start($fecha_desde).end($fecha_hasta).granularity(DAILY).template_ids(['$id_plantilla'])";
+            $fields .= ",template_analytics.start($fecha_desde).end($fecha_hasta_mas_uno).granularity(DAILY).template_ids(['$id_plantilla'])";
         }
         
         $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
