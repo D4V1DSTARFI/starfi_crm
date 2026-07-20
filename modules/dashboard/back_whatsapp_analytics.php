@@ -34,8 +34,8 @@ if ($action === 'get_analytics') {
 
         // Meta Endpoint para conversation_analytics
         // Usamos el endpoint para ver analytics a nivel de cuenta o número de teléfono. 
-        // Para WABA: /<WABA_ID>?fields=conversation_analytics.start(X).end(Y)
-        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=conversation_analytics.start($start_ts).end($end_ts)";
+        // Agregamos granularity(DAILY) según los requerimientos de la API
+        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY)";
         
         $curl = curl_init();
         curl_setopt($curl, CURLOPT_URL, $url);
