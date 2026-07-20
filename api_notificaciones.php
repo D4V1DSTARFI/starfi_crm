@@ -119,8 +119,15 @@ if ($raw_json && empty($_POST)) {
     }
     
     // Si envían dinámicamente la plantilla a usar y sus datos
-    if (isset($raw_json['template_name'])) $_POST['template_name'] = $raw_json['template_name'];
-    if (isset($raw_json['template_params'])) $_POST['template_params'] = $raw_json['template_params'];
+    if (isset($raw_json['template_name'])) {
+        $_POST['template_name'] = $raw_json['template_name'];
+    } elseif (isset($raw_json['plantilla'])) {
+        $_POST['template_name'] = $raw_json['plantilla'];
+    }
+    
+    if (isset($raw_json['template_params'])) {
+        $_POST['template_params'] = $raw_json['template_params'];
+    }
 }
 
 $telefono = $_POST['telefono'] ?? '';
