@@ -130,6 +130,13 @@ if ($res_sedes) {
                 <p class="text-muted fw-bold">Obteniendo métricas de Meta Business...</p>
             </div>
 
+            <!-- Placeholder State -->
+            <div id="placeholderData" class="text-center py-5">
+                <i class="fa-solid fa-chart-bar fa-3x text-muted mb-3"></i>
+                <h4 class="text-secondary fw-bold">Seleccione sus filtros</h4>
+                <p class="text-muted">Por favor, elija una sede y una plantilla, luego presione "Actualizar" para cargar las métricas.</p>
+            </div>
+
             <!-- Dashboard Content -->
             <div id="contentData" style="display: none;">
                 
@@ -225,13 +232,44 @@ if ($res_sedes) {
         let metaChartInstance = null;
 
         $(document).ready(function() {
-            $('#btnApplyFilters').click(function() { loadAnalytics(); });
-            loadAnalytics();
+            $('#btnApplyFilters').click(function() { 
+                if ($('#filterSede').val() == '0' || $('#filterPlantilla').val() === '') {
+                    Swal.fire('Atención', 'Por favor seleccione una Sede y una Plantilla antes de actualizar.', 'warning');
+                    return;
+                }
+                loadAnalytics(); 
+            });
+            fetchTemplatesOnLoad();
         });
 
         let templatesLoaded = false;
 
+        function fetchTemplatesOnLoad() {
+            let id_sede = $('#filterSede').val();
+            let desde = $('#filterFechaDesde').val();
+            let hasta = $('#filterFechaHasta').val();
+
+            $.ajax({
+                url: 'back_whatsapp_analytics.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
+                            let select = $('#filterPlantilla');
+                            res.data.message_templates.data.forEach(tpl => {
+                                select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
+                            });
+                            templatesLoaded = true;
+                        }
+                    }
+                }
+            });
+        }
+
         function loadAnalytics() {
+            $('#placeholderData').hide();
             let id_sede = $('#filterSede').val();
             let desde = $('#filterFechaDesde').val();
             let hasta = $('#filterFechaHasta').val();
