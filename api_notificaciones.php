@@ -142,7 +142,7 @@ $verify_token = $_POST['verify_token'] ?? $_POST['token_tienda'] ?? '';
 $meta_token_val = $_POST['meta_token_val'] ?? '';
 $fecha_compra = date('Y-m-d');
 $hora_actual = date('H:i:s');
-$signo = 'USD'; // o EUR según configuración
+$signo = $_POST['moneda'] ?? 'USD'; // Recibir dinámicamente desde el cliente, o usar USD por defecto
 
 if(empty($telefono)) {
     echo json_encode(['status' => 'error', 'message' => 'No phone number provided']);
@@ -366,6 +366,10 @@ $mensaje_payload = [
     ]
 ];
 $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
+
+// -- DEBUG PAYLOAD --
+file_put_contents(__DIR__ . '/test_meta_payload.log', date('Y-m-d H:i:s') . "\n" . json_encode($mensaje_payload, JSON_PRETTY_PRINT) . "\n", FILE_APPEND);
+// -------------------
 
 // INICIAMOS EL CURL
 $curl = curl_init();

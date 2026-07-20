@@ -1,0 +1,17 @@
+Array
+(
+    [telefono] => 584141234567
+    [verify_token] => token
+    [template_name] => plantilla
+    [tipo_evento] => COMPRA
+    [nombre_cliente] => Julian
+    [fecha_compra] => 2026-07-20
+    [monto_total] => 100 + IVA
+    [asesor_ventas] => Julian
+    [nombre_empresa] => Empresa
+    [correlativo] => 12
+    [telefono_asesor] => 04141234567
+    [moneda] => EUR
+    [id_sede] => 25
+)
+
