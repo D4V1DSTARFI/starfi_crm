@@ -268,6 +268,7 @@ function loadSedes() {
                                 <div class="d-flex border-top">
                                     <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarSede(${s.id})"><i class="fa-solid fa-pen"></i></button>
                                     <button class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="WhatsApp API" onclick="configurarAPI(${s.id})"><i class="fa-brands fa-whatsapp"></i></button>
+                                    <button class="btn btn-link text-warning text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Generar Token Externo" onclick="generarToken(${s.id})"><i class="fa-solid fa-key"></i></button>
                                     <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarSede(${s.id})"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
@@ -331,6 +332,39 @@ function borrarSede(id) {
                     if(res.status === 'success') {
                         Swal.fire('Eliminado', res.message, 'success');
                         loadSedes();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }
+            });
+        }
+    });
+}
+
+function generarToken(id_sede) {
+    Swal.fire({
+        title: '¿Generar nuevo Token?',
+        text: "Esto creará un token de acceso de 64 caracteres para integraciones externas con esta Sede. Si ya existía uno, quedará invalidado.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#E85B14',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Sí, generar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'generate_api_token', id_sede: id_sede },
+                success: function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire({
+                            title: 'Token Generado',
+                            html: `<p>Usa este token en el sistema POS o ERP del cliente:</p>
+                                   <div style="background:#f4f4f4; padding:10px; border-radius:5px; word-break: break-all; font-family: monospace; font-weight:bold;">${res.token}</div>`,
+                            icon: 'success'
+                        });
                     } else {
                         Swal.fire('Error', res.message, 'error');
                     }

@@ -8,6 +8,32 @@ $action = $_POST['action'] ?? '';
 $id_empresa = 1; // Prototipo: asumiendo empresa 1
 
 switch ($action) {
+    case 'generate_api_token':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        if ($id_sede <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Sede no válida']);
+            exit;
+        }
+        
+        try {
+            $token = bin2hex(random_bytes(32)); // 64 caracteres
+            $stmt = $con->prepare("UPDATE sedes SET api_token = ? WHERE id = ? AND id_empresa = ?");
+            if ($stmt) {
+                $stmt->bind_param("sii", $token, $id_sede, $id_empresa);
+                if ($stmt->execute()) {
+                    echo json_encode(['status' => 'success', 'token' => $token]);
+                } else {
+                    echo json_encode(['status' => 'error', 'message' => 'Error al guardar el token']);
+                }
+                $stmt->close();
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error en la base de datos']);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['status' => 'error', 'message' => 'Error al generar el token']);
+        }
+        break;
+
     // --- GESTIÓN DE SEDES ---
     case 'load_sedes':
         $query = "

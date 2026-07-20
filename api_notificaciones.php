@@ -45,6 +45,50 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     exit;
 }
 
+// Endpoint para que Starfi 2.0 (o sistemas externos) auto-completen sus credenciales leyendo desde el CRM
+if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
+    require_once __DIR__ . '/config/database.php';
+    $con = getDbConnection();
+    
+    $token = $_POST['token'] ?? '';
+    if (empty($token)) {
+        echo json_encode(['status' => 'error', 'message' => 'Token no proporcionado']);
+        exit;
+    }
+    
+    $stmt = $con->prepare("
+        SELECT l.meta_telefono_id as instance_id, l.numero_telefono as phone_number, s.nombre_sede, l.estado
+        FROM sedes s
+        LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id
+        WHERE s.api_token = ? 
+        LIMIT 1
+    ");
+    if ($stmt) {
+        $stmt->bind_param("s", $token);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $data = $res->fetch_assoc();
+            echo json_encode([
+                'status' => 'success', 
+                'data' => [
+                    'instance_id' => $data['instance_id'] ?? '',
+                    'phone_number' => $data['phone_number'] ?? '',
+                    'nombre_sede' => $data['nombre_sede'],
+                    'estado_linea' => $data['estado'] ?? 'SIN_LINEA'
+                ]
+            ]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Token inválido o Sede no encontrada']);
+        }
+        $stmt->close();
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Error de base de datos']);
+    }
+    $con->close();
+    exit;
+}
+
 // Recibir datos POST
 $telefono = $_POST['telefono'] ?? '';
 $telefono_asesor = $_POST['telefono_asesor'] ?? '0000000000';
@@ -90,7 +134,7 @@ $row_active = null; // Guardará la info de la línea activa en caso de fallback
 
 // 1. Intentar buscar por token de verificación único (60-64 caracteres)
 if (!empty($verify_token)) {
-    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.webhook_verify_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
+    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
     if ($stmt_token) {
         $stmt_token->bind_param("s", $verify_token);
         $stmt_token->execute();
