@@ -236,6 +236,53 @@ if ($action === 'generate_order') {
         }
         
         $con->commit();
+        
+        // ==========================================
+        // PASO 3: MOTOR DE NOTIFICACIÓN
+        // ==========================================
+        $notificado = 0;
+        $res_s = $con->query("SELECT gerente_nombre, gerente_telefono, gerente_email, pref_not_cobro, nombre_sede FROM sedes WHERE id = $id_sede");
+        if ($res_s && $s = $res_s->fetch_assoc()) {
+            $msg = "Hola {$s['gerente_nombre']}, se ha generado el estado de cuenta de *{$s['nombre_sede']}* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $costo_final USD\n\nPor favor coordine el pago correspondiente.";
+            
+            // WHATSAPP
+            if (in_array($s['pref_not_cobro'], ['WHATSAPP', 'AMBOS']) && !empty($s['gerente_telefono'])) {
+                $res_l = $con->query("SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+                if ($res_l && $l = $res_l->fetch_assoc()) {
+                    $url_w = 'https://graph.facebook.com/v23.0/'.$l['meta_app_id'].'/messages';
+                    $payload_w = [
+                        'messaging_product' => 'whatsapp',
+                        'to' => $s['gerente_telefono'],
+                        'type' => 'text',
+                        'text' => ['body' => $msg]
+                    ];
+                    $ch_w = curl_init($url_w);
+                    curl_setopt($ch_w, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $l['meta_token'], "Content-Type: application/json"]);
+                    curl_setopt($ch_w, CURLOPT_POST, true);
+                    curl_setopt($ch_w, CURLOPT_POSTFIELDS, json_encode($payload_w));
+                    curl_setopt($ch_w, CURLOPT_RETURNTRANSFER, true);
+                    $resp_w = curl_exec($ch_w);
+                    curl_close($ch_w);
+                    
+                    $resp_dec = json_decode($resp_w, true);
+                    if (isset($resp_dec['messages'])) {
+                        $notificado = 1;
+                    }
+                }
+            }
+            
+            // EMAIL
+            if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
+                $headers = "From: facturacion@starfi.com\r\nContent-Type: text/plain; charset=UTF-8\r\n";
+                @mail($s['gerente_email'], "Estado de Cuenta WhatsApp API - {$s['nombre_sede']}", $msg, $headers);
+                $notificado = 1;
+            }
+            
+            if ($notificado == 1) {
+                $con->query("UPDATE waba_ordenes_cobro SET notificacion_enviada = 1 WHERE id = $new_order_id");
+            }
+        }
+        
         echo json_encode(['status' => 'success', 'id_orden' => $new_order_id, 'monto_total' => round($costo_final, 2)]);
     } catch (Exception $e) {
         $con->rollback();
