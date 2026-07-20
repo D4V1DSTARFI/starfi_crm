@@ -150,7 +150,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     if ($telefono_receptor_id) {
         $query_api = "SELECT l.id, s.id_empresa FROM lineas_whatsapp l 
                       LEFT JOIN sedes s ON l.id_sede = s.id 
-                      WHERE l.meta_app_id = '$telefono_receptor_id' AND l.estado_conexion = 'CONECTADO' LIMIT 1";
+                      WHERE l.meta_telefono_id = '$telefono_receptor_id' AND l.estado_conexion = 'CONECTADO' LIMIT 1";
         $result_api = mysqli_query($con, $query_api);
         if ($result_api && mysqli_num_rows($result_api) > 0) {
             $row = mysqli_fetch_assoc($result_api);
@@ -249,7 +249,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     
     // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS
     if ($id_linea) {
-        $q_token = mysqli_query($con, "SELECT meta_app_id, meta_token, id_sede FROM lineas_whatsapp WHERE id = $id_linea");
+        $q_token = mysqli_query($con, "SELECT meta_telefono_id, meta_token, id_sede FROM lineas_whatsapp WHERE id = $id_linea");
         if($q_token && mysqli_num_rows($q_token) > 0) {
             $linea_info = mysqli_fetch_assoc($q_token);
             
@@ -266,7 +266,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje_bot, $id_conversacion);
                 
                 $id_sede = $linea_info['id_sede'] ?? null;
-                enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
+                enviar_contactos_asesores($linea_info['meta_telefono_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
             }
         }
     }
@@ -277,7 +277,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
  */
 function enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje_texto, $id_conversacion) {
     
-    $telefonoID = $linea_info['meta_app_id'];
+    $telefonoID = $linea_info['meta_telefono_id'];
     $token_seguro = $linea_info['meta_token'];
     
     if(empty($telefonoID) || empty($token_seguro)) {
