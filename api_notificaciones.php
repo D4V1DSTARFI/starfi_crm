@@ -152,40 +152,30 @@ if(empty($telefono)) {
 // Limpiar el teléfono para la API (quitar cualquier caracter que no sea número)
 $telefono = preg_replace('/[^0-9]/', '', $telefono);
 
-// --- CAPA DE FORMATEO Y VALIDACIÓN ---
+// --- CAPA DE FORMATEO (ASUMIENDO VENEZUELA POR DEFECTO) ---
 
-// 1. Si empieza con 0 y tiene 11 dígitos (ej: 0414 1234567 -> 58 414 1234567)
+// 1. Si el usuario ingresó un número local con el 0 por delante (ej: 04141234567) -> remover el 0
 if (strlen($telefono) == 11 && strpos($telefono, '0') === 0) {
-    $telefono = '58' . substr($telefono, 1);
-} 
-// 2. Si empieza con 4 y tiene 10 dígitos (ej: 414 1234567 -> 58 414 1234567)
-elseif (strlen($telefono) == 10 && preg_match('/^4[0-9]{2}/', $telefono)) {
-    $telefono = '58' . $telefono;
+    $telefono = substr($telefono, 1);
 }
-// 3. Si el usuario ingresó +58 0414... (13 dígitos, ej: 58 0 414 1234567) -> remover el 0
+// 2. Si el usuario ingresó 580414... (13 dígitos con el 0) -> remover el 0 y dejar el 58
 elseif (strlen($telefono) == 13 && strpos($telefono, '580') === 0) {
     $telefono = '58' . substr($telefono, 3);
 }
 
+// 3. Si el número tiene 10 dígitos (ej: 4141234567), le inyectamos el 58 asumiendo Venezuela
+if (strlen($telefono) == 10) {
+    $telefono = '58' . $telefono;
+}
+
 // Validación estricta final antes de contactar a Meta
-if (strpos($telefono, '58') === 0) {
-    // Si es de Venezuela (58) debe tener exactamente 12 dígitos y operadoras válidas
-    if (strlen($telefono) !== 12 || !preg_match('/^58(414|424|412|416|426|2[0-9]{2})[0-9]{7}$/', $telefono)) {
-        echo json_encode([
-            'status' => 'error', 
-            'message' => "El número de teléfono venezolano provisto es inválido o tiene dígitos extra/faltantes. Número detectado: $telefono."
-        ]);
-        exit;
-    }
-} else {
-    // Para números internacionales, una validación genérica de longitud de Meta (10 a 15)
-    if (strlen($telefono) < 10 || strlen($telefono) > 15) {
-        echo json_encode([
-            'status' => 'error', 
-            'message' => "Número de teléfono internacional inválido. Longitud fuera de los límites permitidos. Número detectado: $telefono."
-        ]);
-        exit;
-    }
+// Ya formateado, TODO número debe tener exactamente 12 dígitos y operadora válida de Vzla
+if (strlen($telefono) !== 12 || !preg_match('/^58(414|424|412|416|426|2[0-9]{2})[0-9]{7}$/', $telefono)) {
+    echo json_encode([
+        'status' => 'error', 
+        'message' => "El número de teléfono provisto es inválido. El sistema asume formato venezolano y requiere un formato celular/local válido. Número procesado: $telefono."
+    ]);
+    exit;
 }
 
 // Configuración de la base de datos de CRM
