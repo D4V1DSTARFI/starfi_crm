@@ -110,6 +110,7 @@ switch ($action) {
             $con->query("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = $agente_id, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = $conversacion_id AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
         }
         
+        $id_mensaje_meta = null;
         // -------------------------------------------------------------
         // INICIO BLOQUE ENVÍO A WHATSAPP CLOUD API
         // -------------------------------------------------------------
@@ -152,7 +153,11 @@ switch ($action) {
             curl_setopt($ch, CURLOPT_TIMEOUT, 5); // Timeout rápido para no bloquear
             $response = curl_exec($ch);
             curl_close($ch);
-            // NOTA: Para un sistema en producción robusto, se debe evaluar $response y registrar si hubo error de Meta.
+            
+            $res_meta = json_decode($response, true);
+            if (isset($res_meta['messages'][0]['id'])) {
+                $id_mensaje_meta = $res_meta['messages'][0]['id'];
+            }
         }
         // -------------------------------------------------------------
         // FIN BLOQUE ENVÍO
@@ -161,10 +166,10 @@ switch ($action) {
         $origen = 'AGENTE';
         $tipo = 'TEXTO';
         
-        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido) VALUES (?, ?, ?, ?)";
+        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido, id_mensaje_meta) VALUES (?, ?, ?, ?, ?)";
         $stmt = $con->prepare($query);
         if ($stmt) {
-            $stmt->bind_param("isss", $conversacion_id, $tipo, $origen, $contenido);
+            $stmt->bind_param("issss", $conversacion_id, $tipo, $origen, $contenido, $id_mensaje_meta);
             if ($stmt->execute()) {
                 echo json_encode(['status' => 'success', 'message_id' => $stmt->insert_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {

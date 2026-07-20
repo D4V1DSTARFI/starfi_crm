@@ -74,6 +74,8 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     // NUEVO: Extraer el número de teléfono que recibió el mensaje (telefono_meta)
     $telefonoReceptorID = $value['metadata']['phone_number_id'] ?? null;
     $displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
+    
+    file_put_contents(__DIR__ . "/logs/debug_phone_id.txt", "Received phone_number_id: " . $telefonoReceptorID . "\n", FILE_APPEND);
 
     // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído)
     if (isset($value['statuses'][0])) {
@@ -227,7 +229,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     $id_conversacion = null;
     $estado_conv = null;
     $nueva_conversacion = false;
-    $query_conv = "SELECT id, estado FROM conversaciones WHERE id_cliente = $id_cliente AND estado NOT IN ('CERRADO', 'RESUELTO') LIMIT 1";
+    $query_conv = "SELECT id, estado FROM conversaciones WHERE id_cliente = $id_cliente AND id_linea = $id_linea AND estado NOT IN ('CERRADO', 'RESUELTO') LIMIT 1";
     $res_conv = mysqli_query($con, $query_conv);
     if ($res_conv && mysqli_num_rows($res_conv) > 0) {
         $row_conv = mysqli_fetch_assoc($res_conv);

@@ -72,7 +72,7 @@ $(document).ready(function() {
     });
 
     $('#btnSaveAPI').on('click', function() {
-        if (!$('#api_sede').val() || !$('#api_descripcion').val() || !$('#api_telefono').val() || !$('#api_telefono_meta').val() || !$('#api_token_meta').val()) {
+        if (!$('#api_sede').val() || !$('#api_descripcion').val() || !$('#api_telefono').val() || !$('#api_telefono_meta').val()) {
             Swal.fire('Error', 'Complete los campos obligatorios (*)', 'warning'); return;
         }
 
@@ -83,7 +83,6 @@ $(document).ready(function() {
             descripcion: $('#api_descripcion').val().trim(),
             telefono: $('#api_telefono').val().trim(),
             telefono_meta: $('#api_telefono_meta').val().trim(),
-            token_meta: $('#api_token_meta').val().trim(),
             id_negocio: $('#api_id_negocio').val().trim(),
             estado: $('#api_estado').val(),
             limite_solicitudes: $('#api_limite').val().trim(),
@@ -368,7 +367,7 @@ function configurarAPI(id_sede) {
                             $('#id_api').val(a.id);
                             $('#api_descripcion').val(a.descripcion);
                             $('#api_telefono').val(a.numero_telefono);
-                            $('#api_telefono_meta').val(a.meta_telefono_id);
+                            $('#api_telefono_meta').val(a.meta_app_id);
                             $('#api_token_meta').val(a.meta_token);
                             $('#api_id_negocio').val(a.id_negocio);
                             $('#api_estado').val(a.estado);
@@ -432,14 +431,14 @@ function loadAPIs() {
                         <div class="col-md-4">
                             <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
                                 <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
-                                    <h6 class="mb-0 fw-bold text-muted"><i class="fa-solid fa-circle text-secondary me-2" style="font-size: 0.6rem;"></i>${a.descripcion || 'Sin descripción'}</h6>
+                                    <h6 class="mb-0 fw-bold text-muted"><i class="fa-solid fa-circle ${a.estado === 'ACTIVO' ? 'text-success' : 'text-secondary'} me-2" style="font-size: 0.6rem;"></i>${a.descripcion || 'Sin descripción'}</h6>
                                     ${badge}
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3 text-muted" style="font-size: 0.85rem;"><i class="fa-solid fa-building me-2"></i>${a.nombre_sede || 'Sin sede asignada'}</div>
                                     
                                     <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-phone me-2" style="width: 16px;"></i><strong class="text-dark">Teléfono:</strong><br>${a.numero_telefono || 'N/A'}</div>
-                                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-hashtag me-2" style="width: 16px;"></i><strong class="text-dark">ID Meta:</strong><br>${a.meta_telefono_id || 'N/A'}</div>
+                                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-hashtag me-2" style="width: 16px;"></i><strong class="text-dark">ID Meta:</strong><br>${a.meta_app_id || 'N/A'}</div>
                                     <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-key me-2" style="width: 16px;"></i><strong class="text-dark">Metadatos del token:</strong><br><span style="font-family: monospace; font-size: 0.8rem;">${token_trunc}</span></div>
                                     <div class="mb-3 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-briefcase me-2" style="width: 16px;"></i><strong class="text-dark">ID de WABA:</strong><br>${a.id_negocio || 'N/A'}</div>
                                     
@@ -480,7 +479,7 @@ function editarAPI(id_api) {
                 $('#api_sede').val(a.id_sede);
                 $('#api_descripcion').val(a.descripcion);
                 $('#api_telefono').val(a.numero_telefono);
-                $('#api_telefono_meta').val(a.meta_telefono_id);
+                $('#api_telefono_meta').val(a.meta_app_id);
                 $('#api_token_meta').val(a.meta_token);
                 $('#api_id_negocio').val(a.id_negocio);
                 $('#api_estado').val(a.estado);
@@ -773,3 +772,114 @@ function enviarNotificacionPrueba() {
         }
     });
 }
+
+// --- NUEVAS FUNCIONES DE INTEGRACIÓN DIRECTA CON META GRAPH ---
+function toggleApiExperience() {
+    const isNew = document.getElementById('api_type_new').checked;
+    
+    if (isNew) {
+        $('#waba_container').hide();
+        $('#select_number_container').hide();
+        $('#phone_id_readonly_container').hide();
+        $('#api_telefono').prop('readonly', false);
+        $('#api_telefono_meta').prop('readonly', false).val('');
+        
+        $('#phone_id_manual_container').show();
+        $('#pin_container').show();
+    } else {
+        $('#waba_container').show();
+        $('#phone_id_manual_container').hide();
+        $('#pin_container').hide();
+        
+        $('#phone_id_readonly_container').show();
+        $('#api_telefono').prop('readonly', true);
+        $('#api_telefono_meta').prop('readonly', true);
+    }
+}
+
+function fetchMetaApis() {
+    const waba_id = $('#api_id_negocio').val();
+    
+    if(!waba_id) {
+        Swal.fire('Atención', 'Debes ingresar el WABA ID de Meta', 'warning');
+        return;
+    }
+    
+    $('#btnFetchMeta').html('<i class="fa-solid fa-spinner fa-spin"></i>').prop('disabled', true);
+    
+    $.post('back_configuracion.php', {
+        action: 'fetch_meta_apis',
+        waba_id: waba_id
+    }, function(res) {
+        $('#btnFetchMeta').html('<i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas').prop('disabled', false);
+        
+        if(res.status === 'success' && res.data && res.data.length > 0) {
+            let options = '<option value="">Seleccione un número de la lista...</option>';
+            window.lastFetchedMetaNumbers = res.data; // save to global for autofill
+            
+            res.data.forEach(num => {
+                options += `<option value="${num.id}">${num.display_phone_number} (${num.quality_rating})</option>`;
+            });
+            
+            $('#api_select_meta').html(options);
+            $('#select_number_container').slideDown();
+            Swal.fire('¡Éxito!', `Se encontraron ${res.data.length} líneas en Meta.`, 'success');
+        } else {
+            Swal.fire('Error', res.message || 'No se encontraron números o el token es inválido.', 'error');
+        }
+    }, 'json').fail(function() {
+        $('#btnFetchMeta').html('<i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas').prop('disabled', false);
+        Swal.fire('Error', 'Error de conexión con el servidor local.', 'error');
+    });
+}
+
+function autoFillMetaNumber() {
+    const selectedId = $('#api_select_meta').val();
+    if(!selectedId || !window.lastFetchedMetaNumbers) return;
+    
+    const numData = window.lastFetchedMetaNumbers.find(n => n.id === selectedId);
+    if(numData) {
+        $('#api_telefono').val(numData.display_phone_number);
+        $('#api_telefono_meta').val(numData.id);
+    }
+}
+
+function registerMetaPhone() {
+    const phone_id = $('#api_telefono_meta_manual').val();
+    const pin = $('#api_pin_meta').val();
+    
+    if(!phone_id || !pin) {
+        Swal.fire('Atención', 'Completa el Phone ID y el PIN de 6 dígitos.', 'warning');
+        return;
+    }
+    
+    if(pin.length !== 6) {
+        Swal.fire('Atención', 'El PIN debe ser exactamente de 6 dígitos numéricos.', 'warning');
+        return;
+    }
+    
+    $('#btnRegisterMeta').html('<i class="fa-solid fa-spinner fa-spin"></i>').prop('disabled', true);
+    
+    $.post('back_configuracion.php', {
+        action: 'register_meta_phone',
+        phone_id: phone_id,
+        pin: pin
+    }, function(res) {
+        $('#btnRegisterMeta').html('<i class="fa-solid fa-check-circle me-1"></i> Dar Alta').prop('disabled', false);
+        
+        if(res.status === 'success') {
+            Swal.fire('¡Dado de Alta!', res.message, 'success');
+            // Auto fill the local CRM registration fields below
+            $('#api_telefono_meta').val(phone_id);
+            // Switch to existing mode since it's now registered
+            $('#api_type_existing').prop('checked', true);
+            toggleApiExperience();
+        } else {
+            Swal.fire('Error', res.message || 'Error al registrar el número en Meta.', 'error');
+        }
+    }, 'json').fail(function() {
+        $('#btnRegisterMeta').html('<i class="fa-solid fa-check-circle me-1"></i> Dar Alta').prop('disabled', false);
+        Swal.fire('Error', 'Error de conexión con el servidor local.', 'error');
+    });
+}
+

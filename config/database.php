@@ -15,6 +15,11 @@ if (!defined('APP_ENV')) {
     define('APP_ENV', 'PRODUCCION');
 }
 
+// Token Global de Meta (System User Token)
+if (!defined('META_GLOBAL_TOKEN')) {
+    define('META_GLOBAL_TOKEN', 'EAAqFHnS2hXABSCZBdOi3Yn3ZAvCL2bpWFpazU1v23jp6tJZBfappUkx6WD1uAcbGAY9gvI5aMiwUQTkhk9gBMaUPoOgyk7YX6LNrNE5BQ7cFxZC8k6HuUJ2M8p5ZBZBhGzTQ5yZBeZAhEp1qZAUglVxVsWOpeJRANwaRW8mlV604TbYYulZCqKMkE3OnAwuiZCen9oqxAZDZD');
+}
+
 function getDbConnection($tipo = 'core')
 {
     global $env;

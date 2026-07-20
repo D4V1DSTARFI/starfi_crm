@@ -222,7 +222,74 @@ switch ($action) {
         }
         break;
 
-    // --- GESTIÓN DE APIS ---
+    // --- GESTIÓN DE APIS (META GRAPH) ---
+    case 'fetch_meta_apis':
+        $waba_id = trim($_POST['waba_id'] ?? '');
+        $token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
+
+        if (empty($waba_id) || empty($token)) {
+            echo json_encode(['status' => 'error', 'message' => 'El WABA ID es obligatorio, y el Token Global debe estar configurado en database.php.']);
+            exit;
+        }
+
+        $url = "https://graph.facebook.com/v19.0/{$waba_id}/phone_numbers";
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Authorization: Bearer {$token}"
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        $res_data = json_decode($response, true);
+        
+        if ($http_code == 200 && isset($res_data['data'])) {
+            echo json_encode(['status' => 'success', 'data' => $res_data['data']]);
+        } else {
+            $error_msg = isset($res_data['error']['message']) ? $res_data['error']['message'] : 'Error desconocido al conectar con Meta.';
+            echo json_encode(['status' => 'error', 'message' => $error_msg, 'debug' => $res_data]);
+        }
+        break;
+
+    case 'register_meta_phone':
+        $phone_id = trim($_POST['phone_id'] ?? '');
+        $token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
+        $pin = trim($_POST['pin'] ?? '');
+
+        if (empty($phone_id) || empty($token) || empty($pin)) {
+            echo json_encode(['status' => 'error', 'message' => 'El Phone ID y PIN son obligatorios, y el Token Global debe estar configurado.']);
+            exit;
+        }
+
+        $url = "https://graph.facebook.com/v19.0/{$phone_id}/register";
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+            'messaging_product' => 'whatsapp',
+            'pin' => $pin
+        ]));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Authorization: Bearer {$token}"
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        $res_data = json_decode($response, true);
+        
+        if ($http_code == 200 && isset($res_data['success']) && $res_data['success'] == true) {
+            echo json_encode(['status' => 'success', 'message' => 'El número de teléfono ha sido registrado y dado de alta exitosamente en Meta.']);
+        } else {
+            $error_msg = isset($res_data['error']['message']) ? $res_data['error']['message'] : 'Error desconocido al registrar en Meta.';
+            echo json_encode(['status' => 'error', 'message' => $error_msg, 'debug' => $res_data]);
+        }
+        break;
+
+    // --- GESTIÓN DE APIS (LOCALES) ---
     case 'load_apis':
         $query = "
             SELECT l.*, s.nombre_sede 
@@ -244,21 +311,22 @@ switch ($action) {
         $id_api = $_POST['id_api'] ?? '';
         $id_sede = $_POST['id_sede'] ?? '';
         $descripcion = $_POST['descripcion'] ?? '';
-        $telefono = $_POST['telefono'] ?? '';
+        // Limpiamos el número para que solo contenga dígitos (ej: "584242787672")
+        $telefono = preg_replace('/[^0-9]/', '', $_POST['telefono'] ?? '');
         $telefono_meta = $_POST['telefono_meta'] ?? '';
-        $token_meta = $_POST['token_meta'] ?? '';
+        $token_meta = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
         $id_negocio = $_POST['id_negocio'] ?? '';
         $estado = $_POST['estado'] ?? 'ACTIVO';
         $limite_solicitudes = $_POST['limite_solicitudes'] ?: 1000;
         $observaciones = $_POST['observaciones'] ?? '';
 
         if (empty($id_sede) || empty($descripcion) || empty($telefono) || empty($telefono_meta) || empty($token_meta)) {
-            echo json_encode(['status' => 'error', 'message' => 'Campos obligatorios incompletos.']);
+            echo json_encode(['status' => 'error', 'message' => 'Campos obligatorios incompletos o el Token Global no está configurado en database.php.']);
             exit;
         }
 
         if (empty($id_api)) {
-            $stmt = $con->prepare("INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_telefono_id, meta_token, id_negocio, estado_conexion, limite_solicitudes, observaciones, estado) VALUES (?, ?, ?, ?, ?, ?, 'CONECTADO', ?, ?, ?)");
+            $stmt = $con->prepare("INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, id_negocio, estado_conexion, limite_solicitudes, observaciones, estado) VALUES (?, ?, ?, ?, ?, ?, 'CONECTADO', ?, ?, ?)");
             $stmt->bind_param("isssssiss", $id_sede, $descripcion, $telefono, $telefono_meta, $token_meta, $id_negocio, $limite_solicitudes, $observaciones, $estado);
             
             if ($stmt->execute()) {
@@ -292,7 +360,7 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Error al registrar API.']);
             }
         } else {
-            $stmt = $con->prepare("UPDATE lineas_whatsapp SET id_sede=?, descripcion=?, numero_telefono=?, meta_telefono_id=?, meta_token=?, id_negocio=?, limite_solicitudes=?, observaciones=?, estado=? WHERE id=?");
+            $stmt = $con->prepare("UPDATE lineas_whatsapp SET id_sede=?, descripcion=?, numero_telefono=?, meta_app_id=?, meta_token=?, id_negocio=?, limite_solicitudes=?, observaciones=?, estado=? WHERE id=?");
             $stmt->bind_param("isssssissi", $id_sede, $descripcion, $telefono, $telefono_meta, $token_meta, $id_negocio, $limite_solicitudes, $observaciones, $estado, $id_api);
             
             if ($stmt->execute()) {
@@ -369,28 +437,47 @@ switch ($action) {
             exit;
         }
 
-        $stmt = $con->prepare("SELECT meta_telefono_id, meta_token FROM lineas_whatsapp WHERE id = ?");
+        $stmt = $con->prepare("SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id = ?");
         $stmt->bind_param("i", $id_api);
         $stmt->execute();
         $res = $stmt->get_result();
         
         if ($res && $row = $res->fetch_assoc()) {
-            $telefono_meta = $row['meta_telefono_id'];
-            $token_meta = $row['meta_token'];
+            $telefono_meta = $row['meta_app_id'];
+            $token_meta = $row['meta_token'] ?? (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
             
-            // Simulación de envío (Aquí iría el cURL a Meta)
             $url = "https://graph.facebook.com/v19.0/{$telefono_meta}/messages";
             $data = [
                 'messaging_product' => 'whatsapp',
-                'recipient_type' => 'individual',
                 'to' => str_replace(['+', ' '], '', $numero),
-                'type' => 'text',
-                'text' => ['body' => $mensaje]
+                'type' => 'template',
+                'template' => [
+                    'name' => 'hello_world',
+                    'language' => ['code' => 'en_US']
+                ]
             ];
             
-            /* (Mock de respuesta positiva ya que no es el objetivo ejecutar cURL real ahora sin validaciones) */
-            // Esto es solo para la demostración de la prueba de API
-            echo json_encode(['status' => 'success', 'message' => 'Mensaje de prueba enviado exitosamente a ' . $numero]);
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                "Authorization: Bearer {$token_meta}",
+                "Content-Type: application/json"
+            ]);
+            
+            $response = curl_exec($ch);
+            $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            $res_data = json_decode($response, true);
+            
+            if ($http_code == 200 || $http_code == 201) {
+                echo json_encode(['status' => 'success', 'message' => 'Plantilla de prueba enviada exitosamente.']);
+            } else {
+                $err = $res_data['error']['message'] ?? 'Error desconocido';
+                echo json_encode(['status' => 'error', 'message' => 'Error de Meta: ' . $err]);
+            }
         } else {
             echo json_encode(['status' => 'error', 'message' => 'API no encontrada.']);
         }

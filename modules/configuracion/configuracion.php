@@ -610,48 +610,100 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="modal-body p-4">
                     <form id="formAPI">
                         <input type="hidden" id="id_api" name="id_api">
+                        
+                        <!-- Toggle de Experiencia -->
+                        <div class="row g-3 mb-3 pb-3 border-bottom" id="api_experience_toggle">
+                            <div class="col-12">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;"><i class="fa-solid fa-circle-question me-1"></i> ¿Estado de la línea en Meta?</label>
+                                <div class="d-flex gap-4 mt-2 p-3 rounded" style="background-color: #F8FAFC; border: 1px dashed #CBD5E1;">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="api_type_meta" id="api_type_existing" value="existing" checked onchange="toggleApiExperience()">
+                                        <label class="form-check-label fw-bold text-dark cursor-pointer" for="api_type_existing">
+                                            Ya registrado y verificado
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="api_type_meta" id="api_type_new" value="new" onchange="toggleApiExperience()">
+                                        <label class="form-check-label fw-bold text-dark cursor-pointer" for="api_type_new">
+                                            Nuevo (Requiere PIN/Alta)
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sección de Autenticación Meta -->
+                        <div class="row g-3 mb-3 p-3 rounded" style="background-color: #F0FDF4; border: 1px solid #BBF7D0;">
+                            <div class="col-12" id="waba_container">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">WABA ID (WhatsApp Business Account ID)</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control form-control-premium" id="api_id_negocio" name="api_id_negocio" placeholder="1111084364465615">
+                                    <button class="btn btn-success fw-bold" type="button" id="btnFetchMeta" onclick="fetchMetaApis()" style="border-radius: 0 10px 10px 0;"><i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas</button>
+                                </div>
+                                <small class="text-muted d-block mt-1">Requerido para autocompletar números.</small>
+                            </div>
+                            
+                            <div class="col-12 d-none">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Token de Meta (Permanente) <span class="text-danger">*</span></label>
+                                <textarea class="form-control form-control-premium" id="api_token_meta" name="api_token_meta" rows="2" placeholder="EAAxxxxxxxxxx..." style="font-family: monospace;"></textarea>
+                            </div>
+
+                            <!-- Campos exclusivos para Alta (Número Nuevo) -->
+                            <div class="col-md-6" id="phone_id_manual_container" style="display: none;">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">ID de Teléfono (Meta) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control form-control-premium" id="api_telefono_meta_manual" placeholder="123456789012345">
+                            </div>
+                            <div class="col-md-6" id="pin_container" style="display: none;">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">PIN de 6 dígitos <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control form-control-premium" id="api_pin_meta" placeholder="123456" maxlength="6">
+                                    <button class="btn btn-primary fw-bold" type="button" id="btnRegisterMeta" onclick="registerMetaPhone()" style="border-radius: 0 10px 10px 0;"><i class="fa-solid fa-check-circle me-1"></i> Dar Alta</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Selección de Número Encontrado (Para Existing) -->
+                        <div class="row g-3 mb-3" id="select_number_container" style="display: none;">
+                            <div class="col-12">
+                                <label class="form-label text-success fw-bold text-uppercase" style="font-size: 0.75rem;"><i class="fa-solid fa-list-check me-1"></i> Números Encontrados en Meta</label>
+                                <select class="form-select form-select-premium border-success" id="api_select_meta" onchange="autoFillMetaNumber()">
+                                    <option value="">Seleccione un número de la lista...</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Campos Finales de Registro Local CRM -->
                         <div class="row g-3">
                             <div class="col-12">
                                 <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Sede Asignada <span class="text-danger">*</span></label>
                                 <select class="form-select form-select-premium" id="api_sede" name="api_sede" required>
                                     <option value="">Seleccione una sede...</option>
-                                    <!-- Se llenará con JS -->
                                 </select>
                             </div>
                             
                             <div class="col-12">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Descripción <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control form-control-premium" id="api_descripcion" name="api_descripcion" required placeholder="Ej: API Principal - Sede Central">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Descripción Interna <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control form-control-premium" id="api_descripcion" name="api_descripcion" required placeholder="Ej: Ventas - Sede Central">
                             </div>
                             
                             <div class="col-md-6">
                                 <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Teléfono de Negocio <span class="text-danger">*</span></label>
                                 <input type="text" class="form-control form-control-premium" id="api_telefono" name="api_telefono" required placeholder="+58 412 1234567">
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6" id="phone_id_readonly_container">
                                 <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">ID de Teléfono (Meta) <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control form-control-premium" id="api_telefono_meta" name="api_telefono_meta" required placeholder="123456789012345">
-                            </div>
-                            
-                            <div class="col-12">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Token de Meta (Compartido) <span class="text-danger">*</span></label>
-                                <textarea class="form-control form-control-premium" id="api_token_meta" name="api_token_meta" rows="3" required placeholder="EAAxxxxxxxxxx..." style="font-family: monospace;"></textarea>
-                            </div>
-                            
-                            <div class="col-12">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">WABA ID (WhatsApp Business Account ID)</label>
-                                <input type="text" class="form-control form-control-premium" id="api_id_negocio" name="api_id_negocio" placeholder="1111084364465615">
+                                <input type="text" class="form-control form-control-premium bg-light" id="api_telefono_meta" name="api_telefono_meta" required readonly placeholder="Se autocompleta">
                             </div>
                             
                             <div class="col-md-6">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Estado</label>
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Estado Operativo</label>
                                 <select class="form-select form-select-premium" id="api_estado" name="api_estado">
-                                    <option value="ACTIVO">Activo</option>
+                                    <option value="ACTIVO">Activo (Conectado)</option>
                                     <option value="INACTIVO">Inactivo</option>
                                 </select>
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Límite de Solicitudes</label>
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Límite Solicitudes (Opcional)</label>
                                 <input type="number" class="form-control form-control-premium" id="api_limite" name="api_limite" placeholder="1000">
                             </div>
                             
