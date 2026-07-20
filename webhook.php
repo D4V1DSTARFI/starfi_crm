@@ -286,6 +286,10 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             // Marcar el mensaje entrante como leído (doble check azul)
             marcar_como_leido_api($linea_info, $id_mensaje_meta);
             
+            /*
+             * NOTA: Las respuestas automáticas genéricas fueron deshabilitadas.
+             * Más adelante se configurará una respuesta personalizada por cada sede.
+             *
             if ($estado_conv === 'BOT_RECOPILANDO') {
                 // Pedir nombre si es la primera vez
                 if ($nueva_conversacion) {
@@ -301,6 +305,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 $id_sede = $linea_info['id_sede'] ?? null;
                 enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
             }
+            */
         }
     }
 }
