@@ -90,9 +90,16 @@ if ($res_sedes) {
                 <h2 class="mb-0" style="font-size: 1.5rem; font-weight: 700; color: #1c1e21;">
                     <i class="fa-brands fa-whatsapp text-success me-2"></i> Rendimiento de la API
                 </h2>
-                <a href="dashboard.php" class="btn btn-outline-secondary bg-white text-dark border-secondary">
-                    <i class="fa-solid fa-chart-line"></i> Dashboard General
-                </a>
+                <div>
+                    <?php if ($agente['rol'] === 'MASTER'): ?>
+                    <button class="btn btn-primary bg-primary border-primary me-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTarifasSede">
+                        <i class="fa-solid fa-file-invoice-dollar me-2"></i>Configurar Tarifas
+                    </button>
+                    <?php endif; ?>
+                    <a href="dashboard.php" class="btn btn-outline-secondary bg-white text-dark border-secondary shadow-sm">
+                        <i class="fa-solid fa-chart-line"></i> Dashboard General
+                    </a>
+                </div>
             </div>
 
             <!-- Filtros -->
@@ -235,12 +242,86 @@ if ($res_sedes) {
         </div>
     </main>
 
+    <!-- Modal Tarifas -->
+    <div class="modal fade" id="modalTarifasSede" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-store me-2"></i>Configuración de Facturación por Sede</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Seleccione Sede a Configurar:</label>
+                        <select id="selConfigSede" class="form-select">
+                            <option value="">Seleccione...</option>
+                            <?php foreach ($sedes as $s): ?>
+                                <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div id="configSedePanel" style="display:none;">
+                        <h6 class="border-bottom pb-2 mb-3 mt-4 text-primary fw-bold">Reglas de Negocio (Márgenes de Ganancia)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Tipo de Tarifa</label>
+                                <select id="configTipoTarifa" class="form-select">
+                                    <option value="PORCENTAJE">Porcentaje Sobre Costo (Ej: +10%)</option>
+                                    <option value="FIJA">Tarifa Fija (Ej: $0.05 por msj)</option>
+                                    <option value="PORCENTAJE_VOLUMEN">Porcentaje Dinámico (Volumen)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Valor Numérico</label>
+                                <input type="number" id="configValorTarifa" class="form-control" step="0.01" value="10.00">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Notas Internas de Negociación</label>
+                            <textarea id="configNotas" class="form-control" rows="2" placeholder="Ej: Se acordó un 15% hasta 1000 mensajes..."></textarea>
+                        </div>
+
+                        <h6 class="border-bottom pb-2 mb-3 mt-4 text-primary fw-bold">Contacto de Notificación de Pagos</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Nombre del Gerente</label>
+                                <input type="text" id="configNombreGerente" class="form-control">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Teléfono (WhatsApp)</label>
+                                <input type="text" id="configTelGerente" class="form-control" placeholder="584141234567">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Email</label>
+                                <input type="email" id="configEmailGerente" class="form-control">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Vía Preferida de Notificación</label>
+                            <select id="configPrefNotif" class="form-select">
+                                <option value="WHATSAPP">WhatsApp</option>
+                                <option value="EMAIL">Email</option>
+                                <option value="AMBOS">WhatsApp y Email</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    <button type="button" class="btn btn-primary" id="btnGuardarConfigSede" style="display:none;"><i class="fa-solid fa-save me-2"></i>Guardar Cambios</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script>
         const userRole = "<?= htmlspecialchars($agente['rol'] ?? 'AGENTE') ?>";
         let metaChartInstance = null;
+        let templatesLoaded = false;
 
         $(document).ready(function() {
             $('#btnApplyFilters').click(function() { 
@@ -251,9 +332,63 @@ if ($res_sedes) {
                 loadAnalytics(); 
             });
             fetchTemplatesOnLoad();
-        });
 
-        let templatesLoaded = false;
+            // Lógica Modal Tarifas
+            $('#selConfigSede').change(function() {
+                let id_sede = $(this).val();
+                if (!id_sede) {
+                    $('#configSedePanel').hide();
+                    $('#btnGuardarConfigSede').hide();
+                    return;
+                }
+                
+                // Mostrar spinner
+                Swal.fire({ title: 'Cargando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                
+                $.post('back_waba_billing.php', { action: 'get_sede_config', id_sede: id_sede }, function(res) {
+                    Swal.close();
+                    if(res.status === 'success') {
+                        $('#configTipoTarifa').val(res.tarifa.tipo_tarifa);
+                        $('#configValorTarifa').val(res.tarifa.valor);
+                        $('#configNotas').val(res.tarifa.notas_negociacion);
+                        $('#configNombreGerente').val(res.sede.gerente_nombre || '');
+                        $('#configTelGerente').val(res.sede.gerente_telefono || '');
+                        $('#configEmailGerente').val(res.sede.gerente_email || '');
+                        $('#configPrefNotif').val(res.sede.pref_not_cobro || 'WHATSAPP');
+                        
+                        $('#configSedePanel').fadeIn();
+                        $('#btnGuardarConfigSede').show();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }, 'json');
+            });
+
+            $('#btnGuardarConfigSede').click(function() {
+                let id_sede = $('#selConfigSede').val();
+                let data = {
+                    action: 'save_sede_config',
+                    id_sede: id_sede,
+                    tipo_tarifa: $('#configTipoTarifa').val(),
+                    valor: $('#configValorTarifa').val(),
+                    notas: $('#configNotas').val(),
+                    gerente_nombre: $('#configNombreGerente').val(),
+                    gerente_telefono: $('#configTelGerente').val(),
+                    gerente_email: $('#configEmailGerente').val(),
+                    pref_not_cobro: $('#configPrefNotif').val()
+                };
+
+                Swal.fire({ title: 'Guardando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                
+                $.post('back_waba_billing.php', data, function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire('Guardado', res.message, 'success');
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }, 'json');
+            });
+        });
 
         function fetchTemplatesOnLoad() {
             let id_sede = $('#filterSede').val();
@@ -310,7 +445,7 @@ if ($res_sedes) {
                             templatesLoaded = true;
                         }
 
-                        procesarYGraficar(res.data, desde, hasta, id_plantilla);
+                        procesarYGraficar(res.data, desde, hasta, id_plantilla, res.tarifa_config);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
                         $('#contentData').show();
@@ -323,7 +458,7 @@ if ($res_sedes) {
             });
         }
 
-        function procesarYGraficar(data, desde, hasta, id_plantilla) {
+        function procesarYGraficar(data, desde, hasta, id_plantilla, tarifaConfig) {
             let totalCost = 0;
             let mktCount = 0;
             let utilCount = 0;
@@ -387,14 +522,30 @@ if ($res_sedes) {
                 dsEnviados = [0,0]; dsEntregados = [0,0]; dsLeidos = [0,0]; dsRespuestas = [0,0];
             }
 
-            // Actualizar UI Textos
-            let costoFinalFacturado = totalCost * 1.10; // +10% de ganancia
+            // Aplicar Modelo de Negocio (Tarifas Dinámicas)
+            let costoFinalFacturado = 0;
+            let ganancia = 0;
+            let valorTarifa = parseFloat(tarifaConfig ? tarifaConfig.valor : 10.00);
+            let tipoTarifa = tarifaConfig ? tarifaConfig.tipo_tarifa : 'PORCENTAJE';
+            
+            if (tipoTarifa === 'PORCENTAJE') {
+                costoFinalFacturado = totalCost * (1 + (valorTarifa / 100));
+                ganancia = costoFinalFacturado - totalCost;
+            } else if (tipoTarifa === 'FIJA') {
+                ganancia = enviados * valorTarifa;
+                costoFinalFacturado = totalCost + ganancia;
+            } else if (tipoTarifa === 'PORCENTAJE_VOLUMEN') {
+                // Logica hipotética: a mayor volumen, menor %
+                let p = enviados > 1000 ? (valorTarifa / 2) : valorTarifa;
+                costoFinalFacturado = totalCost * (1 + (p / 100));
+                ganancia = costoFinalFacturado - totalCost;
+            }
 
+            // Actualizar UI Textos
             $('#kpiImporteGastado').text(costoFinalFacturado.toFixed(2).replace('.', ',') + ' USD');
             
             if (userRole === 'MASTER') {
                 $('#kpiCostoMeta').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
-                let ganancia = totalCost * 0.10;
                 $('#kpiMargenGanancia').text(ganancia.toFixed(2).replace('.', ',') + ' USD');
             }
 
