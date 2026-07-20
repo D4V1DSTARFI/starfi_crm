@@ -291,6 +291,22 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+
+            <!-- 6. Métricas y Facturación WhatsApp -->
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/dashboard/whatsapp_analytics.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(16, 185, 129, 0.1); color: var(--sla-green);">
+                            <i class="bi bi-whatsapp"></i>
+                        </div>
+                        <h4 class="module-title">Facturación WhatsApp</h4>
+                        <p class="module-desc">Audita el consumo financiero de la API de Meta, consulta el volumen de mensajes de marketing, utilidad y costos estimados.</p>
+                    </div>
+                    <div class="action-link" style="color: var(--sla-green);">
+                        Ver Métricas <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
         </div>
     </div>
 
