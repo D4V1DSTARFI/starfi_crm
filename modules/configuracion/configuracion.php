@@ -724,6 +724,88 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
         </div>
     </div>
 
+    <!-- Modal Gestión de Plantillas Meta -->
+    <div class="modal fade" id="modalPlantillasMeta" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content modal-content-premium">
+                <div class="modal-header modal-header-premium bg-starfi-primary text-white">
+                    <h5 class="modal-title brand-font fw-bold mb-0"><i class="fa-solid fa-layer-group me-2"></i> Plantillas de Meta (WhatsApp)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4 bg-light">
+                    <input type="hidden" id="plantillas_id_sede">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-muted me-2"></i>Lista de Plantillas Sincronizadas</h6>
+                        <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
+                            <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
+                        </button>
+                    </div>
+
+                    <!-- VISTA: Lista de Plantillas -->
+                    <div id="vistaListaPlantillas">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-borderless align-middle bg-white rounded-3 shadow-sm" id="tablaPlantillasMeta">
+                                <thead class="table-light text-muted" style="font-size: 0.85rem;">
+                                    <tr>
+                                        <th class="py-3 px-4 rounded-start">NOMBRE</th>
+                                        <th class="py-3">CATEGORÍA</th>
+                                        <th class="py-3">IDIOMA</th>
+                                        <th class="py-3">ESTADO</th>
+                                        <th class="py-3 text-center rounded-end">ACCIONES</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="5" class="text-center py-4 text-muted">Cargando plantillas desde Meta...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- VISTA: Crear Nueva Plantilla -->
+                    <div id="vistaCrearPlantilla" style="display: none;">
+                        <div class="card border-0 shadow-sm rounded-3">
+                            <div class="card-body p-4">
+                                <h6 class="fw-bold mb-4 border-bottom pb-2">Diseñador Básico de Plantilla</h6>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Nombre de la Plantilla</label>
+                                        <input type="text" class="form-control form-control-premium" id="new_template_name" placeholder="ej: confirmacion_compra" oninput="this.value = this.value.toLowerCase().replace(/[^a-z0-9_]/g, '')">
+                                        <small class="text-muted">Solo minúsculas, números y guiones bajos (_).</small>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Categoría</label>
+                                        <select class="form-select form-select-premium" id="new_template_category">
+                                            <option value="UTILITY">Utilidad (Ej: Recibos)</option>
+                                            <option value="MARKETING">Marketing</option>
+                                            <option value="AUTHENTICATION">Autenticación (OTP)</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Idioma</label>
+                                        <select class="form-select form-select-premium" id="new_template_lang">
+                                            <option value="es">Español</option>
+                                            <option value="en_US">Inglés (US)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="col-12 mt-4">
+                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Cuerpo del Mensaje (Body)</label>
+                                        <textarea class="form-control form-control-premium" id="new_template_body" rows="4" placeholder="Hola {{1}}, tu pedido {{2}} ha sido enviado."></textarea>
+                                        <small class="text-muted">Usa {{1}}, {{2}} para definir variables dinámicas.</small>
+                                    </div>
+                                </div>
+                                <div class="mt-4 pt-3 border-top text-end">
+                                    <button type="button" class="btn btn-light rounded-pill px-4 me-2 fw-bold" onclick="mostrarListaPlantillas()">Cancelar</button>
+                                    <button type="button" class="btn btn-success rounded-pill px-4 fw-bold shadow-sm" onclick="guardarNuevaPlantilla()">Enviar a Meta</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 
 
     <!-- JavaScript Local Bootstrap -->

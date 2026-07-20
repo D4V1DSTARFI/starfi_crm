@@ -34,6 +34,110 @@ switch ($action) {
         }
         break;
 
+    // --- GESTIÓN DE PLANTILLAS META ---
+    case 'get_meta_templates':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
+        if ($res && $row = $res->fetch_assoc()) {
+            if (empty($row['id_negocio'])) {
+                echo json_encode(['status' => 'error', 'message' => 'WABA ID (ID de Negocio) no configurado en la API de WhatsApp de esta sede.']);
+                exit;
+            }
+            $waba_id = $row['id_negocio'];
+            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $curl = curl_init();
+            curl_setopt($curl, CURLOPT_URL, $url);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            $raw_exec = curl_exec($curl);
+            $resp = json_decode($raw_exec, true);
+            curl_close($curl);
+            
+            if (isset($resp['data'])) {
+                echo json_encode(['status' => 'success', 'data' => $resp['data']]);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al leer de Meta: ' . ($resp['error']['message'] ?? 'Desconocido')]);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Línea de WhatsApp no configurada para esta sede.']);
+        }
+        break;
+
+    case 'create_meta_template':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $name = $_POST['name'] ?? '';
+        $category = $_POST['category'] ?? '';
+        $language = $_POST['language'] ?? 'es';
+        $body = $_POST['body'] ?? '';
+        
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
+        if ($res && $row = $res->fetch_assoc()) {
+            if (empty($row['id_negocio'])) {
+                echo json_encode(['status' => 'error', 'message' => 'WABA ID no configurado.']);
+                exit;
+            }
+            $waba_id = $row['id_negocio'];
+            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $payload = [
+                "name" => $name,
+                "language" => $language,
+                "category" => $category,
+                "components" => [
+                    [
+                        "type" => "BODY",
+                        "text" => $body
+                    ]
+                ]
+            ];
+            
+            $curl = curl_init();
+            curl_setopt($curl, CURLOPT_URL, $url);
+            curl_setopt($curl, CURLOPT_POST, true);
+            curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            $raw_exec = curl_exec($curl);
+            $resp = json_decode($raw_exec, true);
+            curl_close($curl);
+            
+            if (isset($resp['id'])) {
+                echo json_encode(['status' => 'success', 'id' => $resp['id']]);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al crear en Meta: ' . ($resp['error']['message'] ?? 'Desconocido')]);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Línea de WhatsApp no configurada.']);
+        }
+        break;
+
+    case 'delete_meta_template':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $name = $_POST['name'] ?? '';
+        
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
+        if ($res && $row = $res->fetch_assoc()) {
+            $waba_id = $row['id_negocio'];
+            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=$name";
+            
+            $curl = curl_init();
+            curl_setopt($curl, CURLOPT_URL, $url);
+            curl_setopt($curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN]);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            $raw_exec = curl_exec($curl);
+            $resp = json_decode($raw_exec, true);
+            curl_close($curl);
+            
+            if (isset($resp['success']) && $resp['success'] == true) {
+                echo json_encode(['status' => 'success']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al eliminar en Meta: ' . ($resp['error']['message'] ?? 'Desconocido')]);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Línea de WhatsApp no configurada.']);
+        }
+        break;
+
     // --- GESTIÓN DE SEDES ---
     case 'load_sedes':
         $query = "

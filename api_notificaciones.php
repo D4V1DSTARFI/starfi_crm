@@ -90,6 +90,46 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
 }
 
 // Recibir datos POST
+$raw_json = json_decode(file_get_contents('php://input'), true);
+if ($raw_json && empty($_POST)) {
+    // Si viene de NotificacionWhatsApp.php que usa JSON, mapear las variables
+    $_POST['telefono'] = $raw_json['telefono_destino'] ?? '';
+    $_POST['verify_token'] = $raw_json['api_key'] ?? '';
+    
+    // Mapear el arreglo variables de NotificacionWhatsApp al formato esperado
+    if (isset($raw_json['variables']) && is_array($raw_json['variables'])) {
+        $vars = $raw_json['variables'];
+        $_POST['nombre_cliente'] = $vars[0] ?? 'Cliente';
+        // $vars[1] is fecha_compra
+        // $vars[2] is monto_total (but NotificacionWhatsApp just sends '0.00' or similar)
+        // Wait, NotificacionWhatsApp.php enviarCompra sends:
+        // [nombre, fecha, numero, monto, vendedor, tel_vendedor, empresa, sede]
+        // But enviar_notificacion_async.php sends:
+        // [nombre, fecha, monto, asesor, empresa, correlativo, tel_asesor]
+        
+        // We will just use the standard POST fallback for variables if present, or assign them if needed.
+        if (!isset($raw_json['tipo_evento']) || $raw_json['tipo_evento'] === 'COMPRA') {
+            $_POST['nombre_cliente'] = $vars[0] ?? 'Cliente';
+            $_POST['monto_total'] = $vars[2] ?? '0.00';
+            $_POST['asesor_ventas'] = $vars[3] ?? 'Asesor';
+            $_POST['nombre_empresa'] = $vars[4] ?? 'Empresa';
+            $_POST['correlativo'] = $vars[5] ?? '';
+            $_POST['telefono_asesor'] = $vars[6] ?? '0000000000';
+        }
+    }
+    
+    // Si envían dinámicamente la plantilla a usar y sus datos
+    if (isset($raw_json['template_name'])) {
+        $_POST['template_name'] = $raw_json['template_name'];
+    } elseif (isset($raw_json['plantilla'])) {
+        $_POST['template_name'] = $raw_json['plantilla'];
+    }
+    
+    if (isset($raw_json['template_params'])) {
+        $_POST['template_params'] = $raw_json['template_params'];
+    }
+}
+
 $telefono = $_POST['telefono'] ?? '';
 $telefono_asesor = $_POST['telefono_asesor'] ?? '0000000000';
 $nombre_cliente = $_POST['nombre_cliente'] ?? 'Cliente';
@@ -109,16 +149,43 @@ if(empty($telefono)) {
     exit;
 }
 
-// Limpiar el teléfono para la API (quitar +, espacios, guiones)
-$telefono = str_replace(['+', ' ', '-'], '', $telefono);
+// Limpiar el teléfono para la API (quitar cualquier caracter que no sea número)
+$telefono = preg_replace('/[^0-9]/', '', $telefono);
 
-// Formatear automáticamente números de Venezuela (si no tienen código de país)
+// --- CAPA DE FORMATEO Y VALIDACIÓN ---
+
+// 1. Si empieza con 0 y tiene 11 dígitos (ej: 0414 1234567 -> 58 414 1234567)
 if (strlen($telefono) == 11 && strpos($telefono, '0') === 0) {
-    // Si empieza con 0 y mide 11 dígitos, ej: 04241234567 -> 584241234567
     $telefono = '58' . substr($telefono, 1);
-} elseif (strlen($telefono) == 10 && strpos($telefono, '4') === 0) {
-    // Si empieza con 4 y mide 10 dígitos, ej: 4241234567 -> 584241234567
+} 
+// 2. Si empieza con 4 y tiene 10 dígitos (ej: 414 1234567 -> 58 414 1234567)
+elseif (strlen($telefono) == 10 && preg_match('/^4[0-9]{2}/', $telefono)) {
     $telefono = '58' . $telefono;
+}
+// 3. Si el usuario ingresó +58 0414... (13 dígitos, ej: 58 0 414 1234567) -> remover el 0
+elseif (strlen($telefono) == 13 && strpos($telefono, '580') === 0) {
+    $telefono = '58' . substr($telefono, 3);
+}
+
+// Validación estricta final antes de contactar a Meta
+if (strpos($telefono, '58') === 0) {
+    // Si es de Venezuela (58) debe tener exactamente 12 dígitos y operadoras válidas
+    if (strlen($telefono) !== 12 || !preg_match('/^58(414|424|412|416|426|2[0-9]{2})[0-9]{7}$/', $telefono)) {
+        echo json_encode([
+            'status' => 'error', 
+            'message' => "El número de teléfono venezolano provisto es inválido o tiene dígitos extra/faltantes. Número detectado: $telefono."
+        ]);
+        exit;
+    }
+} else {
+    // Para números internacionales, una validación genérica de longitud de Meta (10 a 15)
+    if (strlen($telefono) < 10 || strlen($telefono) > 15) {
+        echo json_encode([
+            'status' => 'error', 
+            'message' => "Número de teléfono internacional inválido. Longitud fuera de los límites permitidos. Número detectado: $telefono."
+        ]);
+        exit;
+    }
 }
 
 // Configuración de la base de datos de CRM
@@ -232,8 +299,9 @@ if (empty($token)) {
 }
 
 // Obtener plantilla configurada para la sede y módulo VENTAS
-$template_name = '';
-if (isset($crm_id_sede)) {
+$template_name = $_POST['template_name'] ?? '';
+
+if (empty($template_name) && isset($crm_id_sede)) {
     $legacy_id = ($crm_id_sede == 24) ? 23 : ($crm_id_sede - 2);
     $con_ventas = getExternalDbConnection('ventas');
     if ($con_ventas) {
@@ -267,15 +335,24 @@ $url = 'https://graph.facebook.com/v23.0/'.$telefonoID.'/messages';
 $header = array("Authorization: Bearer " . $token, "Content-Type: application/json");
 
 // CONFIGURACION DEL MENSAJE (Plantilla dinámica)
-$params = [
-    $nombre_cliente,
-    $fecha_compra,
-    $monto_total . ' ' . $signo,
-    $asesor_ventas,
-    $nombre_empresa,
-    $correlativo,
-    $telefono_asesor
-];
+if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
+    $params = $_POST['template_params'];
+} elseif (isset($_POST['template_params']) && is_string($_POST['template_params'])) {
+    $params = json_decode($_POST['template_params'], true) ?? [];
+} elseif (isset($raw_json['variables']) && is_array($raw_json['variables']) && !empty($raw_json['variables'])) {
+    $params = $raw_json['variables'];
+} else {
+    // Fallback legacy
+    $params = [
+        $nombre_cliente,
+        $fecha_compra,
+        $monto_total . ' ' . $signo,
+        $asesor_ventas,
+        $nombre_empresa,
+        $correlativo,
+        $telefono_asesor
+    ];
+}
 
 $mensaje_payload = [
     'messaging_product' => 'whatsapp',
@@ -350,7 +427,11 @@ if($status_code == 200) {
 // Registrar en base de datos
 $telefono_emisor = $telefonoID;   
 $telefono_receptor = $telefono;
-$contenido = 'Confirmacion de compra, cliente: '.$nombre_cliente.', fecha compra: '.$fecha_compra.', monto total: '.$monto_total.' '.$signo.', asesor de ventas: '.$asesor_ventas.', empresa: '.$nombre_empresa.', correlativo: '.$correlativo.', contacto: '.$telefono_asesor;
+if (isset($_POST['template_name']) || isset($_POST['template_params'])) {
+    $contenido = 'Envío dinámico de plantilla: ' . $template_name . '. Params: ' . json_encode($params, JSON_UNESCAPED_UNICODE);
+} else {
+    $contenido = 'Confirmacion de compra, cliente: '.$nombre_cliente.', fecha compra: '.$fecha_compra.', monto total: '.$monto_total.' '.$signo.', asesor de ventas: '.$asesor_ventas.', empresa: '.$nombre_empresa.', correlativo: '.$correlativo.', contacto: '.$telefono_asesor;
+}
 
 $insertar = $con->query("INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status) 
                          VALUES ('$template_name', '$fecha_compra', '$hora_actual', '$telefono_emisor', '$telefono_receptor', '$contenido', '$status_bd')");
