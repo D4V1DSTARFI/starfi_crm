@@ -196,6 +196,11 @@ $(document).ready(function () {
         loadChats();
     });
 
+    // Filtro por Sede
+    $(document).on('change', '#filterSede', function () {
+        loadChats();
+    });
+
     // 2. Perfil 360
     $('#btnToggleProfile').on('click', function () {
         if (!activeClientId) {
@@ -287,11 +292,12 @@ $(document).ready(function () {
 });
 
 function loadChats() {
+    const id_sede = $('#filterSede').val() || '';
     $.ajax({
         url: 'back_bandeja.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_chats', filter: currentFilter },
+        data: { action: 'load_chats', filter: currentFilter, id_sede: id_sede },
         success: function (response) {
             if (response.status === 'success') {
                 renderChatList(response.data);

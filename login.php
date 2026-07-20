@@ -225,6 +225,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <button type="submit" class="btn btn-starfi-primary w-100 py-2 fw-bold mb-3">Ingresar al CRM</button>
             
+            <div class="text-center mb-2">
+                <a href="#" class="text-starfi-primary fw-semibold" style="font-size: 0.85rem; text-decoration: none;" data-bs-toggle="modal" data-bs-target="#recoverModal">¿Olvidó su contraseña?</a>
+            </div>
+            
             <div class="text-center">
                 <span class="text-muted" style="font-size: 0.85rem;">¿No tienes cuenta? </span>
                 <a href="#" id="btnOpenRegister" class="text-starfi-primary fw-semibold" style="font-size: 0.85rem; text-decoration: none;" data-bs-toggle="modal" data-bs-target="#registerModal">Regístrate aquí</a>
@@ -335,6 +339,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="button" class="btn btn-secondary py-2 px-3 fw-bold" id="btnBack" style="border-radius: 8px; font-size: 0.9rem; display: none;">Atrás</button>
                     <button type="button" class="btn btn-starfi-primary py-2 px-4 fw-bold ms-auto" id="btnNext" style="border-radius: 8px; font-size: 0.9rem;">Siguiente</button>
                     <button type="button" class="btn btn-success py-2 px-4 fw-bold ms-auto" id="btnSubmit" style="border-radius: 8px; font-size: 0.9rem; display: none;">Completar Registro</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Recuperación de Contraseña -->
+    <div class="modal fade" id="recoverModal" tabindex="-1" aria-labelledby="recoverModalLabel" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0" style="border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.1);">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold text-starfi-dark" id="recoverModalLabel">Recuperar Contraseña</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <!-- Progreso de Recuperación -->
+                    <div class="step-progress" id="recoverProgress">
+                        <div class="step-progress-item active" id="rec-prog-1">1</div>
+                        <div class="step-progress-item" id="rec-prog-2">2</div>
+                        <div class="step-progress-item" id="rec-prog-3">3</div>
+                        <div class="step-progress-item" id="rec-prog-4">4</div>
+                    </div>
+
+                    <form id="recoverForm">
+                        <input type="hidden" id="rec_id_usuario" value="0">
+                        <input type="hidden" id="rec_metodo" value="">
+
+                        <!-- PASO 1: Identificación (Cédula) -->
+                        <div class="step-content active" id="rec-step-1">
+                            <h6 class="fw-bold mb-3 text-muted">Paso 1: Identificación</h6>
+                            <div class="mb-3">
+                                <label class="login-label">Cédula del Usuario <span class="text-danger">*</span></label>
+                                <input type="text" id="rec_cedula" class="form-control-custom" placeholder="Ingrese su cédula para verificar" required>
+                            </div>
+                        </div>
+
+                        <!-- PASO 2: Selección de Método -->
+                        <div class="step-content" id="rec-step-2">
+                            <h6 class="fw-bold mb-3 text-muted">Paso 2: Método de Recuperación</h6>
+                            <p class="text-muted small">Seleccione una opción para verificar su identidad:</p>
+                            
+                            <div class="d-grid gap-2 mb-3">
+                                <button type="button" class="btn btn-outline-secondary p-3 text-start d-flex align-items-center justify-content-between" id="btnSelectQuestions" style="border-radius: 10px;">
+                                    <div>
+                                        <div class="fw-bold text-dark">Preguntas de Seguridad</div>
+                                        <small class="text-muted">Responda las 3 preguntas que configuró</small>
+                                    </div>
+                                    <i class="bi bi-shield-lock-fill text-starfi-primary fs-4"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary p-3 text-start d-flex align-items-center justify-content-between" id="btnSelectEmail" style="border-radius: 10px;">
+                                    <div>
+                                        <div class="fw-bold text-dark">Código por Correo</div>
+                                        <small class="text-muted">Enviar código temporal a <span id="lblMaskedEmail">...</span></small>
+                                    </div>
+                                    <i class="bi bi-envelope-fill text-starfi-primary fs-4"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- PASO 3A: Preguntas de Seguridad -->
+                        <div class="step-content" id="rec-step-3a">
+                            <h6 class="fw-bold mb-3 text-muted">Paso 3: Preguntas de Seguridad</h6>
+                            
+                            <div class="mb-3">
+                                <label class="login-label" id="lbl_rec_pregunta_1">Pregunta 1</label>
+                                <input type="text" id="rec_respuesta_1" class="form-control-custom" placeholder="Respuesta 1" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="login-label" id="lbl_rec_pregunta_2">Pregunta 2</label>
+                                <input type="text" id="rec_respuesta_2" class="form-control-custom" placeholder="Respuesta 2" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="login-label" id="lbl_rec_pregunta_3">Pregunta 3</label>
+                                <input type="text" id="rec_respuesta_3" class="form-control-custom" placeholder="Respuesta 3" required>
+                            </div>
+                        </div>
+
+                        <!-- PASO 3B: Código de Correo -->
+                        <div class="step-content" id="rec-step-3b">
+                            <h6 class="fw-bold mb-3 text-muted">Paso 3: Verificar Código</h6>
+                            <p class="text-muted small">Por favor, ingrese el código de 6 dígitos que hemos enviado a su correo electrónico.</p>
+                            <div class="mb-3">
+                                <label class="login-label">Código de Verificación <span class="text-danger">*</span></label>
+                                <input type="text" id="rec_codigo" class="form-control-custom text-center fw-bold" placeholder="000000" maxlength="6" required style="font-size: 1.25rem; letter-spacing: 5px;">
+                            </div>
+                        </div>
+
+                        <!-- PASO 4: Nueva Contraseña -->
+                        <div class="step-content" id="rec-step-4">
+                            <h6 class="fw-bold mb-3 text-muted">Paso 4: Nueva Contraseña</h6>
+                            <div class="mb-3">
+                                <label class="login-label">Nueva Contraseña <span class="text-danger">*</span></label>
+                                <input type="password" id="rec_contrasena" class="form-control-custom" placeholder="••••••••" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="login-label">Confirmar Contraseña <span class="text-danger">*</span></label>
+                                <input type="password" id="rec_confirmar" class="form-control-custom" placeholder="••••••••" required>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer border-0 pt-0 px-4 pb-4" id="recoverFooter">
+                    <button type="button" class="btn btn-secondary py-2 px-3 fw-bold" id="btnRecBack" style="border-radius: 8px; font-size: 0.9rem; display: none;">Atrás</button>
+                    <button type="button" class="btn btn-starfi-primary py-2 px-4 fw-bold ms-auto" id="btnRecNext" style="border-radius: 8px; font-size: 0.9rem;">Siguiente</button>
                 </div>
             </div>
         </div>
@@ -529,6 +636,277 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             title: 'Error del Servidor',
                             text: 'No se pudo procesar la solicitud de registro en este momento.'
                         });
+                    }
+                });
+            });
+
+            // --- Lógica de Recuperación de Contraseña ---
+            let recCurrentStep = 1;
+            let questionsList = [];
+
+            $('#recoverModal').on('show.bs.modal', function () {
+                recCurrentStep = 1;
+                $('#rec_id_usuario').val('0');
+                $('#rec_metodo').val('');
+                $('#recoverForm')[0].reset();
+                showRecStep(1);
+            });
+
+            function showRecStep(step) {
+                $('.modal-body .step-content').removeClass('active');
+                
+                // Actualizar barra de progreso del recover
+                $('#recoverProgress .step-progress-item').removeClass('active completed');
+                
+                if (step === 1) {
+                    $('#rec-step-1').addClass('active');
+                    $('#rec-prog-1').addClass('active');
+                    $('#btnRecBack').hide();
+                    $('#btnRecNext').show().text('Verificar Cédula').addClass('ms-auto');
+                } else if (step === 2) {
+                    // Limpiar clases active para que no afecte a otros pasos
+                    $('#rec-step-2').addClass('active');
+                    $('#rec-prog-1').addClass('completed');
+                    $('#rec-prog-2').addClass('active');
+                    $('#btnRecBack').show();
+                    $('#btnRecNext').hide().removeClass('ms-auto');
+                } else if (step === 3) {
+                    const metodo = $('#rec_metodo').val();
+                    if (metodo === 'preguntas') {
+                        $('#rec-step-3a').addClass('active');
+                    } else {
+                        $('#rec-step-3b').addClass('active');
+                    }
+                    $('#rec-prog-1').addClass('completed');
+                    $('#rec-prog-2').addClass('completed');
+                    $('#rec-prog-3').addClass('active');
+                    // Forzar a que muestre el botón
+                    $('#btnRecBack').show();
+                    $('#btnRecNext').show().text(metodo === 'preguntas' ? 'Validar Respuestas' : 'Verificar Código').removeClass('ms-auto');
+                } else if (step === 4) {
+                    $('#rec-step-4').addClass('active');
+                    $('#rec-prog-1').addClass('completed');
+                    $('#rec-prog-2').addClass('completed');
+                    $('#rec-prog-3').addClass('completed');
+                    $('#rec-prog-4').addClass('active');
+                    $('#btnRecBack').hide();
+                    $('#btnRecNext').show().text('Restablecer Contraseña').addClass('ms-auto');
+                }
+            }
+
+            // Validaciones y acciones de pasos de recuperación
+            $('#btnRecNext').on('click', function() {
+                const id_usuario = $('#rec_id_usuario').val();
+
+                if (recCurrentStep === 1) {
+                    const cedula = $('#rec_cedula').val().trim();
+                    if (cedula === '') {
+                        Swal.fire({ icon: 'warning', title: 'Cédula requerida', text: 'Por favor ingrese su cédula.' });
+                        return;
+                    }
+
+                    $('#btnRecNext').prop('disabled', true).text('Verificando...');
+                    $.ajax({
+                        url: 'recover_password.php',
+                        type: 'POST',
+                        data: { action: 'verify_cedula', cedula: cedula },
+                        dataType: 'json',
+                        success: function(response) {
+                            $('#btnRecNext').prop('disabled', false).text('Verificar Cédula');
+                            if (response.success) {
+                                $('#rec_id_usuario').val(response.id_usuario);
+                                $('#lblMaskedEmail').text(response.correo_enmascarado);
+                                questionsList = response.preguntas;
+                                
+                                if (questionsList.length >= 3) {
+                                    $('#lbl_rec_pregunta_1').text(questionsList[0]);
+                                    $('#lbl_rec_pregunta_2').text(questionsList[1]);
+                                    $('#lbl_rec_pregunta_3').text(questionsList[2]);
+                                }
+
+                                recCurrentStep = 2;
+                                showRecStep(2);
+                            } else {
+                                Swal.fire({ icon: 'error', title: 'Error', text: response.message });
+                            }
+                        },
+                        error: function() {
+                            $('#btnRecNext').prop('disabled', false).text('Verificar Cédula');
+                            Swal.fire({ icon: 'error', title: 'Error', text: 'Error del servidor.' });
+                        }
+                    });
+                } else if (recCurrentStep === 3) {
+                    const metodo = $('#rec_metodo').val();
+                    if (metodo === 'preguntas') {
+                        const resp1 = $('#rec_respuesta_1').val().trim();
+                        const resp2 = $('#rec_respuesta_2').val().trim();
+                        const resp3 = $('#rec_respuesta_3').val().trim();
+
+                        if (resp1 === '' || resp2 === '' || resp3 === '') {
+                            Swal.fire({ icon: 'warning', text: 'Debe responder las 3 preguntas de seguridad.' });
+                            return;
+                        }
+
+                        $('#btnRecNext').prop('disabled', true).text('Validando...');
+                        $.ajax({
+                            url: 'recover_password.php',
+                            type: 'POST',
+                            data: {
+                                action: 'verify_questions',
+                                id_usuario: id_usuario,
+                                respuestas: [
+                                    { pregunta: questionsList[0], respuesta: resp1 },
+                                    { pregunta: questionsList[1], respuesta: resp2 },
+                                    { pregunta: questionsList[2], respuesta: resp3 }
+                                ]
+                            },
+                            dataType: 'json',
+                            success: function(response) {
+                                $('#btnRecNext').prop('disabled', false).text('Validar Respuestas');
+                                if (response.success) {
+                                    recCurrentStep = 4;
+                                    showRecStep(4);
+                                } else {
+                                    Swal.fire({ icon: 'error', title: 'Incorrecto', text: response.message });
+                                }
+                            },
+                            error: function() {
+                                $('#btnRecNext').prop('disabled', false).text('Validar Respuestas');
+                                Swal.fire({ icon: 'error', text: 'Error del servidor.' });
+                            }
+                        });
+                    } else {
+                        // Método código de correo
+                        const codigo = $('#rec_codigo').val().trim();
+                        if (codigo === '' || codigo.length < 6) {
+                            Swal.fire({ icon: 'warning', text: 'Ingrese el código de 6 dígitos.' });
+                            return;
+                        }
+
+                        $('#btnRecNext').prop('disabled', true).text('Verificando...');
+                        $.ajax({
+                            url: 'recover_password.php',
+                            type: 'POST',
+                            data: { action: 'verify_code', id_usuario: id_usuario, codigo: codigo },
+                            dataType: 'json',
+                            success: function(response) {
+                                $('#btnRecNext').prop('disabled', false).text('Verificar Código');
+                                if (response.success) {
+                                    recCurrentStep = 4;
+                                    showRecStep(4);
+                                } else {
+                                    Swal.fire({ icon: 'error', title: 'Error', text: response.message });
+                                }
+                            },
+                            error: function() {
+                                $('#btnRecNext').prop('disabled', false).text('Verificar Código');
+                                Swal.fire({ icon: 'error', text: 'Error del servidor.' });
+                            }
+                        });
+                    }
+                } else if (recCurrentStep === 4) {
+                    const contrasena = $('#rec_contrasena').val();
+                    const confirmar = $('#rec_confirmar').val();
+
+                    if (contrasena === '' || confirmar === '') {
+                        Swal.fire({ icon: 'warning', text: 'Complete ambos campos de contraseña.' });
+                        return;
+                    }
+                    if (contrasena !== confirmar) {
+                        Swal.fire({ icon: 'error', text: 'Las contraseñas no coinciden.' });
+                        return;
+                    }
+                    if (contrasena.length < 4) {
+                        Swal.fire({ icon: 'warning', text: 'La contraseña debe tener al menos 4 caracteres.' });
+                        return;
+                    }
+
+                    $('#btnRecNext').prop('disabled', true).text('Restableciendo...');
+                    $.ajax({
+                        url: 'recover_password.php',
+                        type: 'POST',
+                        data: { action: 'reset_password', id_usuario: id_usuario, contrasena: contrasena },
+                        dataType: 'json',
+                        success: function(response) {
+                            $('#btnRecNext').prop('disabled', false).text('Restablecer Contraseña');
+                            if (response.success) {
+                                Swal.fire({
+                                    icon: 'success',
+                                    title: '¡Contraseña Restablecida!',
+                                    text: response.message,
+                                    confirmButtonColor: '#E85B14'
+                                }).then(() => {
+                                    $('#recoverModal').modal('hide');
+                                });
+                            } else {
+                                Swal.fire({ icon: 'error', text: response.message });
+                            }
+                        },
+                        error: function() {
+                            $('#btnRecNext').prop('disabled', false).text('Restablecer Contraseña');
+                            Swal.fire({ icon: 'error', text: 'Error del servidor.' });
+                        }
+                    });
+                }
+            });
+
+            $('#btnRecBack').on('click', function() {
+                recCurrentStep--;
+                showRecStep(recCurrentStep);
+            });
+
+            // Selección de método
+            $('#btnSelectQuestions').on('click', function() {
+                if (questionsList.length < 3) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Sin preguntas de seguridad',
+                        text: 'Este usuario no tiene preguntas de seguridad configuradas. Por favor use el método de Correo.'
+                    });
+                    return;
+                }
+                $('#rec_metodo').val('preguntas');
+                recCurrentStep = 3;
+                showRecStep(3);
+            });
+
+            $('#btnSelectEmail').on('click', function() {
+                const id_usuario = $('#rec_id_usuario').val();
+                
+                // Solicitar al backend enviar el código
+                Swal.fire({
+                    title: 'Enviando código...',
+                    text: 'Espere por favor.',
+                    allowOutsideClick: false,
+                    didOpen: () => { Swal.showLoading(); }
+                });
+
+                $.ajax({
+                    url: 'recover_password.php',
+                    type: 'POST',
+                    data: { action: 'send_code', id_usuario: id_usuario },
+                    dataType: 'json',
+                    success: function(response) {
+                        Swal.close();
+                        if (response.success) {
+                            $('#rec_metodo').val('correo');
+                            recCurrentStep = 3;
+                            showRecStep(3);
+                            
+                            // Mostrar alerta con el código simulado para pruebas locales
+                            Swal.fire({
+                                icon: 'info',
+                                title: 'Código Enviado (Simulado)',
+                                html: 'Se generó el código de verificación.<br><br><b style="font-size: 1.5rem; color: #E85B14;">' + response.codigo_simulado + '</b><br><br>Ingrese este código en la siguiente pantalla.',
+                                confirmButtonColor: '#E85B14'
+                            });
+                        } else {
+                            Swal.fire({ icon: 'error', title: 'Error', text: response.message });
+                        }
+                    },
+                    error: function() {
+                        Swal.close();
+                        Swal.fire({ icon: 'error', text: 'No se pudo generar el código.' });
                     }
                 });
             });

@@ -61,14 +61,32 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         .search-bar {
             background-color: #F1F5F9 !important;
             border-radius: 30px !important;
-            padding: 10px 20px !important;
+            padding: 8px 16px !important;
             border: 1px solid transparent !important;
             transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         .search-bar:focus-within {
             background-color: #ffffff !important;
             border-color: var(--primary) !important;
             box-shadow: 0 0 0 4px rgba(232, 91, 20, 0.1);
+        }
+        .search-bar i {
+            color: #64748B;
+            font-size: 0.9rem;
+        }
+        .search-bar input {
+            border: none !important;
+            background: transparent !important;
+            outline: none !important;
+            width: 100%;
+            font-size: 0.9rem;
+            color: #1E293B;
+        }
+        .search-bar input::placeholder {
+            color: #94A3B8;
         }
 
         /* Conversation list items */
@@ -214,15 +232,38 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         <section class="chats-panel">
             <header class="chats-header">
                 <h2>Conversaciones</h2>
+                <!-- Search -->
+                <div class="search-bar mb-2">
+                    <i class="fa-solid fa-search"></i>
+                    <input type="text" placeholder="Buscar cliente, número...">
+                </div>
+                
+                <!-- Filter Sede -->
+                <?php
+                $con = getDbConnection('core');
+                $sedes = [];
+                if ($con) {
+                    $resSedes = mysqli_query($con, "SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO'");
+                    if ($resSedes) {
+                        while ($row = mysqli_fetch_assoc($resSedes)) {
+                            $sedes[] = $row;
+                        }
+                    }
+                }
+                ?>
+                <div class="mb-2">
+                    <select id="filterSede" class="form-select form-select-sm" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
+                        <option value="">Todas las Sedes</option>
+                        <?php foreach ($sedes as $s): ?>
+                            <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
                 <!-- Tabs -->
                 <div class="tabs">
                     <button class="tab active" data-target="todos">Todos</button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
-                </div>
-                <!-- Search -->
-                <div class="search-bar">
-                    <i class="fa-solid fa-search"></i>
-                    <input type="text" placeholder="Buscar cliente, número...">
                 </div>
             </header>
 

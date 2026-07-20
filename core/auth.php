@@ -189,9 +189,6 @@ function renderHeader($title = '') {
     echo '                        <span class="text-muted" style="font-size: 0.7rem;">' . htmlspecialchars($rol_agente) . '</span>';
     echo '                    </div>';
     echo '                </div>';
-    echo '                <a href="/starfi_crm/logout.php" class="btn btn-outline-danger btn-sm px-2.5 py-1.5 fw-semibold d-flex align-items-center gap-1" style="border-radius: 8px; font-size: 0.85rem;">';
-    echo '                    <i class="fa-solid fa-power-off"></i> <span class="d-none d-sm-inline">Salir</span>';
-    echo '                </a>';
     echo '            </div>';
     echo '        </div>';
     echo '    </nav>';
