@@ -215,24 +215,11 @@ if ($action === 'generate_order') {
         $new_order_id = $stmt->insert_id;
         $stmt->close();
         
-        // Insert template details if present
-        if(isset($resp['template_analytics']['data'])) {
-            $stmt_det = $con->prepare("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, volumen, costo_base) VALUES (?, ?, ?, ?)");
-            foreach($resp['template_analytics']['data'] as $tpl_data) {
-                $tpl_name = $tpl_data['name'] ?? 'Desconocida';
-                $tpl_vol = 0;
-                $tpl_cost = 0; // Meta doesnt give cost per template easily, we estimate or put 0 for now
-                if (isset($tpl_data['data_points'])) {
-                    foreach($tpl_data['data_points'] as $tdp) {
-                        if (isset($tdp['sent'])) $tpl_vol += intval($tdp['sent']);
-                    }
-                }
-                if ($tpl_vol > 0) {
-                    $stmt_det->bind_param("isid", $new_order_id, $tpl_name, $tpl_vol, $tpl_cost);
-                    $stmt_det->execute();
-                }
-            }
-            $stmt_det->close();
+        // Registrar desglose genérico ya que Meta API V23+ no permite template_analytics global sin IDs
+        $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, costo_base, volumen) VALUES ($new_order_id, 'Mensajería Consolidada Meta', $costo_meta, $mensajes_totales)");
+        
+        if ($margen > 0) {
+            $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, costo_base, volumen) VALUES ($new_order_id, 'Margen Administrativo (CRM)', $margen, 1)");
         }
         
         $con->commit();
