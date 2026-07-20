@@ -31,9 +31,9 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     
     $check_crm = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $crm_sede_id");
     if ($check_crm && $check_crm->num_rows > 0) {
-        $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_token', meta_telefono_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
+        $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_token', meta_app_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
     } else {
-        $q = "INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_telefono_id, meta_token, estado) VALUES ($crm_sede_id, 'API WSAP AUTO SYNCED', '$crm_phone_number', '$crm_instance_id', '$crm_token', '$crm_estado')";
+        $q = "INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, estado) VALUES ($crm_sede_id, 'API WSAP AUTO SYNCED', '$crm_phone_number', '$crm_instance_id', '$crm_token', '$crm_estado')";
     }
     
     if ($con->query($q)) {
@@ -57,7 +57,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
     }
     
     $stmt = $con->prepare("
-        SELECT l.meta_telefono_id as instance_id, l.numero_telefono as phone_number, s.nombre_sede, l.estado
+        SELECT l.meta_app_id as instance_id, l.numero_telefono as phone_number, s.nombre_sede, l.estado
         FROM sedes s
         LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id
         WHERE s.api_token = ? 
@@ -134,14 +134,14 @@ $row_active = null; // Guardará la info de la línea activa en caso de fallback
 
 // 1. Intentar buscar por token de verificación único (60-64 caracteres)
 if (!empty($verify_token)) {
-    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
+    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
     if ($stmt_token) {
         $stmt_token->bind_param("s", $verify_token);
         $stmt_token->execute();
         $q_linea = $stmt_token->get_result();
         if ($q_linea && $q_linea->num_rows > 0) {
             $row = $q_linea->fetch_assoc();
-            $telefonoID = $row['meta_telefono_id'];
+            $telefonoID = $row['meta_app_id'];
             $token = $row['meta_token'];
             $id_linea = $row['id_linea'];
             $id_empresa = $row['id_empresa'];
@@ -153,14 +153,14 @@ if (!empty($verify_token)) {
 
 // 2. Intentar buscar por token de Meta (si se envió)
 if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
+    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
     if ($stmt_meta) {
         $stmt_meta->bind_param("s", $meta_token_val);
         $stmt_meta->execute();
         $q_linea = $stmt_meta->get_result();
         if ($q_linea && $q_linea->num_rows > 0) {
             $row = $q_linea->fetch_assoc();
-            $telefonoID = $row['meta_telefono_id'];
+            $telefonoID = $row['meta_app_id'];
             $token = $row['meta_token'];
             $id_linea = $row['id_linea'];
             $id_empresa = $row['id_empresa'];
@@ -173,10 +173,10 @@ if (empty($token) && !empty($meta_token_val)) {
 // 3. Intentar buscar por ID de Sede preciso (fallback original)
 if (empty($token) && !empty($id_sede)) {
     $crm_id_sede = ($id_sede == 23) ? 24 : (intval($id_sede) + 2);
-    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id = $crm_id_sede AND l.estado = 'ACTIVO' LIMIT 1");
+    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id = $crm_id_sede AND l.estado = 'ACTIVO' LIMIT 1");
     if ($q_linea && $q_linea->num_rows > 0) {
         $row = $q_linea->fetch_assoc();
-        $telefonoID = $row['meta_telefono_id'];
+        $telefonoID = $row['meta_app_id'];
         $token = $row['meta_token'];
         $id_linea = $row['id_linea'];
         $id_empresa = $row['id_empresa'];
@@ -189,14 +189,14 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
     $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
     
     // Obtener todas las líneas activas configuradas
-    $q_all = $con->query("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO'");
+    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO'");
     
     if ($q_all && $q_all->num_rows > 0) {
         while ($row = $q_all->fetch_assoc()) {
             $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
             // Intentar coincidencia exacta o por subcadena
             if (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false) {
-                $telefonoID = $row['meta_telefono_id'];
+                $telefonoID = $row['meta_app_id'];
                 $token = $row['meta_token'];
                 $id_linea = $row['id_linea'];
                 $id_empresa = $row['id_empresa'];
@@ -209,10 +209,10 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
 
 // 3. Fallback global: Si la sede específica no posee una línea de WhatsApp activa, usar la única línea activa en el sistema
 if (empty($token)) {
-    $q_active_global = $con->query("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' LIMIT 1");
+    $q_active_global = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' LIMIT 1");
     if ($q_active_global && $q_active_global->num_rows > 0) {
         $row_active = $q_active_global->fetch_assoc();
-        $telefonoID = $row_active['meta_telefono_id'];
+        $telefonoID = $row_active['meta_app_id'];
         $token = $row_active['meta_token'];
         $id_linea = $row_active['id_linea'];
         $id_empresa = $row_active['id_empresa'];
