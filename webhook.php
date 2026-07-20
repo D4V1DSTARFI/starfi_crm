@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/Caracas');
 /*
  * WEBHOOK MEJORADO PARA RECEPCIÓN DE MENSAJES WHATSAPP
  * - Identifica el número receptor (telefono_meta)
