@@ -149,16 +149,43 @@ if(empty($telefono)) {
     exit;
 }
 
-// Limpiar el teléfono para la API (quitar +, espacios, guiones)
-$telefono = str_replace(['+', ' ', '-'], '', $telefono);
+// Limpiar el teléfono para la API (quitar cualquier caracter que no sea número)
+$telefono = preg_replace('/[^0-9]/', '', $telefono);
 
-// Formatear automáticamente números de Venezuela (si no tienen código de país)
+// --- CAPA DE FORMATEO Y VALIDACIÓN ---
+
+// 1. Si empieza con 0 y tiene 11 dígitos (ej: 0414 1234567 -> 58 414 1234567)
 if (strlen($telefono) == 11 && strpos($telefono, '0') === 0) {
-    // Si empieza con 0 y mide 11 dígitos, ej: 04241234567 -> 584241234567
     $telefono = '58' . substr($telefono, 1);
-} elseif (strlen($telefono) == 10 && strpos($telefono, '4') === 0) {
-    // Si empieza con 4 y mide 10 dígitos, ej: 4241234567 -> 584241234567
+} 
+// 2. Si empieza con 4 y tiene 10 dígitos (ej: 414 1234567 -> 58 414 1234567)
+elseif (strlen($telefono) == 10 && preg_match('/^4[0-9]{2}/', $telefono)) {
     $telefono = '58' . $telefono;
+}
+// 3. Si el usuario ingresó +58 0414... (13 dígitos, ej: 58 0 414 1234567) -> remover el 0
+elseif (strlen($telefono) == 13 && strpos($telefono, '580') === 0) {
+    $telefono = '58' . substr($telefono, 3);
+}
+
+// Validación estricta final antes de contactar a Meta
+if (strpos($telefono, '58') === 0) {
+    // Si es de Venezuela (58) debe tener exactamente 12 dígitos y operadoras válidas
+    if (strlen($telefono) !== 12 || !preg_match('/^58(414|424|412|416|426|2[0-9]{2})[0-9]{7}$/', $telefono)) {
+        echo json_encode([
+            'status' => 'error', 
+            'message' => "El número de teléfono venezolano provisto es inválido o tiene dígitos extra/faltantes. Número detectado: $telefono."
+        ]);
+        exit;
+    }
+} else {
+    // Para números internacionales, una validación genérica de longitud de Meta (10 a 15)
+    if (strlen($telefono) < 10 || strlen($telefono) > 15) {
+        echo json_encode([
+            'status' => 'error', 
+            'message' => "Número de teléfono internacional inválido. Longitud fuera de los límites permitidos. Número detectado: $telefono."
+        ]);
+        exit;
+    }
 }
 
 // Configuración de la base de datos de CRM
