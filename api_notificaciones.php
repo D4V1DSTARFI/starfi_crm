@@ -20,7 +20,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     }
     
     $getCrmSedeId = function($legacy_id) {
-        if ($legacy_id == 23) { return 23; }
+        if ($legacy_id == 23) { return 24; }
         return intval($legacy_id) + 2;
     };
     $crm_sede_id = $getCrmSedeId($id_sede);
@@ -128,7 +128,7 @@ if (empty($token) && !empty($meta_token_val)) {
 
 // 3. Intentar buscar por ID de Sede preciso (fallback original)
 if (empty($token) && !empty($id_sede)) {
-    $crm_id_sede = ($id_sede == 23) ? 23 : (intval($id_sede) + 2);
+    $crm_id_sede = ($id_sede == 23) ? 24 : (intval($id_sede) + 2);
     $q_linea = $con->query("SELECT l.id as id_linea, l.meta_telefono_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id = $crm_id_sede AND l.estado = 'ACTIVO' LIMIT 1");
     if ($q_linea && $q_linea->num_rows > 0) {
         $row = $q_linea->fetch_assoc();
@@ -190,7 +190,7 @@ if (empty($token)) {
 // Obtener plantilla configurada para la sede y módulo VENTAS
 $template_name = '';
 if (isset($crm_id_sede)) {
-    $legacy_id = ($crm_id_sede == 23) ? 23 : ($crm_id_sede - 2);
+    $legacy_id = ($crm_id_sede == 24) ? 23 : ($crm_id_sede - 2);
     $con_ventas = getExternalDbConnection('ventas');
     if ($con_ventas) {
         $q_t = mysqli_query($con_ventas, "SELECT plantilla FROM config_api_wsap_plantillas WHERE id_sede = $legacy_id AND modulo = 'VENTAS' LIMIT 1");

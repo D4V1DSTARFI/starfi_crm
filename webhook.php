@@ -25,104 +25,106 @@ if ($token === $tokenVerificacion) {
     exit;
 }
 
-/*
- * RECEPCION DE MENSAJES
- */
-//LEEMOS LOS DATOS ENVIADOS POR WHATSAPP
-$respuesta = file_get_contents("php://input");
+if (!defined('WEBHOOK_NO_EXECUTE')) {
+    /*
+     * RECEPCION DE MENSAJES
+     */
+    //LEEMOS LOS DATOS ENVIADOS POR WHATSAPP
+    $respuesta = file_get_contents("php://input");
 
-// Log para debugging (ahora en la carpeta logs de forma rotativa)
-$log_dir = __DIR__ . '/logs';
-if (!is_dir($log_dir)) mkdir($log_dir, 0777, true);
-file_put_contents($log_dir . "/webhook_" . date('Y-m-d') . ".log", date('Y-m-d H:i:s') . " - " . $respuesta . "\n", FILE_APPEND);
+    // Log para debugging (ahora en la carpeta logs de forma rotativa)
+    $log_dir = __DIR__ . '/logs';
+    if (!is_dir($log_dir)) mkdir($log_dir, 0777, true);
+    file_put_contents($log_dir . "/webhook_" . date('Y-m-d') . ".log", date('Y-m-d H:i:s') . " - " . $respuesta . "\n", FILE_APPEND);
 
-//CONVERTIMOS EL JSON EN ARRAY DE PHP
-$respuesta_array = json_decode($respuesta, true);
+    //CONVERTIMOS EL JSON EN ARRAY DE PHP
+    $respuesta_array = json_decode($respuesta, true);
 
-// Incluir conexión temprana para la auditoría
-require_once('config/database.php');
-$con = getDbConnection();
+    // Incluir conexión temprana para la auditoría
+    require_once('config/database.php');
+    $con = getDbConnection();
 
-if ($con) {
-    $payload_esc = mysqli_real_escape_string($con, $respuesta);
-    mysqli_query($con, "INSERT INTO auditoria_webhooks (payload_json) VALUES ('$payload_esc')");
-}
-
-// Verificar que hay datos
-if (!$respuesta_array || !isset($respuesta_array['entry'][0]['changes'][0]['value'])) {
-    exit;
-}
-
-$value = $respuesta_array['entry'][0]['changes'][0]['value'];
-
-// NUEVO: Extraer el número de teléfono que recibió el mensaje (telefono_meta)
-$telefonoReceptorID = $value['metadata']['phone_number_id'] ?? null;
-$displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
-
-// GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído)
-if (isset($value['statuses'][0])) {
-    $estado = $value['statuses'][0]['status']; // sent, delivered, read, failed
-    $id_mensaje_meta_status = $value['statuses'][0]['id'];
-    
-    $estado_sql = null;
-    if ($estado == 'sent') $estado_sql = 'ENVIADO';
-    else if ($estado == 'delivered') $estado_sql = 'ENTREGADO';
-    else if ($estado == 'read') $estado_sql = 'LEIDO';
-    else if ($estado == 'failed') $estado_sql = 'FALLIDO';
-    
-    if ($con && $estado_sql) {
-        $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
-        mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql' WHERE id_mensaje_meta = '$id_msg_esc'");
+    if ($con) {
+        $payload_esc = mysqli_real_escape_string($con, $respuesta);
+        mysqli_query($con, "INSERT INTO auditoria_webhooks (payload_json) VALUES ('$payload_esc')");
     }
-    exit;
-}
 
-// Verificar que hay mensajes
-if (!isset($value['messages'][0])) {
-    exit;
-}
-
-$msg = $value['messages'][0];
-$telefonoCliente = $msg['from'] ?? null;
-$id_mensaje_meta = $msg['id'] ?? null;
-$times = $msg['timestamp'] ?? time();
-$perfil = $respuesta_array['entry'][0]['changes'][0]['value']['contacts'][0]['profile']['name'] ?? 'Usuario';
-
-$tipo_mensaje = $msg['type'] ?? 'text';
-$mensaje_texto = null;
-$tipo_bd = 'TEXTO';
-$url_archivo = null;
-$mime_type = null;
-
-if ($tipo_mensaje === 'text') {
-    $mensaje_texto = $msg['text']['body'] ?? '';
-} else if ($tipo_mensaje === 'image') {
-    $tipo_bd = 'IMAGEN';
-    $mensaje_texto = $msg['image']['caption'] ?? 'Imagen recibida';
-    $url_archivo = $msg['image']['id']; 
-    $mime_type = $msg['image']['mime_type'] ?? 'image/jpeg';
-} else if ($tipo_mensaje === 'document') {
-    $tipo_bd = 'DOCUMENTO';
-    $mensaje_texto = $msg['document']['caption'] ?? $msg['document']['filename'] ?? 'Documento recibido';
-    $url_archivo = $msg['document']['id']; 
-    $mime_type = $msg['document']['mime_type'] ?? 'application/pdf';
-} else if ($tipo_mensaje === 'audio') {
-    $tipo_bd = 'EVENTO_SISTEMA'; 
-    $mensaje_texto = 'Audio recibido';
-    $url_archivo = $msg['audio']['id']; 
-    $mime_type = $msg['audio']['mime_type'] ?? 'audio/ogg';
-} else if ($tipo_mensaje === 'interactive') {
-    $tipo_interactivo = $msg['interactive']['type'] ?? '';
-    if ($tipo_interactivo === 'button_reply') {
-        $mensaje_texto = $msg['interactive']['button_reply']['title'] ?? '';
-    } else if ($tipo_interactivo === 'list_reply') {
-        $mensaje_texto = $msg['interactive']['list_reply']['title'] ?? '';
+    // Verificar que hay datos
+    if (!$respuesta_array || !isset($respuesta_array['entry'][0]['changes'][0]['value'])) {
+        exit;
     }
-}
 
-//SI HAY UN MENSAJE
-if($telefonoCliente != null){
-    save_mensaje($con, $id_mensaje_meta, $telefonoCliente, $times, $mensaje_texto, $perfil, $telefonoReceptorID, $displayPhoneNumber, $tipo_bd, $url_archivo, $mime_type);
+    $value = $respuesta_array['entry'][0]['changes'][0]['value'];
+
+    // NUEVO: Extraer el número de teléfono que recibió el mensaje (telefono_meta)
+    $telefonoReceptorID = $value['metadata']['phone_number_id'] ?? null;
+    $displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
+
+    // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído)
+    if (isset($value['statuses'][0])) {
+        $estado = $value['statuses'][0]['status']; // sent, delivered, read, failed
+        $id_mensaje_meta_status = $value['statuses'][0]['id'];
+        
+        $estado_sql = null;
+        if ($estado == 'sent') $estado_sql = 'ENVIADO';
+        else if ($estado == 'delivered') $estado_sql = 'ENTREGADO';
+        else if ($estado == 'read') $estado_sql = 'LEIDO';
+        else if ($estado == 'failed') $estado_sql = 'FALLIDO';
+        
+        if ($con && $estado_sql) {
+            $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
+            mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql' WHERE id_mensaje_meta = '$id_msg_esc'");
+        }
+        exit;
+    }
+
+    // Verificar que hay mensajes
+    if (!isset($value['messages'][0])) {
+        exit;
+    }
+
+    $msg = $value['messages'][0];
+    $telefonoCliente = $msg['from'] ?? null;
+    $id_mensaje_meta = $msg['id'] ?? null;
+    $times = $msg['timestamp'] ?? time();
+    $perfil = $respuesta_array['entry'][0]['changes'][0]['value']['contacts'][0]['profile']['name'] ?? 'Usuario';
+
+    $tipo_mensaje = $msg['type'] ?? 'text';
+    $mensaje_texto = null;
+    $tipo_bd = 'TEXTO';
+    $url_archivo = null;
+    $mime_type = null;
+
+    if ($tipo_mensaje === 'text') {
+        $mensaje_texto = $msg['text']['body'] ?? '';
+    } else if ($tipo_mensaje === 'image') {
+        $tipo_bd = 'IMAGEN';
+        $mensaje_texto = $msg['image']['caption'] ?? 'Imagen recibida';
+        $url_archivo = $msg['image']['id']; 
+        $mime_type = $msg['image']['mime_type'] ?? 'image/jpeg';
+    } else if ($tipo_mensaje === 'document') {
+        $tipo_bd = 'DOCUMENTO';
+        $mensaje_texto = $msg['document']['caption'] ?? $msg['document']['filename'] ?? 'Documento recibido';
+        $url_archivo = $msg['document']['id']; 
+        $mime_type = $msg['document']['mime_type'] ?? 'application/pdf';
+    } else if ($tipo_mensaje === 'audio') {
+        $tipo_bd = 'EVENTO_SISTEMA'; 
+        $mensaje_texto = 'Audio recibido';
+        $url_archivo = $msg['audio']['id']; 
+        $mime_type = $msg['audio']['mime_type'] ?? 'audio/ogg';
+    } else if ($tipo_mensaje === 'interactive') {
+        $tipo_interactivo = $msg['interactive']['type'] ?? '';
+        if ($tipo_interactivo === 'button_reply') {
+            $mensaje_texto = $msg['interactive']['button_reply']['title'] ?? '';
+        } else if ($tipo_interactivo === 'list_reply') {
+            $mensaje_texto = $msg['interactive']['list_reply']['title'] ?? '';
+        }
+    }
+
+    //SI HAY UN MENSAJE
+    if($telefonoCliente != null){
+        save_mensaje($con, $id_mensaje_meta, $telefonoCliente, $times, $mensaje_texto, $perfil, $telefonoReceptorID, $displayPhoneNumber, $tipo_bd, $url_archivo, $mime_type);
+    }
 }
 
 /**
@@ -222,8 +224,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
 
     // LÓGICA DE BOT_RECOPILANDO
     if (!$nueva_conversacion && $estado_conv === 'BOT_RECOPILANDO' && $tipo_bd === 'TEXTO') {
-        // Actualizar el nombre del cliente con el mensaje enviado
-        $nombre_ingresado = trim($cuerpo_mensaje);
+        // Extraer y limpiar el nombre ingresado
+        $nombre_ingresado = extract_clean_name($cuerpo_mensaje, $perfil);
         $nombre_esc = mysqli_real_escape_string($con, $nombre_ingresado);
         mysqli_query($con, "UPDATE clientes_contactos SET nombre = '$nombre_esc' WHERE id = $id_cliente");
         $nombre_db = $nombre_ingresado;
@@ -384,5 +386,50 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
         // Pequeña pausa entre envíos
         usleep(500000); // 0.5 segundos
     }
+}
+
+/**
+ * Extraer y limpiar el nombre de un mensaje conversacional
+ */
+function extract_clean_name($text, $profile_fallback = 'Usuario') {
+    // 1. Dividir por el primer punto, salto de línea o coma para tomar solo la primera parte
+    $parts = preg_split('/[\.\n,]/u', $text);
+    $clean = trim($parts[0]);
+    
+    // 2. Limpiar frases típicas introductorias (insensible a mayúsculas/minúsculas)
+    $prefixes = [
+        '/^hola\s+soy\s+/ui',
+        '/^hola,\s+soy\s+/ui',
+        '/^soy\s+/ui',
+        '/^mi\s+nombre\s+es\s+/ui',
+        '/^me\s+llamo\s+/ui',
+        '/^es\s+/ui',
+        '/^hola\s+/ui',
+        '/^buen\s+dia\s+/ui',
+        '/^buenos\s+dias\s+/ui'
+    ];
+    
+    foreach ($prefixes as $pattern) {
+        $clean = preg_replace($pattern, '', $clean);
+    }
+    
+    $clean = trim($clean);
+    $clean_lower = mb_strtolower($clean);
+    
+    // 3. Descartar si contiene palabras típicas de mensajes o preguntas
+    $invalid_words = ['precio', 'cuanto', 'cuesta', 'tienen', 'donde', 'ubicados', 'hola', 'buen', 'dias', 'tardes', 'noches', 'pregunta', 'lamina', 'pvc', 'fondo', 'blanco', 'disp', '?', '¿', '!', '¡', 'gracias', 'catalogo'];
+    foreach ($invalid_words as $word) {
+        if (mb_strpos($clean_lower, $word) !== false) {
+            return $profile_fallback;
+        }
+    }
+    
+    // 4. Validación de longitud razonable (2 a 40 caracteres)
+    if (mb_strlen($clean) < 2 || mb_strlen($clean) > 40) {
+        return $profile_fallback;
+    }
+    
+    // 5. Convertir a Capitalización Tipo Título (Ej: "Juan Pérez")
+    return mb_convert_case($clean, MB_CASE_TITLE, "UTF-8");
 }
 ?>

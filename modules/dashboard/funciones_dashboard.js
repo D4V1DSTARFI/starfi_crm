@@ -8,18 +8,25 @@ $(document).ready(function() {
     });
 
     $('#btnApplyFilters').on('click', function() {
-        Swal.fire({ title: 'Filtros Avanzados', text: 'Búsqueda por fechas estará disponible en la Fase 2.', icon: 'info' });
-        // Al aplicar filtros recargamos (En el futuro se mandan los params por POST)
         loadDashboardData();
     });
 });
 
 function loadDashboardData() {
+    let idSede = $('#filterSede').val() || 'all';
+    let fechaDesde = $('#filterFechaDesde').val() || '';
+    let fechaHasta = $('#filterFechaHasta').val() || '';
+
     $.ajax({
         url: 'back_dashboard.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_kpis' },
+        data: { 
+            action: 'load_kpis',
+            id_sede: idSede,
+            fecha_desde: fechaDesde,
+            fecha_hasta: fechaHasta
+        },
         success: function(res) {
             if (res.status === 'success') {
                 const data = res.data;

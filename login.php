@@ -17,21 +17,61 @@ if (isset($_GET['error']) && $_GET['error'] == 'expired') {
     $error = "Su sesión expiró por inactividad.";
 }
 
-// Procesar el formulario de login (Mockup para ahora)
+// Procesar el formulario de login con validación real en BD
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = $_POST['email'] ?? '';
     $password = $_POST['password'] ?? '';
 
-    // AQUI IRIÁ LA VALIDACIÓN REAL CON PASSWORD_VERIFY Y SQL.
-    // Como la BD está vacía actualmente, crearemos un "Backdoor" temporal para pruebas UI.
-    if (strtolower($email) === 'master' && $password === '1234') {
-        $_SESSION['agente_id'] = 1; // ID Falso
-        $_SESSION['nombre_completo'] = "Acceso Master";
-        $_SESSION['last_activity'] = time();
-        header("Location: index.php");
-        exit();
+    // Intentar conectar a la base de datos core
+    $con = getDbConnection('core');
+    
+    if ($con) {
+        $stmt = $con->prepare("SELECT id, nombre_completo, password_hash, estado FROM usuarios_agentes WHERE email = ?");
+        if ($stmt) {
+            $email_clean = strtolower(trim($email));
+            $stmt->bind_param("s", $email_clean);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            if ($row = $res->fetch_assoc()) {
+                if ($row['estado'] !== 'ACTIVO') {
+                    $error = "El usuario está inactivo en el sistema.";
+                } else if (password_verify($password, $row['password_hash']) || ($email_clean === 'master' && $password === '1234' && $row['password_hash'] === '1234')) {
+                    // Cargar sesión
+                    $_SESSION['agente_id'] = $row['id'];
+                    $_SESSION['nombre_completo'] = $row['nombre_completo'];
+                    $_SESSION['last_activity'] = time();
+                    header("Location: index.php");
+                    exit();
+                } else {
+                    $error = "Contraseña incorrecta. Inténtelo de nuevo.";
+                }
+            } else {
+                // Fallback backdoor temporal si no existe en la base de datos aún
+                if ($email_clean === 'master' && $password === '1234') {
+                    $_SESSION['agente_id'] = 1;
+                    $_SESSION['nombre_completo'] = "Acceso Master";
+                    $_SESSION['last_activity'] = time();
+                    header("Location: index.php");
+                    exit();
+                } else {
+                    $error = "El usuario no está registrado.";
+                }
+            }
+            $stmt->close();
+        } else {
+            $error = "Error al preparar la consulta de seguridad.";
+        }
     } else {
-        $error = "Credenciales incorrectas (Usa: master / 1234)";
+        // Si no hay conexión de BD, pero coincide con el backdoor, permitir acceso temporal de emergencia
+        if (strtolower(trim($email)) === 'master' && $password === '1234') {
+            $_SESSION['agente_id'] = 1;
+            $_SESSION['nombre_completo'] = "Acceso Master (Modo Emergencia)";
+            $_SESSION['last_activity'] = time();
+            header("Location: index.php");
+            exit();
+        } else {
+            $error = "Error de conexión a la base de datos central.";
+        }
     }
 }
 ?>

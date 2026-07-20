@@ -539,22 +539,26 @@ switch ($action) {
         break;
 
     case 'run_simulacion_entrante':
-        $url = 'http://localhost/starfi_crm/simulador_whatsapp.php';
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-        $res = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        if ($http_code == 200) {
-            echo json_encode(['status' => 'success', 'message' => 'Simulación de mensaje entrante ejecutada correctamente. Revisa la bandeja.']);
+        // Evitamos peticiones HTTP recursivas/loopback incluyendo el webhook directamente y llamando a su función
+        define('WEBHOOK_NO_EXECUTE', true);
+        require_once __DIR__ . '/../../webhook.php';
+        if ($con && !$con->connect_error) {
+            $numero_cliente = '584120000002';
+            $nombre_cliente = 'Cliente Prueba Simulator';
+            $mensaje_texto = 'Hola! Quiero probar la recepción de mensajes.';
+            $phone_number_id = '123456789';
+            
+            save_mensaje($con, 'wamid.simulated_' . uniqid(), $numero_cliente, time(), $mensaje_texto, $nombre_cliente, $phone_number_id, '15551234567');
+            echo json_encode(['status' => 'success', 'message' => 'Simulación de mensaje entrante ejecutada localmente con éxito. Revisa la bandeja.']);
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'Error al ejecutar simulador (HTTP ' . $http_code . ').']);
+            echo json_encode(['status' => 'error', 'message' => 'Error al conectar a la base de datos para simulación.']);
         }
         break;
 
     case 'run_envio_transaccional':
-        $url = 'http://localhost/starfi_crm/api_notificaciones.php';
+        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $url = $protocol . '://' . $host . '/starfi_crm/api_notificaciones.php';
         $post_fields = [
             'telefono' => $_POST['telefono'] ?? '',
             'nombre_cliente' => $_POST['nombre_cliente'] ?? '',

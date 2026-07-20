@@ -206,13 +206,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <div class="logo">
+            <div class="logo" id="toggleSidebar" style="cursor: pointer;">
                 <img src="../../docs/identidad_visual/logos/isologo.png" alt="STARFI" style="height: 30px;">
                 <span>STARFI CRM</span>
             </div>
-            <button class="toggle-btn" id="toggleSidebar">
-                <i class="fa-solid fa-bars"></i>
-            </button>
         </div>
         <nav class="sidebar-nav">
             <a href="../bandeja/bandeja.php" class="nav-item active"><i class="fa-solid fa-inbox"></i>
@@ -231,16 +228,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </nav>
         
         <div class="sidebar-footer">
-            <div class="agent-profile" style="display: flex; align-items: center; width: 100%;">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nombre_agente) ?>&background=EBF4FF&color=1E3A8A" alt="Avatar">
-                <div class="agent-info" style="flex-grow: 1;">
-                    <span class="agent-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; display: inline-block;"><?= htmlspecialchars($nombre_agente) ?></span>
-                    <span class="agent-status online">En línea</span>
-                </div>
-                <a href="/starfi_crm/logout.php" class="btn text-danger p-1 m-0" title="Cerrar Sesión" style="font-size: 1.1rem;">
-                    <i class="fa-solid fa-power-off"></i>
-                </a>
-            </div>
+            <a href="/starfi_crm/logout.php" class="btn btn-danger w-100 py-2 d-flex align-items: center justify-content: center gap-2 fw-semibold" style="border-radius: 10px; font-size: 0.85rem; background-color: var(--starfi-danger) !important; border-color: var(--starfi-danger) !important;" title="Cerrar Sesión">
+                <i class="fa-solid fa-power-off"></i>
+                <span class="logout-text">Cerrar Sesión</span>
+            </a>
         </div>
     </aside>
 
@@ -253,9 +244,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <h2>Conversaciones</h2>
                 <!-- Tabs -->
                 <div class="tabs">
-                    <button class="tab" data-target="mis-chats">Mis Chats</button>
-                    <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab active" data-target="todos">Todos</button>
+                    <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                 </div>
                 <!-- Search -->
                 <div class="search-bar">
@@ -290,7 +280,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <div class="client-info">
                         <img id="chatHeaderImg" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="Avatar" style="background-color: #F3F4F6;">
                         <div>
-                            <h3 id="chatHeaderName">...</h3>
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <h3 id="chatHeaderName" style="margin: 0; font-size: 1.15rem; font-weight: 700;">...</h3>
+                                <span id="chatHeaderSede" class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.7rem; background-color: #37414A !important; display: none;"><i class="fa-solid fa-store me-1"></i> <span>...</span></span>
+                            </div>
                             <span id="chatHeaderPhone">...</span>
                         </div>
                     </div>

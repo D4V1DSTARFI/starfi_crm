@@ -269,7 +269,6 @@ function loadSedes() {
                                 <div class="d-flex border-top">
                                     <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarSede(${s.id})"><i class="fa-solid fa-pen"></i></button>
                                     <button class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="WhatsApp API" onclick="configurarAPI(${s.id})"><i class="fa-brands fa-whatsapp"></i></button>
-                                    <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Métricas" onclick="mostrarEstadisticas(${s.id})"><i class="fa-solid fa-chart-line"></i></button>
                                     <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarSede(${s.id})"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
@@ -302,7 +301,10 @@ function editarSede(id) {
                 $('#tipo_sede').val(s.tipo_sede);
                 $('#observaciones').val(s.observaciones);
                 
-                var myModal = new bootstrap.Modal(document.getElementById('modalSede'));
+                $('#modalSede .modal-title').html('<i class="fa-solid fa-building me-2 text-starfi-primary"></i>Editar Sede');
+                
+                var modalEl = document.getElementById('modalSede');
+                var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
                 myModal.show();
             } else {
                 Swal.fire('Error', res.message, 'error');
@@ -340,43 +342,59 @@ function borrarSede(id) {
 }
 
 function configurarAPI(id_sede) {
-    // Busca si ya hay una API configurada para esta sede, sino abre el modal en blanco
+    // 1. Cargar las sedes primero para asegurar que existan los options en el select
     $.ajax({
         url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-        data: { action: 'get_api_by_sede', id_sede: id_sede },
-        success: function(res) {
-            $('#formAPI')[0].reset();
-            // Aseguramos que la sede seleccionada sea la de la tarjeta
-            $('#api_sede').val(id_sede);
-            
-            if(res.status === 'success' && res.data) {
-                // Hay API
-                const a = res.data;
-                $('#id_api').val(a.id);
-                $('#api_descripcion').val(a.descripcion);
-                $('#api_telefono').val(a.numero_telefono);
-                $('#api_telefono_meta').val(a.meta_telefono_id);
-                $('#api_token_meta').val(a.meta_token);
-                $('#api_id_negocio').val(a.id_negocio);
-                $('#api_estado').val(a.estado);
-                $('#api_limite').val(a.limite_solicitudes);
-                $('#api_observacion').val(a.observaciones);
-            } else {
-                // Nueva API para esta sede
-                $('#id_api').val('');
+        data: { action: 'get_sedes_list' },
+        success: function(resSedes) {
+            if(resSedes.status === 'success'){
+                let select = $('#api_sede');
+                select.html('<option value="">Seleccione una sede...</option>');
+                resSedes.data.forEach(s => {
+                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                });
+                
+                // 2. Buscar si ya hay una API configurada para esta sede, sino abre el modal en blanco
+                $.ajax({
+                    url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                    data: { action: 'get_api_by_sede', id_sede: id_sede },
+                    success: function(res) {
+                        $('#formAPI')[0].reset();
+                        $('#api_sede').val(id_sede);
+                        
+                        if(res.status === 'success' && res.data) {
+                            // Hay API
+                            const a = res.data;
+                            $('#id_api').val(a.id);
+                            $('#api_descripcion').val(a.descripcion);
+                            $('#api_telefono').val(a.numero_telefono);
+                            $('#api_telefono_meta').val(a.meta_telefono_id);
+                            $('#api_token_meta').val(a.meta_token);
+                            $('#api_id_negocio').val(a.id_negocio);
+                            $('#api_estado').val(a.estado);
+                            $('#api_limite').val(a.limite_solicitudes);
+                            $('#api_observacion').val(a.observaciones);
+                            
+                            $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Editar API WhatsApp');
+                        } else {
+                            // Nueva API para esta sede
+                            $('#id_api').val('');
+                            $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Nueva API WhatsApp');
+                        }
+                        
+                        // 3. Mostrar modal
+                        var modalEl = document.getElementById('modalAPI');
+                        var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+                        myModal.show();
+                    }
+                });
             }
-            var myModal = new bootstrap.Modal(document.getElementById('modalAPI'));
-            myModal.show();
         }
     });
 }
 
 function mostrarEstadisticas(id_sede) {
-    Swal.fire({
-        icon: 'info',
-        title: 'Métricas de la Sede',
-        text: 'El módulo de métricas y estadísticas detalladas por sede estará disponible en Starfi 2.0. ¡Próximamente!'
-    });
+    window.location.href = '../dashboard/dashboard.php?sede=' + id_sede;
 }
 
 function loadAPIs() {
@@ -431,7 +449,6 @@ function loadAPIs() {
                                     <div class="d-flex border-top">
                                         <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar API" onclick="editarAPI(${a.id})"><i class="fa-solid fa-pen"></i></button>
                                         <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Probar API" onclick="abrirPruebaAPI(${a.id}, '${a.numero_telefono}')"><i class="fa-solid fa-bolt"></i></button>
-                                        <button class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Métricas" onclick="mostrarEstadisticasAPI(${a.id})"><i class="fa-solid fa-circle-info"></i></button>
                                         <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar API" onclick="borrarAPI(${a.id})"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                 </div>

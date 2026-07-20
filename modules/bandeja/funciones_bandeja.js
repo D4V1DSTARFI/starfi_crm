@@ -5,6 +5,11 @@ let activeClientId = null;
 let currentFilter = 'todos';
 
 $(document).ready(function () {
+    // --- Sidebar Toggle ---
+    $('#toggleSidebar').on('click', function() {
+        $('#sidebar').toggleClass('collapsed');
+    });
+
     // Interceptar errores de AJAX globales
     $(document).ajaxError(function (event, jqxhr, settings, thrownError) {
         if (jqxhr.status === 401) {
@@ -166,7 +171,8 @@ $(document).ready(function () {
         const cliente_id = $(this).data('cliente-id');
         const name = $(this).data('name');
         const phone = $(this).data('phone');
-        selectChat(id, cliente_id, name, phone);
+        const sede = $(this).data('sede');
+        selectChat(id, cliente_id, name, phone, sede);
     });
 
     // Función global para clics móviles
@@ -175,7 +181,8 @@ $(document).ready(function () {
         const cliente_id = $(element).data('cliente-id');
         const name = $(element).data('name');
         const phone = $(element).data('phone');
-        selectChat(id, cliente_id, name, phone);
+        const sede = $(element).data('sede');
+        selectChat(id, cliente_id, name, phone, sede);
     };
 
     // 1. Filtros de pestañas
@@ -328,15 +335,17 @@ function renderChatList(chats) {
         let isActiveClass = (chat.id == activeChatId && chat.id_cliente == activeClientId) ? 'active' : '';
 
         let html = `
-            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}">
+            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}">
                 <div class="chat-avatar">
                     <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A" alt="Avatar">
-                    <div class="sla-indicator sla-green"></div>
                 </div>
                 <div class="chat-summary">
                     <div class="chat-top">
                         <h4>${name}</h4>
                         <span class="time">${formatTime(chat.fecha_inicio)}</span>
+                    </div>
+                    <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+                        <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
                     </div>
                     <div class="chat-bottom" style="display:flex; align-items:center;">
                         <p class="preview" style="margin-right:10px;">Haz clic para ver la conversación</p>
@@ -355,7 +364,7 @@ function renderChatList(chats) {
     }
 }
 
-function selectChat(id, cliente_id, name, phone) {
+function selectChat(id, cliente_id, name, phone, nombre_sede) {
     activeChatId = id;
     activeClientId = cliente_id;
     $('.chat-item').removeClass('active');
@@ -375,6 +384,13 @@ function selectChat(id, cliente_id, name, phone) {
     $('#chatHeaderName').text(name);
     $('#chatHeaderPhone').text(`+${phone}`);
     $('#chatHeaderImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A`);
+
+    if (nombre_sede) {
+        $('#chatHeaderSede span').text(nombre_sede);
+        $('#chatHeaderSede').css('display', 'inline-block');
+    } else {
+        $('#chatHeaderSede').hide();
+    }
 
     // If profile is open, update it
     if ($('#modalProfile360').hasClass('show')) {

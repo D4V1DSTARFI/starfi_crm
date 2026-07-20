@@ -289,17 +289,28 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         }
 
         .profile-avatar-large {
-            text-align: center;
-            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            text-align: left;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #E2E8F0;
         }
 
         .profile-avatar-large img {
-            width: 90px;
-            height: 90px;
-            border-radius: 20px;
-            margin-bottom: 12px;
+            width: 70px;
+            height: 70px;
+            border-radius: 14px;
             box-shadow: 0 8px 20px rgba(0,0,0,0.08);
             object-fit: cover;
+            margin-bottom: 0;
+        }
+
+        .profile-avatar-large h4 {
+            font-size: 1.25rem;
+            line-height: 1.35;
+            margin-bottom: 4px;
         }
 
         .form-group {
@@ -342,15 +353,6 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             border-radius: 10px;
             font-size: 0.95rem;
             color: #1E293B;
-        }
-        #profPrefix {
-            border-top-right-radius: 0;
-            border-bottom-right-radius: 0;
-            border-right: 0;
-        }
-        #profPhone {
-            border-top-left-radius: 0;
-            border-bottom-left-radius: 0;
         }
         #profPhone:focus, #profPrefix:focus {
             border-color: var(--primary);
@@ -464,13 +466,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <div class="logo">
+            <div class="logo" id="toggleSidebar" style="cursor: pointer;">
                 <img src="../../docs/identidad_visual/logos/isologo.png" alt="STARFI" style="height: 30px;">
                 <span>STARFI CRM</span>
             </div>
-            <button class="toggle-btn" id="toggleSidebar">
-                <i class="fa-solid fa-bars"></i>
-            </button>
         </div>
         <nav class="sidebar-nav">
             <a href="../bandeja/bandeja.php" class="nav-item">
@@ -493,16 +492,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </nav>
         
                 <div class="sidebar-footer">
-            <div class="agent-profile" style="display: flex; align-items: center; width: 100%;">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nombre_agente) ?>&background=EBF4FF&color=1E3A8A" alt="Avatar">
-                <div class="agent-info" style="flex-grow: 1;">
-                    <span class="agent-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; display: inline-block;"><?= htmlspecialchars($nombre_agente) ?></span>
-                    <span class="agent-status online">En línea</span>
-                </div>
-                <a href="/starfi_crm/logout.php" class="btn text-danger p-1 m-0" title="Cerrar Sesión" style="font-size: 1.1rem;">
-                    <i class="fa-solid fa-power-off"></i>
-                </a>
-            </div>
+            <a href="/starfi_crm/logout.php" class="btn btn-danger w-100 py-2 d-flex align-items: center justify-content: center gap-2 fw-semibold" style="border-radius: 10px; font-size: 0.85rem; background-color: var(--starfi-danger) !important; border-color: var(--starfi-danger) !important;" title="Cerrar Sesión">
+                <i class="fa-solid fa-power-off"></i>
+                <span class="logout-text">Cerrar Sesión</span>
+            </a>
         </div>
     </aside>
 
@@ -559,7 +552,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
             <!-- Modal Ficha de Cliente (Layout 2 Columnas) -->
             <div class="modal fade" id="profileModal" tabindex="-1" aria-hidden="true">
-                <div class="modal-dialog modal-xl modal-dialog-centered">
+                <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 1350px;">
                     <div class="modal-content overflow-hidden">
                         <div class="modal-header border-0 bg-light">
                             <h5 class="modal-title mb-0 brand-font fw-bold text-starfi-dark"><i class="fa-solid fa-id-card-clip me-2 text-starfi-primary"></i>Ficha de Cliente 360</h5>
@@ -567,13 +560,15 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                         
                         <div class="modal-body p-0">
-                            <div class="profile-body-scroll d-flex flex-row" style="height: 650px;">
+                            <div class="profile-body-scroll d-flex flex-row" style="height: 780px;">
                     <!-- Columna Izquierda: Datos -->
                     <div class="profile-data-col">
                         <div class="profile-avatar-large">
                             <img id="profAvatarImg" src="https://ui-avatars.com/api/?name=User&background=E85B14&color=fff" alt="Avatar">
-                            <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #0F172A;">Nombre Cliente</h4>
-                            <span class="badge bg-light text-secondary border" id="profTitleId">ID: CLI-000</span>
+                            <div>
+                                <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #0F172A;">Nombre Cliente</h4>
+                                <span class="badge bg-light text-secondary border" id="profTitleId">ID: CLI-000</span>
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -582,15 +577,15 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                         <div class="form-group">
                             <label class="form-label">Número de WhatsApp</label>
-                            <div class="input-group">
-                                <select class="form-select" id="profPrefix" style="max-width: 100px; border-right: none;">
+                            <div class="d-flex gap-2">
+                                <select class="form-select" id="profPrefix" style="max-width: 120px;">
                                     <option value="58414">0414</option>
                                     <option value="58424">0424</option>
                                     <option value="58412">0412</option>
                                     <option value="58416">0416</option>
                                     <option value="58426">0426</option>
                                 </select>
-                                <input type="text" id="profPhone" class="form-control-custom" style="border-top-left-radius: 0; border-bottom-left-radius: 0;" placeholder="1234567">
+                                <input type="text" id="profPhone" class="form-control-custom" style="flex: 1;" placeholder="1234567">
                             </div>
                         </div>
                         <div class="form-group">

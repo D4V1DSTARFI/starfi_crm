@@ -84,6 +84,11 @@ body {
     width: var(--sidebar-collapsed-width);
 }
 
+.sidebar.collapsed .sidebar-header {
+    justify-content: center;
+    padding: 0;
+}
+
 .sidebar-header {
     height: 70px;
     display: flex;
@@ -836,4 +841,25 @@ body {
 @keyframes fadeOut {
     from { opacity: 1; }
     to { opacity: 0; transform: translateY(10px); }
+}
+
+/* Sidebar collapsed footer improvements */
+.sidebar.collapsed .logout-text {
+    display: none !important;
+}
+.sidebar.collapsed .sidebar-footer {
+    padding: 15px 10px !important;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.sidebar.collapsed .sidebar-footer a.btn-danger {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }

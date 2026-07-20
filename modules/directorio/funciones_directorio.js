@@ -258,6 +258,7 @@ function loadProfile(id, rowElement) {
                 
                 // Open Panel (Modal)
                 $('#profileModal').modal('show');
+                $('.profile-data-col').scrollTop(0);
             }
         }
     });

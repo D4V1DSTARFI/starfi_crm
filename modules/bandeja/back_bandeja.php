@@ -20,9 +20,12 @@ switch ($action) {
                 cl.numero_whatsapp, 
                 IFNULL(c.estado, 'SIN INICIAR') as estado, 
                 IFNULL(c.fecha_inicio, cl.fecha_registro) as fecha_inicio,
-                IFNULL(c.mensajes_no_leidos, 0) as no_leidos
+                IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
+                IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede
             FROM clientes_contactos cl
             LEFT JOIN conversaciones c ON cl.id = c.id_cliente AND c.estado != 'CERRADO'
+            LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+            LEFT JOIN sedes s ON l.id_sede = s.id
             WHERE cl.id_empresa = 1
         ";
         

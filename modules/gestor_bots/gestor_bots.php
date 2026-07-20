@@ -185,13 +185,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <div class="logo">
+            <div class="logo" id="toggleSidebar" style="cursor: pointer;">
                 <img src="../../docs/identidad_visual/logos/isologo.png" alt="STARFI" style="height: 30px;">
                 <span>STARFI CRM</span>
             </div>
-            <button class="toggle-btn" id="toggleSidebar">
-                <i class="fa-solid fa-bars"></i>
-            </button>
         </div>
         <nav class="sidebar-nav">
             <a href="../bandeja/bandeja.php" class="nav-item">
@@ -217,16 +214,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </nav>
         
                 <div class="sidebar-footer">
-            <div class="agent-profile" style="display: flex; align-items: center; width: 100%;">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nombre_agente) ?>&background=EBF4FF&color=1E3A8A" alt="Avatar">
-                <div class="agent-info" style="flex-grow: 1;">
-                    <span class="agent-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; display: inline-block;"><?= htmlspecialchars($nombre_agente) ?></span>
-                    <span class="agent-status online">En línea</span>
-                </div>
-                <a href="/starfi_crm/logout.php" class="btn text-danger p-1 m-0" title="Cerrar Sesión" style="font-size: 1.1rem;">
-                    <i class="fa-solid fa-power-off"></i>
-                </a>
-            </div>
+            <a href="/starfi_crm/logout.php" class="btn btn-danger w-100 py-2 d-flex align-items: center justify-content: center gap-2 fw-semibold" style="border-radius: 10px; font-size: 0.85rem; background-color: var(--starfi-danger) !important; border-color: var(--starfi-danger) !important;" title="Cerrar Sesión">
+                <i class="fa-solid fa-power-off"></i>
+                <span class="logout-text">Cerrar Sesión</span>
+            </a>
         </div>
     </aside>
 

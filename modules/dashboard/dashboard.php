@@ -3,6 +3,16 @@ require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
+
+// Cargar sedes activas para el filtro
+$con = getDbConnection();
+$res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+$sedes = [];
+if ($res_sedes) {
+    while ($row = $res_sedes->fetch_assoc()) {
+        $sedes[] = $row;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -183,13 +193,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <div class="logo">
+            <div class="logo" id="toggleSidebar" style="cursor: pointer;">
                 <img src="../../docs/identidad_visual/logos/isologo.png" alt="STARFI" style="height: 30px;">
                 <span>STARFI CRM</span>
             </div>
-            <button class="toggle-btn" id="toggleSidebar">
-                <i class="fa-solid fa-bars"></i>
-            </button>
         </div>
         <nav class="sidebar-nav">
             <a href="../bandeja/bandeja.php" class="nav-item">
@@ -212,16 +219,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </nav>
         
                 <div class="sidebar-footer">
-            <div class="agent-profile" style="display: flex; align-items: center; width: 100%;">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nombre_agente) ?>&background=EBF4FF&color=1E3A8A" alt="Avatar">
-                <div class="agent-info" style="flex-grow: 1;">
-                    <span class="agent-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; display: inline-block;"><?= htmlspecialchars($nombre_agente) ?></span>
-                    <span class="agent-status online">En línea</span>
-                </div>
-                <a href="/starfi_crm/logout.php" class="btn text-danger p-1 m-0" title="Cerrar Sesión" style="font-size: 1.1rem;">
-                    <i class="fa-solid fa-power-off"></i>
-                </a>
-            </div>
+            <a href="/starfi_crm/logout.php" class="btn btn-danger w-100 py-2 d-flex align-items: center justify-content: center gap-2 fw-semibold" style="border-radius: 10px; font-size: 0.85rem; background-color: var(--starfi-danger) !important; border-color: var(--starfi-danger) !important;" title="Cerrar Sesión">
+                <i class="fa-solid fa-power-off"></i>
+                <span class="logout-text">Cerrar Sesión</span>
+            </a>
         </div>
     </aside>
 
@@ -240,26 +241,26 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             </div>
 
             <!-- Filtros de Auditoría -->
+            <?php
+            $selected_sede_get = $_GET['sede'] ?? 'all';
+            ?>
             <div class="filters-panel">
                 <div class="filter-group">
                     <label>Sede / Sucursal</label>
-                    <select class="filter-control">
-                        <option>Todas las sedes</option>
-                        <option>Caracas - Principal</option>
-                        <option>Valencia - Norte</option>
+                    <select id="filterSede" class="filter-control">
+                        <option value="all" <?= $selected_sede_get === 'all' ? 'selected' : '' ?>>Todas las sedes</option>
+                        <?php foreach ($sedes as $s): ?>
+                            <option value="<?= $s['id'] ?>" <?= (string)$s['id'] === (string)$selected_sede_get ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="filter-group">
-                    <label>Operador</label>
-                    <select class="filter-control">
-                        <option>Todos los operadores</option>
-                        <option>Carlos Pérez</option>
-                        <option>Ana García</option>
-                    </select>
+                    <label>Fecha Desde</label>
+                    <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d') ?>">
                 </div>
                 <div class="filter-group">
-                    <label>Rango de Fechas</label>
-                    <input type="date" class="filter-control">
+                    <label>Fecha Hasta</label>
+                    <input type="date" id="filterFechaHasta" class="filter-control" value="<?= date('Y-m-d') ?>">
                 </div>
                 <button id="btnApplyFilters" class="btn btn-starfi-primary" style="height: 38px;">Aplicar Filtros</button>
             </div>
@@ -350,7 +351,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
-    <script src="funciones_dashboard.js"></script>
+    <script src="funciones_dashboard.js?v=<?= time() ?>"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {
             document.getElementById('sidebar').classList.toggle('collapsed');
