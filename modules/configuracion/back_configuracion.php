@@ -37,7 +37,7 @@ switch ($action) {
     // --- GESTIÓN DE PLANTILLAS META ---
     case 'get_meta_templates':
         $id_sede = intval($_POST['id_sede'] ?? 0);
-        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede AND id_empresa = $id_empresa LIMIT 1");
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
         if ($res && $row = $res->fetch_assoc()) {
             if (empty($row['id_negocio'])) {
                 echo json_encode(['status' => 'error', 'message' => 'WABA ID (ID de Negocio) no configurado en la API de WhatsApp de esta sede.']);
@@ -70,7 +70,7 @@ switch ($action) {
         $language = $_POST['language'] ?? 'es';
         $body = $_POST['body'] ?? '';
         
-        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede AND id_empresa = $id_empresa LIMIT 1");
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
         if ($res && $row = $res->fetch_assoc()) {
             if (empty($row['id_negocio'])) {
                 echo json_encode(['status' => 'error', 'message' => 'WABA ID no configurado.']);
@@ -114,7 +114,7 @@ switch ($action) {
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $name = $_POST['name'] ?? '';
         
-        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede AND id_empresa = $id_empresa LIMIT 1");
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
         if ($res && $row = $res->fetch_assoc()) {
             $waba_id = $row['id_negocio'];
             $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=$name";
