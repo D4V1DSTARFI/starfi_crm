@@ -184,6 +184,17 @@ if ($res_sedes) {
                                     utilCount += parseInt(dp.conversation);
                                 }
                             });
+                        } else {
+                            // Meta omite el campo si no hay datos facturables en el rango de fechas
+                            Swal.fire({
+                                title: 'Sin Consumo Registrado',
+                                text: 'Meta no reporta conversaciones cobrables en este rango de fechas. (Los mensajes fallidos o rebotados no generan costo).',
+                                icon: 'info',
+                                toast: true,
+                                position: 'top-end',
+                                showConfirmButton: false,
+                                timer: 5000
+                            });
                         }
                         
                         $('#kpiCosto').text(currency + ' ' + totalCost.toFixed(2));
