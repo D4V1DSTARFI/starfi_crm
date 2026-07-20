@@ -28,16 +28,49 @@ if ($res_sedes) {
     <link rel="stylesheet" href="../../css/styles.css">
     
     <style>
-        .dashboard-container { padding: 30px; background-color: var(--bg-main); overflow-y: auto; flex: 1; }
-        .dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .kpi-card { background-color: var(--bg-surface); border-radius: 10px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid var(--border-color); display: flex; flex-direction: column; }
-        .kpi-title { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; font-weight: 600; margin-bottom: 15px; }
-        .kpi-value { font-size: 2rem; font-weight: 700; color: var(--text-main); font-family: var(--font-heading); margin-bottom: 5px; }
-        .filters-panel { background-color: var(--bg-surface); border-radius: 10px; padding: 15px 20px; margin-bottom: 25px; border: 1px solid var(--border-color); display: flex; gap: 15px; align-items: flex-end; }
+        body { background-color: #f0f2f5; }
+        .dashboard-container { padding: 30px; overflow-y: auto; flex: 1; max-width: 1200px; margin: auto; }
+        .filters-panel { background-color: #fff; border-radius: 8px; padding: 15px 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; gap: 15px; align-items: flex-end; }
         .filter-group { flex: 1; }
-        .filter-group label { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px; display: block; font-weight: 600; }
-        .filter-control { width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.9rem; background-color: #F8FAFC; }
+        .filter-group label { font-size: 0.8rem; color: #606770; margin-bottom: 5px; display: block; font-weight: 600; }
+        .filter-control { width: 100%; padding: 8px 12px; border: 1px solid #ccd0d5; border-radius: 6px; font-size: 0.9rem; color: #1c1e21; outline: none; }
+        .filter-control:focus { border-color: #1877f2; }
+        
+        .meta-card { background-color: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); border: 1px solid #dadde1; margin-bottom: 20px; overflow: hidden; }
+        .meta-card-header { padding: 16px 20px; border-bottom: 1px solid #dadde1; background-color: #fff; }
+        .meta-card-title { font-size: 1.1rem; font-weight: 600; color: #1c1e21; margin: 0; display: flex; align-items: center; gap: 8px; }
+        
+        .cost-row { display: flex; gap: 20px; padding: 20px; }
+        .cost-box { flex: 1; padding: 10px; border-right: 1px solid #dadde1; }
+        .cost-box:last-child { border-right: none; }
+        .cost-label { font-size: 0.85rem; color: #606770; font-weight: 600; margin-bottom: 5px; }
+        .cost-value { font-size: 1.8rem; font-weight: 700; color: #1c1e21; }
+        
+        .nav-tabs-meta { display: flex; padding: 0 20px; gap: 20px; border-bottom: 1px solid #dadde1; }
+        .nav-tab-meta { padding: 15px 0; font-size: 0.95rem; font-weight: 600; color: #606770; cursor: pointer; position: relative; }
+        .nav-tab-meta.active { color: #1877f2; }
+        .nav-tab-meta.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 3px; background-color: #1877f2; border-radius: 3px 3px 0 0; }
+        
+        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; padding: 20px; }
+        .metric-card { border: 1px solid #dadde1; border-radius: 8px; padding: 15px; cursor: pointer; transition: all 0.2s; }
+        .metric-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .metric-label { font-size: 0.85rem; color: #1c1e21; font-weight: 600; margin-bottom: 8px; }
+        .metric-value-container { display: flex; align-items: baseline; gap: 10px; }
+        .metric-value { font-size: 1.6rem; font-weight: 400; color: #1c1e21; }
+        .metric-trend { font-size: 0.85rem; font-weight: 500; }
+        .trend-up { color: #31a24c; }
+        .trend-down { color: #fa383e; }
+        .trend-neutral { color: #606770; }
+        
+        .chart-container { padding: 20px; height: 350px; position: relative; }
+        
+        /* Modificadores estéticos (Colores de las líneas) */
+        .color-sent { color: #fa383e; } /* Rojo similar a la imagen */
+        .color-delivered { color: #5a2e70; } /* Morado */
+        .color-read { color: #008080; } /* Verde Azulado */
+        .color-replies { color: #004d40; } /* Verde oscuro */
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <?php renderHeader('Dashboard Facturación WhatsApp'); ?>
@@ -45,16 +78,13 @@ if ($res_sedes) {
     <main class="main-content">
         <div class="dashboard-container">
             
-            <div class="dashboard-header">
-                <div>
-                    <h2 class="brand-font mb-1" style="font-weight: 600;"><i class="fa-brands fa-whatsapp text-success me-2"></i>Métricas de Consumo</h2>
-                    <p class="text-muted" style="font-size: 0.9rem;">Analíticas oficiales de WhatsApp Business API</p>
-                </div>
-                <div class="d-flex gap-2">
-                    <a href="dashboard.php" class="btn btn-outline-secondary d-flex align-items-center gap-2">
-                        <i class="fa-solid fa-chart-line"></i> Dashboard General
-                    </a>
-                </div>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="mb-0" style="font-size: 1.5rem; font-weight: 700; color: #1c1e21;">
+                    <i class="fa-brands fa-whatsapp text-success me-2"></i> Rendimiento de la API
+                </h2>
+                <a href="dashboard.php" class="btn btn-outline-secondary bg-white text-dark border-secondary">
+                    <i class="fa-solid fa-chart-line"></i> Dashboard General
+                </a>
             </div>
 
             <!-- Filtros -->
@@ -70,71 +100,118 @@ if ($res_sedes) {
                 </div>
                 <div class="filter-group">
                     <label>Fecha Desde</label>
-                    <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-01') ?>">
+                    <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
                 </div>
                 <div class="filter-group">
                     <label>Fecha Hasta</label>
-                    <input type="date" id="filterFechaHasta" class="filter-control" value="<?= date('Y-m-t') ?>">
+                    <input type="date" id="filterFechaHasta" class="filter-control" value="<?= date('Y-m-d') ?>">
                 </div>
-                <button id="btnApplyFilters" class="btn btn-success text-white fw-bold shadow-sm" style="height: 38px;">
-                    <i class="fa-solid fa-sync me-2"></i>Cargar
+                <button id="btnApplyFilters" class="btn btn-primary px-4 fw-bold shadow-sm" style="height: 38px; background-color: #1877f2; border-color: #1877f2;">
+                    <i class="fa-solid fa-sync me-2"></i>Actualizar
                 </button>
             </div>
 
             <div id="loaderData" class="text-center py-5" style="display: none;">
-                <i class="fa-solid fa-spinner fa-spin fa-3x text-muted mb-3"></i>
-                <p class="text-muted">Consultando métricas en Facebook Meta...</p>
+                <i class="fa-solid fa-circle-notch fa-spin fa-3x text-primary mb-3"></i>
+                <p class="text-muted fw-bold">Obteniendo métricas de Meta Business...</p>
             </div>
 
-            <!-- KPIs -->
+            <!-- Dashboard Content -->
             <div id="contentData" style="display: none;">
-                <div class="row g-4 mb-4">
-                    <div class="col-md-3">
-                        <div class="kpi-card border-success">
-                            <h3 class="kpi-title"><i class="fa-solid fa-money-bill-wave text-success me-2"></i>Costo Estimado</h3>
-                            <div id="kpiCosto" class="kpi-value text-success">USD 0.00</div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="kpi-card">
-                            <h3 class="kpi-title"><i class="fa-solid fa-paper-plane text-primary me-2"></i>Conversaciones Totales</h3>
-                            <div id="kpiTotal" class="kpi-value">0</div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="kpi-card">
-                            <h3 class="kpi-title"><i class="fa-solid fa-bullhorn text-warning me-2"></i>Marketing</h3>
-                            <div id="kpiMarketing" class="kpi-value">0</div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="kpi-card">
-                            <h3 class="kpi-title"><i class="fa-solid fa-receipt text-info me-2"></i>Utilidad (Recibos)</h3>
-                            <div id="kpiUtility" class="kpi-value">0</div>
-                        </div>
-                    </div>
-                </div>
                 
-                <div class="card border-0 shadow-sm rounded-3">
-                    <div class="card-body p-4">
-                        <h6 class="fw-bold mb-3"><i class="fa-solid fa-code text-muted me-2"></i>Raw API Response (Debug Meta)</h6>
-                        <pre id="rawApiResponse" class="bg-dark text-light p-3 rounded" style="font-size: 0.8rem; max-height: 400px; overflow-y: auto;"></pre>
+                <!-- Caja Resumen Financiero -->
+                <div class="meta-card">
+                    <div class="cost-row">
+                        <div class="cost-box">
+                            <div class="cost-label">Importe gastado <i class="fa-solid fa-circle-info text-muted ms-1" title="Costo total de conversaciones"></i></div>
+                            <div class="cost-value" id="kpiImporteGastado">0,00 USD</div>
+                        </div>
+                        <div class="cost-box">
+                            <div class="cost-label">Costo por mensaje entregado <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="cost-value" id="kpiCostoMensaje">--</div>
+                        </div>
+                        <div class="cost-box">
+                            <div class="cost-label">Conversaciones (MKT / UTL) <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="cost-value" id="kpiConversaciones">0 / 0</div>
+                        </div>
                     </div>
                 </div>
+
+                <!-- Caja Rendimiento -->
+                <div class="meta-card">
+                    <div class="meta-card-header">
+                        <h3 class="meta-card-title">Rendimiento <i class="fa-solid fa-circle-info text-muted ms-1" style="font-size: 0.9rem;"></i></h3>
+                    </div>
+                    <div class="nav-tabs-meta">
+                        <div class="nav-tab-meta active">Tendencia</div>
+                        <div class="nav-tab-meta">Embudo</div>
+                    </div>
+                    
+                    <div class="metrics-grid">
+                        <div class="metric-card" style="border-bottom: 3px solid #fa383e;">
+                            <div class="metric-label">Mensajes enviados <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="metric-value-container">
+                                <div class="metric-value" id="kpiEnviados">0</div>
+                                <div class="metric-trend trend-neutral" id="trendEnviados">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card" style="border-bottom: 3px solid #5a2e70;">
+                            <div class="metric-label">Mensajes entregados <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="metric-value-container">
+                                <div class="metric-value" id="kpiEntregados">0</div>
+                                <div class="metric-trend trend-neutral" id="trendEntregados">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card" style="border-bottom: 3px solid #008080;">
+                            <div class="metric-label">Mensajes leídos <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="metric-value-container">
+                                <div class="metric-value" id="kpiLeidos">0</div>
+                                <div class="metric-trend trend-neutral" id="trendLeidos">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card" style="border-bottom: 3px solid #004d40;">
+                            <div class="metric-label">Respuestas únicas <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
+                            <div class="metric-value-container">
+                                <div class="metric-value" id="kpiRespuestas">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chart -->
+                    <div class="chart-container">
+                        <canvas id="metaChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Debug -->
+                <div class="accordion" id="debugAccordion">
+                    <div class="accordion-item border-0 bg-transparent">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-transparent shadow-none fw-bold text-muted" type="button" data-bs-toggle="collapse" data-bs-toggle="collapse" data-bs-target="#debugCollapse">
+                                <i class="fa-solid fa-code me-2"></i> Ver respuesta en bruto de Meta Graph API
+                            </button>
+                        </h2>
+                        <div id="debugCollapse" class="accordion-collapse collapse">
+                            <div class="accordion-body p-0 pt-3">
+                                <pre id="rawApiResponse" class="bg-dark text-light p-3 rounded" style="font-size: 0.8rem; max-height: 400px; overflow-y: auto;"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
             
         </div>
     </main>
 
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
+    <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script>
+        let metaChartInstance = null;
+
         $(document).ready(function() {
-            $('#btnApplyFilters').click(function() {
-                loadAnalytics();
-            });
-            
-            // Cargar inicial
+            $('#btnApplyFilters').click(function() { loadAnalytics(); });
             loadAnalytics();
         });
 
@@ -150,67 +227,127 @@ if ($res_sedes) {
                 url: 'back_whatsapp_analytics.php',
                 type: 'POST',
                 dataType: 'json',
-                data: {
-                    action: 'get_analytics',
-                    id_sede: id_sede,
-                    fecha_desde: desde,
-                    fecha_hasta: hasta
-                },
+                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
                 success: function(res) {
                     $('#loaderData').hide();
+                    $('#rawApiResponse').text(JSON.stringify(res, null, 2));
+
                     if(res.status === 'success') {
                         $('#contentData').fadeIn();
-                        
-                        // Parsear datos
-                        // Meta retorna structure: res.data.conversation_analytics.data
-                        let dataStr = JSON.stringify(res.data, null, 2);
-                        $('#rawApiResponse').text(dataStr);
-                        
-                        let totalCost = 0;
-                        let mktCount = 0;
-                        let utilCount = 0;
-                        let totalConversations = 0;
-                        let currency = 'USD';
-
-                        if(res.data && res.data.conversation_analytics && res.data.conversation_analytics.data) {
-                            let convs = res.data.conversation_analytics.data[0].data_points ?? [];
-                            convs.forEach(dp => {
-                                if (dp.cost) totalCost += parseFloat(dp.cost);
-                                if (dp.conversation) totalConversations += parseInt(dp.conversation);
-                                if (dp.conversation_category === 'MARKETING' && dp.conversation) {
-                                    mktCount += parseInt(dp.conversation);
-                                }
-                                if (dp.conversation_category === 'UTILITY' && dp.conversation) {
-                                    utilCount += parseInt(dp.conversation);
-                                }
-                            });
-                        } else {
-                            // Meta omite el campo si no hay datos facturables en el rango de fechas
-                            Swal.fire({
-                                title: 'Sin Consumo Registrado',
-                                text: 'Meta no reporta conversaciones cobrables en este rango de fechas. (Los mensajes fallidos o rebotados no generan costo).',
-                                icon: 'info',
-                                toast: true,
-                                position: 'top-end',
-                                showConfirmButton: false,
-                                timer: 5000
-                            });
-                        }
-                        
-                        $('#kpiCosto').text(currency + ' ' + totalCost.toFixed(2));
-                        $('#kpiTotal').text(totalConversations);
-                        $('#kpiMarketing').text(mktCount);
-                        $('#kpiUtility').text(utilCount);
-
+                        procesarYGraficar(res.data, desde, hasta);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
-                        $('#rawApiResponse').text(JSON.stringify(res, null, 2));
                         $('#contentData').show();
                     }
                 },
                 error: function() {
                     $('#loaderData').hide();
                     Swal.fire('Error', 'Fallo de conexión al consultar Meta', 'error');
+                }
+            });
+        }
+
+        function procesarYGraficar(data, desde, hasta) {
+            let totalCost = 0;
+            let mktCount = 0;
+            let utilCount = 0;
+            
+            // Analizar Costos (conversation_analytics)
+            if(data.conversation_analytics && data.conversation_analytics.data) {
+                let convs = data.conversation_analytics.data[0]?.data_points || [];
+                convs.forEach(dp => {
+                    if (dp.cost) totalCost += parseFloat(dp.cost);
+                    if (dp.conversation_category === 'MARKETING' && dp.conversation) mktCount += parseInt(dp.conversation);
+                    if (dp.conversation_category === 'UTILITY' && dp.conversation) utilCount += parseInt(dp.conversation);
+                });
+            }
+
+            // Analizar Mensajes (analytics)
+            let enviados = 0, entregados = 0, leidos = 0, respuestas = 0;
+            let labels = [];
+            let dsEnviados = [], dsEntregados = [], dsLeidos = [], dsRespuestas = [];
+
+            if(data.analytics && data.analytics.data) {
+                let msgs = data.analytics.data[0]?.data_points || [];
+                // Ordenar por timestamp
+                msgs.sort((a,b) => a.start - b.start);
+                
+                msgs.forEach(dp => {
+                    // Start es Unix Timestamp. Convertirlo a fecha local
+                    let d = new Date(dp.start * 1000);
+                    labels.push(d.getDate() + ' de ' + d.toLocaleString('es-ES', { month: 'short' }));
+                    
+                    let env = dp.sent || 0;
+                    let ent = dp.delivered || 0;
+                    let lei = dp.read || 0;
+                    // Respuestas únicas no viene por defecto tan fácil, lo simulamos para el dashboard o si existe dp.replies
+                    let resps = dp.replies || 0;
+
+                    enviados += parseInt(env);
+                    entregados += parseInt(ent);
+                    leidos += parseInt(lei);
+                    respuestas += parseInt(resps);
+
+                    dsEnviados.push(env);
+                    dsEntregados.push(ent);
+                    dsLeidos.push(lei);
+                    dsRespuestas.push(resps);
+                });
+            } else {
+                // Si no hay array 'analytics', Meta devolvió vacío. Ponemos un dummy para que el Chart no quede feo
+                labels = [desde, hasta];
+                dsEnviados = [0,0]; dsEntregados = [0,0]; dsLeidos = [0,0]; dsRespuestas = [0,0];
+            }
+
+            // Actualizar UI Textos
+            $('#kpiImporteGastado').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
+            $('#kpiConversaciones').text(`${mktCount} / ${utilCount}`);
+            
+            let costoPorMsj = entregados > 0 ? (totalCost / entregados) : 0;
+            $('#kpiCostoMensaje').text(costoPorMsj > 0 ? costoPorMsj.toFixed(4) + ' USD' : '--');
+
+            $('#kpiEnviados').text(enviados);
+            $('#kpiEntregados').text(entregados);
+            $('#kpiLeidos').text(leidos);
+            $('#kpiRespuestas').text(respuestas);
+
+            // Calcular porcentajes
+            if (enviados > 0) {
+                let pctEnt = ((entregados/enviados)*100).toFixed(1);
+                $('#trendEntregados').html(`<i class="fa-solid fa-arrow-right"></i> ${pctEnt}%`).removeClass('trend-neutral').addClass('trend-up');
+            }
+            if (entregados > 0) {
+                let pctLei = ((leidos/entregados)*100).toFixed(1);
+                $('#trendLeidos').html(`(${pctLei}%)`).addClass('trend-neutral');
+            }
+
+            // Destruir Chart previo
+            if(metaChartInstance) metaChartInstance.destroy();
+
+            // Dibujar Chart.js
+            let ctx = document.getElementById('metaChart').getContext('2d');
+            metaChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Mensajes enviados', data: dsEnviados, borderColor: '#fa383e', backgroundColor: '#fa383e', fill: false, tension: 0.1, borderWidth: 2, pointRadius: 0 },
+                        { label: 'Mensajes entregados', data: dsEntregados, borderColor: '#5a2e70', backgroundColor: '#5a2e70', fill: false, tension: 0.1, borderWidth: 2, pointRadius: 0 },
+                        { label: 'Mensajes leídos', data: dsLeidos, borderColor: '#008080', backgroundColor: '#008080', fill: false, tension: 0.1, borderWidth: 2, pointRadius: 0 },
+                        { label: 'Respuestas únicas', data: dsRespuestas, borderColor: '#004d40', backgroundColor: '#004d40', fill: false, tension: 0.1, borderWidth: 2, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10, font: { size: 11, family: 'Inter' } } }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f0f2f5' }, ticks: { stepSize: 1, color: '#606770' }, border: { display: false } },
+                        x: { grid: { display: false }, ticks: { color: '#606770' }, border: { display: true, color: '#dadde1' } }
+                    },
+                    interaction: { mode: 'index', intersect: false }
                 }
             });
         }
