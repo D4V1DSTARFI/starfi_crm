@@ -63,33 +63,13 @@ function getDbConnection($tipo = 'core')
         }
     }
 
-    // Determinar Base de Datos según el tipo solicitado
-    $bd = "";
-    switch (strtolower($tipo)) {
-        case 'core':
-            $bd = "starfi_crm";
-            break;
-        case 'caja':
-            $bd = "starfi_caja";
-            break;
-        case 'ventas':
-            $bd = "starfi_ventas";
-            break;
-        case 'nomina':
-            $bd = "starfi_nomina";
-            break;
-        default:
-            die("Error Crítico: El sistema intentó conectar a un entorno no válido ('$tipo').");
-    }
+    // Usar la base de datos core (starfi_crm) para todo
+    $bd = $env['DB_NAME'] ?? "starfi_crm";
 
     $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
 
     if (mysqli_connect_errno()) {
         $err = mysqli_connect_error();
-
-        if (strtolower($tipo) !== 'core') {
-            return false;
-        }
 
         // Si la conexión falla en el navegador, redirigir al instalador con el detalle del error
         if (php_sapi_name() !== 'cli' && basename($_SERVER['PHP_SELF']) !== 'install.php') {
@@ -115,57 +95,6 @@ function getDbConnection($tipo = 'core')
 
 function getExternalDbConnection($tipo = 'core')
 {
-    global $env;
-    date_default_timezone_set("America/Caracas");
-
-    if (!empty($env['DB_HOST'])) {
-        $servidor = $env['DB_HOST'];
-        $usuario = $env['DB_USER'];
-        $contrasenha = $env['DB_PASS'] ?? '';
-    } else {
-        switch (APP_ENV) {
-            case 'SANDBOX':
-                $servidor = "192.168.0.71";
-                $usuario = "starfi_v2_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'PRODUCCION':
-                $servidor = "192.168.8.121";
-                $usuario = "starfi_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'LOCAL':
-            default:
-                $servidor = "localhost";
-                $usuario = "starfi_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-        }
-    }
-
-    $bd = "";
-    switch (strtolower($tipo)) {
-        case 'core':
-            $bd = "starfi";
-            break;
-        case 'caja':
-            $bd = "starfi_caja";
-            break;
-        case 'ventas':
-            $bd = "starfi_ventas";
-            break;
-        case 'nomina':
-            $bd = "starfi_nomina";
-            break;
-        default:
-            die("Error Crítico: El sistema intentó conectar a un entorno externo no válido ('$tipo').");
-    }
-
-    $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
-    if (mysqli_connect_errno()) {
-        return false;
-    }
-    mysqli_set_charset($con, "utf8mb4");
-    return $con;
+    return false;
 }
 ?>
