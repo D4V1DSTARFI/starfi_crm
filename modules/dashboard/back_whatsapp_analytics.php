@@ -39,7 +39,7 @@ if ($action === 'get_analytics') {
         
         // Si hay una plantilla seleccionada, solicitamos también sus métricas
         if (!empty($id_plantilla)) {
-            $fields .= ",template_analytics.start($start_ts).end($end_ts).granularity(DAY).template_ids(['$id_plantilla'])";
+            $fields .= ",template_analytics.start($start_ts).end($end_ts).granularity(DAILY).template_ids(['$id_plantilla'])";
         }
         
         $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
