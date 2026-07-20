@@ -146,7 +146,7 @@ if ($res_sedes) {
                         <div class="cost-box">
                             <div class="cost-label">Importe gastado <i class="fa-solid fa-circle-info text-muted ms-1" title="Costo total de conversaciones en el periodo"></i></div>
                             <div class="cost-value" id="kpiImporteGastado" style="color: #1877f2;">0,00 USD</div>
-                            <?php if ($agente['rol'] === 'ADMIN'): ?>
+                            <?php if ($agente['rol'] === 'MASTER'): ?>
                             <div class="mt-2" style="font-size: 0.8rem; border-top: 1px dashed #dadde1; padding-top: 8px;">
                                 <div class="d-flex justify-content-between text-muted mb-1">
                                     <span>Costo Meta:</span> <span id="kpiCostoMeta" class="fw-bold text-dark">0,00 USD</span>
@@ -392,7 +392,7 @@ if ($res_sedes) {
 
             $('#kpiImporteGastado').text(costoFinalFacturado.toFixed(2).replace('.', ',') + ' USD');
             
-            if (userRole === 'ADMIN') {
+            if (userRole === 'MASTER') {
                 $('#kpiCostoMeta').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
                 let ganancia = totalCost * 0.10;
                 $('#kpiMargenGanancia').text(ganancia.toFixed(2).replace('.', ',') + ' USD');
