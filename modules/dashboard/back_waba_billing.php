@@ -144,7 +144,7 @@ if ($action === 'generate_order') {
     }
     
     // API Call
-    $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates,template_analytics.start($fecha_desde).end(" . date('Y-m-d', strtotime($fecha_hasta . ' +1 day')) . ").granularity(DAILY)";
+    $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
     $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
     
     $curl = curl_init();
