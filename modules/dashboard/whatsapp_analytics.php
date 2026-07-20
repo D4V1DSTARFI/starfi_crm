@@ -107,6 +107,12 @@ if ($res_sedes) {
                     </select>
                 </div>
                 <div class="filter-group">
+                    <label>Plantilla (Opcional)</label>
+                    <select id="filterPlantilla" class="filter-control">
+                        <option value="">Todas las plantillas</option>
+                    </select>
+                </div>
+                <div class="filter-group">
                     <label>Fecha Desde</label>
                     <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
                 </div>
@@ -223,10 +229,13 @@ if ($res_sedes) {
             loadAnalytics();
         });
 
+        let templatesLoaded = false;
+
         function loadAnalytics() {
             let id_sede = $('#filterSede').val();
             let desde = $('#filterFechaDesde').val();
             let hasta = $('#filterFechaHasta').val();
+            let id_plantilla = $('#filterPlantilla').val();
 
             $('#contentData').hide();
             $('#loaderData').show();
@@ -235,14 +244,24 @@ if ($res_sedes) {
                 url: 'back_whatsapp_analytics.php',
                 type: 'POST',
                 dataType: 'json',
-                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
+                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta, id_plantilla: id_plantilla },
                 success: function(res) {
                     $('#loaderData').hide();
                     $('#rawApiResponse').text(JSON.stringify(res, null, 2));
 
                     if(res.status === 'success') {
                         $('#contentData').fadeIn();
-                        procesarYGraficar(res.data, desde, hasta);
+                        
+                        // Poblar Dropdown de Plantillas si no se ha hecho
+                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
+                            let select = $('#filterPlantilla');
+                            res.data.message_templates.data.forEach(tpl => {
+                                select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
+                            });
+                            templatesLoaded = true;
+                        }
+
+                        procesarYGraficar(res.data, desde, hasta, id_plantilla);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
                         $('#contentData').show();
@@ -255,7 +274,7 @@ if ($res_sedes) {
             });
         }
 
-        function procesarYGraficar(data, desde, hasta) {
+        function procesarYGraficar(data, desde, hasta, id_plantilla) {
             let totalCost = 0;
             let mktCount = 0;
             let utilCount = 0;
@@ -270,13 +289,20 @@ if ($res_sedes) {
                 });
             }
 
-            // Analizar Mensajes (analytics)
+            // Analizar Mensajes (analytics o template_analytics)
             let enviados = 0, entregados = 0, leidos = 0, respuestas = 0;
             let labels = [];
             let dsEnviados = [], dsEntregados = [], dsLeidos = [], dsRespuestas = [];
 
-            if(data.analytics && data.analytics.data) {
-                let msgs = data.analytics.data[0]?.data_points || [];
+            let dataSource = null;
+            if (id_plantilla && data.template_analytics && data.template_analytics.data) {
+                dataSource = data.template_analytics.data[0]?.data_points || [];
+            } else if (data.analytics && data.analytics.data) {
+                dataSource = data.analytics.data[0]?.data_points || [];
+            }
+
+            if(dataSource && dataSource.length > 0) {
+                let msgs = dataSource;
                 // Ordenar por timestamp
                 msgs.sort((a,b) => a.start - b.start);
                 
