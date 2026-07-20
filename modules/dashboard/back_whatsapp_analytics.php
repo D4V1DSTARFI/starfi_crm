@@ -17,6 +17,8 @@ if ($action === 'get_analytics') {
     $start_ts = strtotime($fecha_desde . " 00:00:00");
     $end_ts = strtotime($fecha_hasta . " 23:59:59");
 
+    $id_plantilla = $_POST['id_plantilla'] ?? '';
+
     $con = getDbConnection();
     
     if ($id_sede > 0) {
@@ -32,8 +34,17 @@ if ($action === 'get_analytics') {
             exit;
         }
 
-        // Meta Endpoint para metrics de conversaciones (costos) y mensajes (entregados, leídos), y analíticas de plantillas
-        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates,template_analytics.start($start_ts).end($end_ts).granularity(DAY)";
+        $fecha_hasta_mas_uno = date('Y-m-d', strtotime($fecha_hasta . ' +1 day'));
+
+        // Meta Endpoint base (costos, mensajes y lista de plantillas)
+        $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY),conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates";
+        
+        // Si hay una plantilla seleccionada, solicitamos también sus métricas
+        if (!empty($id_plantilla)) {
+            $fields .= ",template_analytics.start($fecha_desde).end($fecha_hasta_mas_uno).granularity(DAILY).template_ids(['$id_plantilla'])";
+        }
+        
+        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
         
         $curl = curl_init();
         curl_setopt($curl, CURLOPT_URL, $url);

@@ -107,6 +107,12 @@ if ($res_sedes) {
                     </select>
                 </div>
                 <div class="filter-group">
+                    <label>Plantilla (Opcional)</label>
+                    <select id="filterPlantilla" class="filter-control">
+                        <option value="">Todas las plantillas</option>
+                    </select>
+                </div>
+                <div class="filter-group">
                     <label>Fecha Desde</label>
                     <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
                 </div>
@@ -124,6 +130,13 @@ if ($res_sedes) {
                 <p class="text-muted fw-bold">Obteniendo métricas de Meta Business...</p>
             </div>
 
+            <!-- Placeholder State -->
+            <div id="placeholderData" class="text-center py-5">
+                <i class="fa-solid fa-chart-bar fa-3x text-muted mb-3"></i>
+                <h4 class="text-secondary fw-bold">Seleccione sus filtros</h4>
+                <p class="text-muted">Por favor, elija una sede y una plantilla, luego presione "Actualizar" para cargar las métricas.</p>
+            </div>
+
             <!-- Dashboard Content -->
             <div id="contentData" style="display: none;">
                 
@@ -131,8 +144,18 @@ if ($res_sedes) {
                 <div class="meta-card">
                     <div class="cost-row">
                         <div class="cost-box">
-                            <div class="cost-label">Importe gastado <i class="fa-solid fa-circle-info text-muted ms-1" title="Costo total de conversaciones"></i></div>
-                            <div class="cost-value" id="kpiImporteGastado">0,00 USD</div>
+                            <div class="cost-label">Importe gastado <i class="fa-solid fa-circle-info text-muted ms-1" title="Costo total de conversaciones en el periodo"></i></div>
+                            <div class="cost-value" id="kpiImporteGastado" style="color: #1877f2;">0,00 USD</div>
+                            <?php if ($agente['rol'] === 'MASTER'): ?>
+                            <div class="mt-2" style="font-size: 0.8rem; border-top: 1px dashed #dadde1; padding-top: 8px;">
+                                <div class="d-flex justify-content-between text-muted mb-1">
+                                    <span>Costo Meta:</span> <span id="kpiCostoMeta" class="fw-bold text-dark">0,00 USD</span>
+                                </div>
+                                <div class="d-flex justify-content-between text-muted">
+                                    <span>Margen (10%):</span> <span id="kpiMargenGanancia" class="fw-bold text-success">0,00 USD</span>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                         </div>
                         <div class="cost-box">
                             <div class="cost-label">Costo por mensaje entregado <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
@@ -216,17 +239,52 @@ if ($res_sedes) {
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script>
+        const userRole = "<?= htmlspecialchars($agente['rol'] ?? 'AGENTE') ?>";
         let metaChartInstance = null;
 
         $(document).ready(function() {
-            $('#btnApplyFilters').click(function() { loadAnalytics(); });
-            loadAnalytics();
+            $('#btnApplyFilters').click(function() { 
+                if ($('#filterSede').val() == '0' || $('#filterPlantilla').val() === '') {
+                    Swal.fire('Atención', 'Por favor seleccione una Sede y una Plantilla antes de actualizar.', 'warning');
+                    return;
+                }
+                loadAnalytics(); 
+            });
+            fetchTemplatesOnLoad();
         });
 
-        function loadAnalytics() {
+        let templatesLoaded = false;
+
+        function fetchTemplatesOnLoad() {
             let id_sede = $('#filterSede').val();
             let desde = $('#filterFechaDesde').val();
             let hasta = $('#filterFechaHasta').val();
+
+            $.ajax({
+                url: 'back_whatsapp_analytics.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
+                            let select = $('#filterPlantilla');
+                            res.data.message_templates.data.forEach(tpl => {
+                                select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
+                            });
+                            templatesLoaded = true;
+                        }
+                    }
+                }
+            });
+        }
+
+        function loadAnalytics() {
+            $('#placeholderData').hide();
+            let id_sede = $('#filterSede').val();
+            let desde = $('#filterFechaDesde').val();
+            let hasta = $('#filterFechaHasta').val();
+            let id_plantilla = $('#filterPlantilla').val();
 
             $('#contentData').hide();
             $('#loaderData').show();
@@ -235,14 +293,24 @@ if ($res_sedes) {
                 url: 'back_whatsapp_analytics.php',
                 type: 'POST',
                 dataType: 'json',
-                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
+                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta, id_plantilla: id_plantilla },
                 success: function(res) {
                     $('#loaderData').hide();
                     $('#rawApiResponse').text(JSON.stringify(res, null, 2));
 
                     if(res.status === 'success') {
                         $('#contentData').fadeIn();
-                        procesarYGraficar(res.data, desde, hasta);
+                        
+                        // Poblar Dropdown de Plantillas si no se ha hecho
+                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
+                            let select = $('#filterPlantilla');
+                            res.data.message_templates.data.forEach(tpl => {
+                                select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
+                            });
+                            templatesLoaded = true;
+                        }
+
+                        procesarYGraficar(res.data, desde, hasta, id_plantilla);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
                         $('#contentData').show();
@@ -255,28 +323,40 @@ if ($res_sedes) {
             });
         }
 
-        function procesarYGraficar(data, desde, hasta) {
+        function procesarYGraficar(data, desde, hasta, id_plantilla) {
             let totalCost = 0;
             let mktCount = 0;
             let utilCount = 0;
             
-            // Analizar Costos (conversation_analytics)
+            // Analizar Costos (pricing_analytics y conversation_analytics)
+            if(data.pricing_analytics && data.pricing_analytics.data) {
+                let pricing = data.pricing_analytics.data[0]?.data_points || [];
+                pricing.forEach(dp => {
+                    if (dp.cost) totalCost += parseFloat(dp.cost);
+                });
+            }
             if(data.conversation_analytics && data.conversation_analytics.data) {
                 let convs = data.conversation_analytics.data[0]?.data_points || [];
                 convs.forEach(dp => {
-                    if (dp.cost) totalCost += parseFloat(dp.cost);
                     if (dp.conversation_category === 'MARKETING' && dp.conversation) mktCount += parseInt(dp.conversation);
                     if (dp.conversation_category === 'UTILITY' && dp.conversation) utilCount += parseInt(dp.conversation);
                 });
             }
 
-            // Analizar Mensajes (analytics)
+            // Analizar Mensajes (analytics o template_analytics)
             let enviados = 0, entregados = 0, leidos = 0, respuestas = 0;
             let labels = [];
             let dsEnviados = [], dsEntregados = [], dsLeidos = [], dsRespuestas = [];
 
-            if(data.analytics && data.analytics.data) {
-                let msgs = data.analytics.data[0]?.data_points || [];
+            let dataSource = null;
+            if (id_plantilla && data.template_analytics && data.template_analytics.data) {
+                dataSource = data.template_analytics.data[0]?.data_points || [];
+            } else if (data.analytics && data.analytics.data) {
+                dataSource = data.analytics.data[0]?.data_points || [];
+            }
+
+            if(dataSource && dataSource.length > 0) {
+                let msgs = dataSource;
                 // Ordenar por timestamp
                 msgs.sort((a,b) => a.start - b.start);
                 
@@ -308,10 +388,19 @@ if ($res_sedes) {
             }
 
             // Actualizar UI Textos
-            $('#kpiImporteGastado').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
+            let costoFinalFacturado = totalCost * 1.10; // +10% de ganancia
+
+            $('#kpiImporteGastado').text(costoFinalFacturado.toFixed(2).replace('.', ',') + ' USD');
+            
+            if (userRole === 'MASTER') {
+                $('#kpiCostoMeta').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
+                let ganancia = totalCost * 0.10;
+                $('#kpiMargenGanancia').text(ganancia.toFixed(2).replace('.', ',') + ' USD');
+            }
+
             $('#kpiConversaciones').text(`${mktCount} / ${utilCount}`);
             
-            let costoPorMsj = entregados > 0 ? (totalCost / entregados) : 0;
+            let costoPorMsj = entregados > 0 ? (costoFinalFacturado / entregados) : 0;
             $('#kpiCostoMensaje').text(costoPorMsj > 0 ? costoPorMsj.toFixed(4) + ' USD' : '--');
 
             $('#kpiEnviados').text(enviados);

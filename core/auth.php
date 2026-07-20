@@ -60,7 +60,7 @@ function getAgenteInfo() {
             'id' => 1,
             'nombre_completo' => 'Acceso Master',
             'email' => 'master',
-            'rol' => 'ADMIN',
+            'rol' => 'MASTER',
             'id_sede' => 0,
             'limite_chats_simultaneos' => 999
         ];
