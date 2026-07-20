@@ -32,10 +32,25 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     //LEEMOS LOS DATOS ENVIADOS POR WHATSAPP
     $respuesta = file_get_contents("php://input");
 
-    // Log para debugging (ahora en la carpeta logs de forma rotativa)
+    // Log para debugging (lo movemos arriba para saber si Facebook llega aquí)
     $log_dir = __DIR__ . '/logs';
     if (!is_dir($log_dir)) mkdir($log_dir, 0777, true);
     file_put_contents($log_dir . "/webhook_" . date('Y-m-d') . ".log", date('Y-m-d H:i:s') . " - " . $respuesta . "\n", FILE_APPEND);
+
+    // VALIDACIÓN DE FIRMA SHA-256 (Seguridad Crítica)
+    $appSecret = $env['META_APP_SECRET'] ?? '';
+    if (!empty($appSecret)) {
+        $signature = $_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '';
+        if (empty($signature)) {
+            http_response_code(403);
+            exit('Firma no proporcionada');
+        }
+        $expected_signature = 'sha256=' . hash_hmac('sha256', $respuesta, $appSecret);
+        if (!hash_equals($expected_signature, $signature)) {
+            http_response_code(403);
+            exit('Firma invalida');
+        }
+    }
 
     //CONVERTIMOS EL JSON EN ARRAY DE PHP
     $respuesta_array = json_decode($respuesta, true);
@@ -119,6 +134,19 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         } else if ($tipo_interactivo === 'list_reply') {
             $mensaje_texto = $msg['interactive']['list_reply']['title'] ?? '';
         }
+    } else if (in_array($tipo_mensaje, ['sticker', 'location', 'reaction'])) {
+        $tipo_bd = 'EVENTO_SISTEMA';
+        if ($tipo_mensaje === 'reaction') {
+            $emoji = $msg['reaction']['emoji'] ?? '';
+            $mensaje_texto = "El usuario reaccionó con: $emoji";
+        } else if ($tipo_mensaje === 'location') {
+            $mensaje_texto = "El usuario envió una ubicación.";
+        } else {
+            $mensaje_texto = "El usuario envió un sticker.";
+        }
+    } else {
+        $tipo_bd = 'EVENTO_SISTEMA';
+        $mensaje_texto = "Formato de mensaje no soportado recibido ($tipo_mensaje).";
     }
 
     //SI HAY UN MENSAJE
@@ -253,6 +281,9 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         if($q_token && mysqli_num_rows($q_token) > 0) {
             $linea_info = mysqli_fetch_assoc($q_token);
             
+            // Marcar el mensaje entrante como leído (doble check azul)
+            marcar_como_leido_api($linea_info, $id_mensaje_meta);
+            
             if ($estado_conv === 'BOT_RECOPILANDO') {
                 // Pedir nombre si es la primera vez
                 if ($nueva_conversacion) {
@@ -270,6 +301,41 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             }
         }
     }
+}
+
+/**
+ * Marcar mensaje como leído (Doble check azul) vía Meta API
+ */
+function marcar_como_leido_api($linea_info, $id_mensaje_meta) {
+    $telefonoID = $linea_info['meta_telefono_id'] ?? null;
+    $token_seguro = $linea_info['meta_token'] ?? null;
+    
+    if(empty($telefonoID) || empty($token_seguro) || empty($id_mensaje_meta)) {
+        return;
+    }
+    
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $payload = json_encode([
+        'messaging_product' => 'whatsapp',
+        'status' => 'read',
+        'message_id' => $id_mensaje_meta
+    ]);
+    
+    $header = [
+        "Authorization: Bearer " . $token_seguro,
+        "Content-Type: application/json"
+    ];
+    
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    // Timeout corto para que el webhook no se demore respondiendo a Meta
+    curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
+    curl_exec($curl);
+    curl_close($curl);
 }
 
 /**
