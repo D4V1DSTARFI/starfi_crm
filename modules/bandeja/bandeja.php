@@ -202,38 +202,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     </style>
 </head>
 <body>
+    <?php renderHeader('Bandeja Omnicanal'); ?>
+    <div class="app-container">
 
     <!-- Sidebar Navigation -->
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <div class="logo" id="toggleSidebar" style="cursor: pointer;">
-                <img src="../../docs/identidad_visual/logos/isologo.png" alt="STARFI" style="height: 30px;">
-                <span>STARFI CRM</span>
-            </div>
-        </div>
-        <nav class="sidebar-nav">
-            <a href="../bandeja/bandeja.php" class="nav-item active"><i class="fa-solid fa-inbox"></i>
-                <span class="nav-text">Bandeja Omnicanal</span>
-            </a>
-            <a href="../directorio/directorio.php" class="nav-item"><i class="fa-solid fa-address-book"></i>
-                <span class="nav-text">Directorio 360</span>
-            </a>
-            <a href="../dashboard/dashboard.php" class="nav-item"><i class="fa-solid fa-chart-line"></i>
-                <span class="nav-text">Métricas y KPIs</span>
-            </a>
-            <a href="../gestor_bots/gestor_bots.php" class="nav-item"><i class="fa-solid fa-robot"></i><span class="nav-text">Gestor de Bots</span></a>
-            <a href="../configuracion/configuracion.php" class="nav-item"><i class="fa-solid fa-gear"></i>
-                <span class="nav-text">Configuración</span>
-            </a>
-        </nav>
-        
-        <div class="sidebar-footer">
-            <a href="/starfi_crm/logout.php" class="btn btn-danger w-100 py-2 d-flex align-items: center justify-content: center gap-2 fw-semibold" style="border-radius: 10px; font-size: 0.85rem; background-color: var(--starfi-danger) !important; border-color: var(--starfi-danger) !important;" title="Cerrar Sesión">
-                <i class="fa-solid fa-power-off"></i>
-                <span class="logout-text">Cerrar Sesión</span>
-            </a>
-        </div>
-    </aside>
 
     <!-- Main Layout -->
     <main class="main-content">
@@ -389,6 +361,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
 
     <script src="funciones_bandeja.js?v=<?= time() ?>"></script>
+    </div>
 </body>
 </html>
 
