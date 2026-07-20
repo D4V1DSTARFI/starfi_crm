@@ -87,6 +87,10 @@ function getDbConnection($tipo = 'core')
     if (mysqli_connect_errno()) {
         $err = mysqli_connect_error();
 
+        if (strtolower($tipo) !== 'core') {
+            return false;
+        }
+
         // Si la conexión falla en el navegador, redirigir al instalador con el detalle del error
         if (php_sapi_name() !== 'cli' && basename($_SERVER['PHP_SELF']) !== 'install.php') {
             if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
@@ -159,9 +163,6 @@ function getExternalDbConnection($tipo = 'core')
 
     $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
     if (mysqli_connect_errno()) {
-        if (php_sapi_name() !== 'cli' && basename($_SERVER['PHP_SELF']) !== 'install.php') {
-            die("Error de conexión a BD externa '$bd': " . mysqli_connect_error());
-        }
         return false;
     }
     mysqli_set_charset($con, "utf8mb4");
