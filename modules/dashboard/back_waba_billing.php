@@ -249,15 +249,86 @@ if ($action === 'generate_order') {
             if (in_array($s['pref_not_cobro'], ['WHATSAPP', 'AMBOS']) && !empty($s['gerente_telefono'])) {
                 $res_l = $con->query("SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
                 if ($res_l && $l = $res_l->fetch_assoc()) {
+                    $waba_token = $l['meta_token'];
+                    
+                    // Asegurar que la plantilla existe
+                    $check_url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=alerta_cobro_waba";
+                    $ch_ck = curl_init($check_url);
+                    curl_setopt($ch_ck, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token"]);
+                    curl_setopt($ch_ck, CURLOPT_RETURNTRANSFER, true);
+                    $res_ck = json_decode(curl_exec($ch_ck), true);
+                    curl_close($ch_ck);
+                    
+                    $template_ready = false;
+                    if (isset($res_ck['data']) && count($res_ck['data']) > 0) {
+                        $template_ready = true; // Ya existe
+                    } else {
+                        // Crear plantilla
+                        $url_create = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+                        $payload_create = [
+                            "name" => "alerta_cobro_waba",
+                            "category" => "UTILITY",
+                            "allow_category_change" => true,
+                            "language" => "es",
+                            "components" => [
+                                [
+                                    "type" => "BODY",
+                                    "text" => "Hola {{1}}, se ha generado el estado de cuenta de *{{2}}* por el consumo de WhatsApp API.\n\n*Periodo:* {{3}} al {{4}}\n*Monto Total:* {{5}} USD\n\nPor favor coordine el pago correspondiente.",
+                                    "example" => [
+                                        "body_text" => [
+                                            [$s['gerente_nombre'], $s['nombre_sede'], $fecha_desde, $fecha_hasta, strval($costo_final)]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ];
+                        $ch_cr = curl_init($url_create);
+                        curl_setopt($ch_cr, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token", "Content-Type: application/json"]);
+                        curl_setopt($ch_cr, CURLOPT_POST, true);
+                        curl_setopt($ch_cr, CURLOPT_POSTFIELDS, json_encode($payload_create));
+                        curl_setopt($ch_cr, CURLOPT_RETURNTRANSFER, true);
+                        curl_exec($ch_cr);
+                        curl_close($ch_cr);
+                        $template_ready = true; // Meta suele autoaprobar utilitarias
+                    }
+                    
+                    // Enviar Mensaje
                     $url_w = 'https://graph.facebook.com/v23.0/'.$l['meta_app_id'].'/messages';
-                    $payload_w = [
-                        'messaging_product' => 'whatsapp',
-                        'to' => $s['gerente_telefono'],
-                        'type' => 'text',
-                        'text' => ['body' => $msg]
-                    ];
+                    
+                    if ($template_ready) {
+                        $payload_w = [
+                            'messaging_product' => 'whatsapp',
+                            'to' => $s['gerente_telefono'],
+                            'type' => 'template',
+                            'template' => [
+                                'name' => 'alerta_cobro_waba',
+                                'language' => ['code' => 'es'],
+                                'components' => [
+                                    [
+                                        'type' => 'body',
+                                        'parameters' => [
+                                            ['type' => 'text', 'text' => $s['gerente_nombre']],
+                                            ['type' => 'text', 'text' => $s['nombre_sede']],
+                                            ['type' => 'text', 'text' => $fecha_desde],
+                                            ['type' => 'text', 'text' => $fecha_hasta],
+                                            ['type' => 'text', 'text' => strval(round($costo_final, 2))]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ];
+                    } else {
+                        // Fallback texto plano (si algo falló con la creación)
+                        $payload_w = [
+                            'messaging_product' => 'whatsapp',
+                            'to' => $s['gerente_telefono'],
+                            'type' => 'text',
+                            'text' => ['body' => $msg]
+                        ];
+                    }
+                    
                     $ch_w = curl_init($url_w);
-                    curl_setopt($ch_w, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $l['meta_token'], "Content-Type: application/json"]);
+                    curl_setopt($ch_w, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token", "Content-Type: application/json"]);
                     curl_setopt($ch_w, CURLOPT_POST, true);
                     curl_setopt($ch_w, CURLOPT_POSTFIELDS, json_encode($payload_w));
                     curl_setopt($ch_w, CURLOPT_RETURNTRANSFER, true);
