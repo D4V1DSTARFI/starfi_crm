@@ -35,7 +35,7 @@ if ($action === 'get_analytics') {
         }
 
         // Meta Endpoint base (costos, mensajes y lista de plantillas)
-        $fields = "conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAILY),message_templates";
+        $fields = "conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates";
         
         // Si hay una plantilla seleccionada, solicitamos también sus métricas
         if (!empty($id_plantilla)) {
