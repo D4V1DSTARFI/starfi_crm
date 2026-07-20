@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
             $pass = $_POST['pass'] ?? '';
             $db = $_POST['db'] ?? '';
 
-            $databasesList = ['starfi_crm', 'starfi', 'starfi_ventas', 'starfi_caja', 'starfi_nomina', 'starfi_wsap'];
+            $databasesList = ['starfi_crm'];
             if (!in_array($db, $databasesList)) {
                 echo json_encode(['status' => 'error', 'message' => 'Base de datos no válida.']);
                 exit;
@@ -213,7 +213,7 @@ $writableDir = is_writable(__DIR__);
 $envWritable = file_exists($envPath) ? is_writable($envPath) : is_writable(__DIR__);
 
 // Comprobar archivos SQL
-$databases = ['starfi_crm', 'starfi', 'starfi_ventas', 'starfi_caja', 'starfi_nomina', 'starfi_wsap'];
+$databases = ['starfi_crm'];
 $sqlFilesCount = 0;
 $missingDumps = [];
 foreach ($databases as $db) {
@@ -600,41 +600,6 @@ $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writabl
                             </div>
                             <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
                         </div>
-                        <div class="import-list-item pending" id="db-item-starfi">
-                            <div>
-                                <i class="fa-solid fa-database text-muted me-2"></i>
-                                <strong>starfi</strong> (Empresas y Sedes)
-                            </div>
-                            <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
-                        </div>
-                        <div class="import-list-item pending" id="db-item-starfi_ventas">
-                            <div>
-                                <i class="fa-solid fa-database text-muted me-2"></i>
-                                <strong>starfi_ventas</strong> (Configuración API WhatsApp)
-                            </div>
-                            <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
-                        </div>
-                        <div class="import-list-item pending" id="db-item-starfi_caja">
-                            <div>
-                                <i class="fa-solid fa-database text-muted me-2"></i>
-                                <strong>starfi_caja</strong> (Cierre de Cajas y Tasas)
-                            </div>
-                            <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
-                        </div>
-                        <div class="import-list-item pending" id="db-item-starfi_nomina">
-                            <div>
-                                <i class="fa-solid fa-database text-muted me-2"></i>
-                                <strong>starfi_nomina</strong> (Módulo de Nómina)
-                            </div>
-                            <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
-                        </div>
-                        <div class="import-list-item pending" id="db-item-starfi_wsap">
-                            <div>
-                                <i class="fa-solid fa-database text-muted me-2"></i>
-                                <strong>starfi_wsap</strong> (Historial de Mensajes y Eventos)
-                            </div>
-                            <span class="status-badge text-muted small"><i class="fa-solid fa-clock me-1"></i> Esperando</span>
-                        </div>
                     </div>
 
                     <div class="text-end">
@@ -780,8 +745,7 @@ $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writabl
             // Iniciar importaciones
             $('#btn-start-import').click(function() {
                 $('#btn-start-import').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-2"></i> Importando datos...');
-                
-                const databases = ['starfi_crm', 'starfi', 'starfi_ventas', 'starfi_caja', 'starfi_nomina', 'starfi_wsap'];
+                                const databases = ['starfi_crm'];
                 let currentIndex = 0;
 
                 function importNext() {
