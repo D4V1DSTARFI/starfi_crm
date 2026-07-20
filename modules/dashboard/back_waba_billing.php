@@ -243,7 +243,7 @@ if ($action === 'generate_order') {
         $notificado = 0;
         $res_s = $con->query("SELECT gerente_nombre, gerente_telefono, gerente_email, pref_not_cobro, nombre_sede FROM sedes WHERE id = $id_sede");
         if ($res_s && $s = $res_s->fetch_assoc()) {
-            $msg = "Hola {$s['gerente_nombre']}, se ha generado el estado de cuenta de *{$s['nombre_sede']}* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $costo_final USD\n\nPor favor coordine el pago correspondiente.";
+            $msg = "Hola {$s['gerente_nombre']}, se ha generado la orden de cobro *#$new_order_id* para *{$s['nombre_sede']}* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $costo_final USD\n\nPor favor coordine el pago correspondiente.";
             
             // WHATSAPP
             if (in_array($s['pref_not_cobro'], ['WHATSAPP', 'AMBOS']) && !empty($s['gerente_telefono'])) {
@@ -252,7 +252,7 @@ if ($action === 'generate_order') {
                     $waba_token = $l['meta_token'];
                     
                     // Asegurar que la plantilla existe
-                    $check_url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=alerta_cobro_waba";
+                    $check_url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=notificacion_orden_cobro";
                     $ch_ck = curl_init($check_url);
                     curl_setopt($ch_ck, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token"]);
                     curl_setopt($ch_ck, CURLOPT_RETURNTRANSFER, true);
@@ -266,17 +266,17 @@ if ($action === 'generate_order') {
                         // Crear plantilla
                         $url_create = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
                         $payload_create = [
-                            "name" => "alerta_cobro_waba",
+                            "name" => "notificacion_orden_cobro",
                             "category" => "UTILITY",
                             "allow_category_change" => true,
                             "language" => "es",
                             "components" => [
                                 [
                                     "type" => "BODY",
-                                    "text" => "Hola {{1}}, se ha generado el estado de cuenta de *{{2}}* por el consumo de WhatsApp API.\n\n*Periodo:* {{3}} al {{4}}\n*Monto Total:* {{5}} USD\n\nPor favor coordine el pago correspondiente.",
+                                    "text" => "Hola {{1}}, se ha generado la orden de cobro *#{{2}}* para *{{3}}* por el consumo de WhatsApp API.\n\n*Periodo:* {{4}} al {{5}}\n*Monto Total:* {{6}} USD\n\nPor favor coordine el pago correspondiente.",
                                     "example" => [
                                         "body_text" => [
-                                            [$s['gerente_nombre'], $s['nombre_sede'], $fecha_desde, $fecha_hasta, strval($costo_final)]
+                                            [$s['gerente_nombre'], strval($new_order_id), $s['nombre_sede'], $fecha_desde, $fecha_hasta, strval($costo_final)]
                                         ]
                                     ]
                                 ]
@@ -301,13 +301,14 @@ if ($action === 'generate_order') {
                             'to' => $s['gerente_telefono'],
                             'type' => 'template',
                             'template' => [
-                                'name' => 'alerta_cobro_waba',
+                                'name' => 'notificacion_orden_cobro',
                                 'language' => ['code' => 'es'],
                                 'components' => [
                                     [
                                         'type' => 'body',
                                         'parameters' => [
                                             ['type' => 'text', 'text' => $s['gerente_nombre']],
+                                            ['type' => 'text', 'text' => strval($new_order_id)],
                                             ['type' => 'text', 'text' => $s['nombre_sede']],
                                             ['type' => 'text', 'text' => $fecha_desde],
                                             ['type' => 'text', 'text' => $fecha_hasta],
