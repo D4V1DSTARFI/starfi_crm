@@ -7,14 +7,33 @@ if ($agente['rol'] !== 'MASTER') {
     die("Acceso Denegado. Solo MASTER puede ver este panel.");
 }
 
-require_once __DIR__ . '/../../includes/header.php';
 ?>
-
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Órdenes de Cobro | STARFI CRM</title>
+    <!-- Bootstrap CSS -->
+    <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; margin: 0; padding: 0; overflow-x: hidden; }
+        .app-container { min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 20px; }
+    </style>
+</head>
+<body>
+    <?php renderHeader('Panel de Órdenes WABA'); ?>
+    <div class="app-container">
+    <main class="main-content">
+        
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2>Panel Administrativo - Órdenes de Cobro WhatsApp</h2>
-        <a href="whatsapp_analytics.php" class="btn btn-outline-secondary">
-            <i class="fas fa-arrow-left"></i> Volver a Analíticas
+        <a href="../../index.php" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Volver al Inicio
         </a>
     </div>
 
@@ -76,6 +95,9 @@ require_once __DIR__ . '/../../includes/header.php';
     </div>
 </div>
 
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
 $(document).ready(function() {
     cargarOrdenes();
@@ -187,5 +209,7 @@ $(document).ready(function() {
     });
 });
 </script>
-
-<?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+    </main>
+    </div>
+</body>
+</html>
