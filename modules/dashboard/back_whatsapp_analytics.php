@@ -33,7 +33,7 @@ if ($action === 'get_analytics') {
         }
 
         // Meta Endpoint para metrics de conversaciones (costos) y mensajes (entregados, leídos), y analíticas de plantillas
-        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=conversation_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAILY),message_templates,template_analytics.start($start_ts).end($end_ts).granularity(DAILY)";
+        $url = "https://graph.facebook.com/v23.0/$waba_id?fields=conversation_analytics.start($start_ts).end($end_ts).granularity(DAY),analytics.start($start_ts).end($end_ts).granularity(DAY),message_templates,template_analytics.start($start_ts).end($end_ts).granularity(DAY)";
         
         $curl = curl_init();
         curl_setopt($curl, CURLOPT_URL, $url);

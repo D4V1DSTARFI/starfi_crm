@@ -25,33 +25,41 @@ if ($res_sedes) {
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="../../css/styles.css">
-    
     <style>
-        body { background-color: #f0f2f5; }
-        .dashboard-container { padding: 30px; overflow-y: auto; flex: 1; max-width: 1200px; margin: auto; }
-        .filters-panel { background-color: #fff; border-radius: 8px; padding: 15px 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; gap: 15px; align-items: flex-end; }
-        .filter-group { flex: 1; }
+        body { background-color: #f0f2f5; margin: 0; padding: 0; overflow-x: hidden; }
+        .app-container { min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+        .dashboard-container { padding: 20px; width: 100%; max-width: 1200px; margin: 0 auto; }
+        
+        .filters-panel { background-color: #fff; border-radius: 8px; padding: 15px 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap; }
+        .filter-group { flex: 1; min-width: 200px; }
         .filter-group label { font-size: 0.8rem; color: #606770; margin-bottom: 5px; display: block; font-weight: 600; }
         .filter-control { width: 100%; padding: 8px 12px; border: 1px solid #ccd0d5; border-radius: 6px; font-size: 0.9rem; color: #1c1e21; outline: none; }
         .filter-control:focus { border-color: #1877f2; }
+        #btnApplyFilters { min-width: 120px; }
         
         .meta-card { background-color: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); border: 1px solid #dadde1; margin-bottom: 20px; overflow: hidden; }
         .meta-card-header { padding: 16px 20px; border-bottom: 1px solid #dadde1; background-color: #fff; }
         .meta-card-title { font-size: 1.1rem; font-weight: 600; color: #1c1e21; margin: 0; display: flex; align-items: center; gap: 8px; }
         
-        .cost-row { display: flex; gap: 20px; padding: 20px; }
-        .cost-box { flex: 1; padding: 10px; border-right: 1px solid #dadde1; }
+        .cost-row { display: flex; flex-wrap: wrap; padding: 10px; }
+        .cost-box { flex: 1; min-width: 200px; padding: 15px; border-right: 1px solid #dadde1; }
         .cost-box:last-child { border-right: none; }
         .cost-label { font-size: 0.85rem; color: #606770; font-weight: 600; margin-bottom: 5px; }
         .cost-value { font-size: 1.8rem; font-weight: 700; color: #1c1e21; }
         
-        .nav-tabs-meta { display: flex; padding: 0 20px; gap: 20px; border-bottom: 1px solid #dadde1; }
-        .nav-tab-meta { padding: 15px 0; font-size: 0.95rem; font-weight: 600; color: #606770; cursor: pointer; position: relative; }
+        @media (max-width: 768px) {
+            .cost-box { border-right: none; border-bottom: 1px solid #dadde1; }
+            .cost-box:last-child { border-bottom: none; }
+            .dashboard-container { padding: 10px; }
+        }
+        
+        .nav-tabs-meta { display: flex; padding: 0 20px; gap: 20px; border-bottom: 1px solid #dadde1; overflow-x: auto; }
+        .nav-tab-meta { padding: 15px 0; font-size: 0.95rem; font-weight: 600; color: #606770; cursor: pointer; position: relative; white-space: nowrap; }
         .nav-tab-meta.active { color: #1877f2; }
         .nav-tab-meta.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 3px; background-color: #1877f2; border-radius: 3px 3px 0 0; }
         
-        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; padding: 20px; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; padding: 20px; }
         .metric-card { border: 1px solid #dadde1; border-radius: 8px; padding: 15px; cursor: pointer; transition: all 0.2s; }
         .metric-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
         .metric-label { font-size: 0.85rem; color: #1c1e21; font-weight: 600; margin-bottom: 8px; }
@@ -62,7 +70,7 @@ if ($res_sedes) {
         .trend-down { color: #fa383e; }
         .trend-neutral { color: #606770; }
         
-        .chart-container { padding: 20px; height: 350px; position: relative; }
+        .chart-container { padding: 20px; height: 400px; position: relative; width: 100%; }
         
         /* Modificadores estéticos (Colores de las líneas) */
         .color-sent { color: #fa383e; } /* Rojo similar a la imagen */
