@@ -123,8 +123,8 @@ if ($action === 'generate_order') {
         exit;
     }
 
-    $start_ts = strtotime($fecha_desde);
-    $end_ts = strtotime($fecha_hasta);
+    $start_ts = strtotime($fecha_desde . " 00:00:00");
+    $end_ts = strtotime($fecha_hasta . " 23:59:59");
     
     // Obtener WABA ID
     $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
