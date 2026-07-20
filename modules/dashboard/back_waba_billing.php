@@ -82,7 +82,7 @@ if ($action === 'save_sede_config') {
 
 if ($action === 'check_last_order') {
     $id_sede = intval($_POST['id_sede'] ?? 0);
-    $fecha_hasta = date('Y-m-d');
+    $fecha_hasta = $_POST['fecha_hasta'] ?? date('Y-m-d');
     $fecha_desde = date('Y-m-01');
     $tiene_pendiente = false;
     $pendiente_id = null;

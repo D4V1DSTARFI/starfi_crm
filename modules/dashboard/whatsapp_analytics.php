@@ -395,6 +395,8 @@ if ($res_sedes) {
             // Lógica Emitir Orden
             $('#btnEmitirOrden').click(function() {
                 let id_sede = $('#filterSede').val();
+                let fecha_hasta_filtro = $('#filterFechaHasta').val();
+                
                 if (!id_sede || id_sede == '0') {
                     Swal.fire('Atención', 'Por favor seleccione una sede específica en los filtros antes de emitir una orden.', 'warning');
                     return;
@@ -402,7 +404,7 @@ if ($res_sedes) {
 
                 Swal.fire({ title: 'Analizando deudas...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
 
-                $.post('back_waba_billing.php', { action: 'check_last_order', id_sede: id_sede }, function(res) {
+                $.post('back_waba_billing.php', { action: 'check_last_order', id_sede: id_sede, fecha_hasta: fecha_hasta_filtro }, function(res) {
                     Swal.close();
                     if (res.status === 'success') {
                         let msg = `Se generará una orden desde el <b>${res.fecha_desde}</b> hasta el <b>${res.fecha_hasta}</b>.`;
