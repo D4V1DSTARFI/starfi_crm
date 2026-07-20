@@ -362,4 +362,127 @@ if ($action === 'generate_order') {
     }
     exit;
 }
+
+if ($action === 'get_orders') {
+    $res = $con->query("
+        SELECT o.*, s.nombre_sede 
+        FROM waba_ordenes_cobro o 
+        JOIN sedes s ON o.id_sede = s.id 
+        ORDER BY o.id DESC
+    ");
+    $data = [];
+    while ($row = $res->fetch_assoc()) {
+        $data[] = $row;
+    }
+    echo json_encode(['status' => 'success', 'data' => $data]);
+    exit;
+}
+
+if ($action === 'get_order_details') {
+    $id_orden = intval($_POST['id_orden'] ?? 0);
+    $res = $con->query("SELECT * FROM waba_ordenes_detalles WHERE id_orden = $id_orden");
+    $data = [];
+    while ($row = $res->fetch_assoc()) {
+        $data[] = $row;
+    }
+    echo json_encode(['status' => 'success', 'data' => $data]);
+    exit;
+}
+
+if ($action === 'resend_notification') {
+    $id_orden = intval($_POST['id_orden'] ?? 0);
+    
+    $res_o = $con->query("SELECT id_sede, fecha_desde, fecha_hasta, monto_total FROM waba_ordenes_cobro WHERE id = $id_orden");
+    if (!$res_o || !($o = $res_o->fetch_assoc())) {
+        echo json_encode(['status' => 'error', 'message' => 'Orden no encontrada']);
+        exit;
+    }
+    $id_sede = $o['id_sede'];
+    $fecha_desde = $o['fecha_desde'];
+    $fecha_hasta = $o['fecha_hasta'];
+    $costo_final = $o['monto_total'];
+    
+    $notificado = 0;
+    $res_s = $con->query("SELECT gerente_nombre, gerente_telefono, gerente_email, pref_not_cobro, nombre_sede FROM sedes WHERE id = $id_sede");
+    if ($res_s && $s = $res_s->fetch_assoc()) {
+        $msg = "Hola {$s['gerente_nombre']}, le recordamos la orden de cobro *#$id_orden* para *{$s['nombre_sede']}* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $costo_final USD\n\nPor favor coordine el pago correspondiente.";
+        
+        // WHATSAPP
+        if (in_array($s['pref_not_cobro'], ['WHATSAPP', 'AMBOS']) && !empty($s['gerente_telefono'])) {
+            $res_l = $con->query("SELECT meta_app_id, meta_token, id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+            if ($res_l && $l = $res_l->fetch_assoc()) {
+                $waba_token = $l['meta_token'];
+                $url_w = 'https://graph.facebook.com/v23.0/'.$l['meta_app_id'].'/messages';
+                
+                // Intentar usar template (asumiendo que ya fue creada al facturar)
+                $payload_w = [
+                    'messaging_product' => 'whatsapp',
+                    'to' => $s['gerente_telefono'],
+                    'type' => 'template',
+                    'template' => [
+                        'name' => 'notificacion_orden_cobro',
+                        'language' => ['code' => 'es'],
+                        'components' => [
+                            [
+                                'type' => 'body',
+                                'parameters' => [
+                                    ['type' => 'text', 'text' => $s['gerente_nombre']],
+                                    ['type' => 'text', 'text' => strval($id_orden)],
+                                    ['type' => 'text', 'text' => $s['nombre_sede']],
+                                    ['type' => 'text', 'text' => $fecha_desde],
+                                    ['type' => 'text', 'text' => $fecha_hasta],
+                                    ['type' => 'text', 'text' => strval(round($costo_final, 2))]
+                                ]
+                            ]
+                        ]
+                    ]
+                ];
+                
+                $ch_w = curl_init($url_w);
+                curl_setopt($ch_w, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token", "Content-Type: application/json"]);
+                curl_setopt($ch_w, CURLOPT_POST, true);
+                curl_setopt($ch_w, CURLOPT_POSTFIELDS, json_encode($payload_w));
+                curl_setopt($ch_w, CURLOPT_RETURNTRANSFER, true);
+                $resp_w = curl_exec($ch_w);
+                curl_close($ch_w);
+                
+                $resp_dec = json_decode($resp_w, true);
+                if (isset($resp_dec['messages'])) {
+                    $notificado = 1;
+                } else {
+                    // Fallback texto plano si el template falla o no está disponible
+                    $payload_w['type'] = 'text';
+                    $payload_w['text'] = ['body' => $msg];
+                    unset($payload_w['template']);
+                    
+                    $ch_w2 = curl_init($url_w);
+                    curl_setopt($ch_w2, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token", "Content-Type: application/json"]);
+                    curl_setopt($ch_w2, CURLOPT_POST, true);
+                    curl_setopt($ch_w2, CURLOPT_POSTFIELDS, json_encode($payload_w));
+                    curl_setopt($ch_w2, CURLOPT_RETURNTRANSFER, true);
+                    curl_exec($ch_w2);
+                    curl_close($ch_w2);
+                    $notificado = 1;
+                }
+            }
+        }
+        
+        // EMAIL
+        if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
+            $headers = "From: facturacion@starfi.com\r\nContent-Type: text/plain; charset=UTF-8\r\n";
+            @mail($s['gerente_email'], "Recordatorio de Estado de Cuenta WhatsApp API - {$s['nombre_sede']}", $msg, $headers);
+            $notificado = 1;
+        }
+        
+        if ($notificado == 1) {
+            $con->query("UPDATE waba_ordenes_cobro SET notificacion_enviada = notificacion_enviada + 1 WHERE id = $id_orden");
+            echo json_encode(['status' => 'success', 'message' => 'Notificación reenviada exitosamente.']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'No se pudo enviar la notificación. Revise si la sede tiene teléfono o correo válido configurado.']);
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada']);
+    }
+    exit;
+}
 ?>
