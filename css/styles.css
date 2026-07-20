@@ -863,3 +863,19 @@ body {
     align-items: center !important;
     justify-content: center !important;
 }
+
+
+/* Contenedor principal con Header arriba */
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+.app-container {
+    display: flex;
+    flex: 1;
+    width: 100%;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+}
