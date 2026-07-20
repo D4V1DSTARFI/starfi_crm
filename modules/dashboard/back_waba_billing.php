@@ -168,7 +168,11 @@ if ($action === 'generate_order') {
     }
     
     $mensajes_totales = 0;
-    if(isset($resp['analytics']['data'][0]['data_points'])) {
+    if(isset($resp['analytics']['data_points'])) {
+        foreach($resp['analytics']['data_points'] as $dp) {
+            if (isset($dp['sent'])) $mensajes_totales += intval($dp['sent']);
+        }
+    } else if(isset($resp['analytics']['data'][0]['data_points'])) {
         foreach($resp['analytics']['data'][0]['data_points'] as $dp) {
             if (isset($dp['sent'])) $mensajes_totales += intval($dp['sent']);
         }
@@ -197,9 +201,17 @@ if ($action === 'generate_order') {
             $con->query("UPDATE waba_ordenes_cobro SET estado = 'FUSIONADO' WHERE id = " . intval($orden_pendiente_id));
         }
         
-        $stmt = $con->prepare("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, mensajes_totales, costo_meta, margen_ganancia, monto_total, orden_padre_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("issidddi", $id_sede, $fecha_desde, $fecha_hasta, $mensajes_totales, $costo_meta, $margen, $costo_final, $orden_pendiente_id);
-        $stmt->execute();
+        if ($orden_pendiente_id) {
+            $stmt = $con->prepare("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, mensajes_totales, costo_meta, margen_ganancia, monto_total, orden_padre_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("issidddi", $id_sede, $fecha_desde, $fecha_hasta, $mensajes_totales, $costo_meta, $margen, $costo_final, $orden_pendiente_id);
+        } else {
+            $stmt = $con->prepare("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, mensajes_totales, costo_meta, margen_ganancia, monto_total) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("issiddd", $id_sede, $fecha_desde, $fecha_hasta, $mensajes_totales, $costo_meta, $margen, $costo_final);
+        }
+        
+        if (!$stmt->execute()) {
+            throw new Exception("Error al insertar orden: " . $stmt->error);
+        }
         $new_order_id = $stmt->insert_id;
         $stmt->close();
         
