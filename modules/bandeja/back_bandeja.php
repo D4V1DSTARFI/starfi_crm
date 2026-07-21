@@ -191,10 +191,10 @@ switch ($action) {
         if(empty($reply_to_meta_id)) $reply_to_meta_id = null;
         if(empty($reply_to_text)) $reply_to_text = null;
         
-        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido, id_mensaje_meta, reply_to_meta_id, reply_to_text) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, id_agente, contenido, id_mensaje_meta, reply_to_meta_id, reply_to_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $con->prepare($query);
         if ($stmt) {
-            $stmt->bind_param("issssss", $conversacion_id, $tipo, $origen, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text);
+            $stmt->bind_param("ississss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text);
             if ($stmt->execute()) {
                 echo json_encode(['status' => 'success', 'message_id' => $stmt->insert_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
