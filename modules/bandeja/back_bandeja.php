@@ -61,9 +61,9 @@ switch ($action) {
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         
         $query = "
-            SELECT m.id, m.tipo, m.origen, m.contenido, m.timestamp, m.estado_envio, m.url_archivo, m.reply_to_text, m.id_mensaje_meta, a.nombre_completo as nombre_agente 
+            SELECT m.id, m.tipo, m.origen, m.contenido, m.timestamp, m.estado_envio, m.url_archivo, m.reply_to_text, m.id_mensaje_meta, up.nombre as nombre_agente 
             FROM mensajes_y_eventos m
-            LEFT JOIN usuarios_agentes a ON m.id_agente = a.id
+            LEFT JOIN usuario_perfil up ON m.id_agente = up.id_usuario
             WHERE m.id_conversacion = ? 
             ORDER BY m.timestamp ASC
         ";
