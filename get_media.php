@@ -19,7 +19,12 @@ if ($res && $res->num_rows > 0) {
         // Fallback relative path calculation to check if file exists
         $local_path = __DIR__ . substr($url, strpos($url, '/assets/uploads/'));
         if (file_exists($local_path) && filesize($local_path) > 200) {
-            header("Location: " . $url);
+            $mime_local = mime_content_type($local_path);
+            if (strpos($local_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+            header('Content-Type: ' . $mime_local);
+            header('Content-Length: ' . filesize($local_path));
+            header('Cache-Control: public, max-age=31536000');
+            readfile($local_path);
             exit;
         }
     }
@@ -85,7 +90,13 @@ if ($binary) {
     // Update DB to cache it
     $con->query("UPDATE mensajes_y_eventos SET url_archivo = '$local_url' WHERE url_archivo = '$media_id'");
     
-    header("Location: " . $local_url);
+    $mime_local = mime_content_type($save_path);
+    if (strpos($save_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+    header('Content-Type: ' . $mime_local);
+    header('Content-Length: ' . filesize($save_path));
+    header('Cache-Control: public, max-age=31536000');
+    readfile($save_path);
+    exit;
 } else {
     http_response_code(500);
 }

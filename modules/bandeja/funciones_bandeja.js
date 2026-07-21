@@ -780,7 +780,7 @@ function renderMessages(messages, scrollToBottom) {
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
             msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
             let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
-            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
+            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}?stream=1" style="max-width: 250px;"></audio></div>`;
         }
         let replyBtn = '';
         if (msg.id_mensaje_meta && (msg.tipo === 'TEXTO' || msg.tipo === 'IMAGEN' || msg.tipo === 'DOCUMENTO' || msg.tipo === 'AUDIO')) {
