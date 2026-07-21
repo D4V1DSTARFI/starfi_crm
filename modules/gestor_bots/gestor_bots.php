@@ -18,8 +18,54 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
+    <link rel="stylesheet" href="../../assets/css/drawflow.min.css">
     
     <style>
+        /* Drawflow overrides */
+        #drawflow {
+            width: 100%;
+            height: 600px;
+            background: #F8FAFC;
+            background-size: 25px 25px;
+            background-image: linear-gradient(to right, #E2E8F0 1px, transparent 1px), linear-gradient(to bottom, #E2E8F0 1px, transparent 1px);
+            border-radius: 12px;
+            border: 1px solid #CBD5E1;
+            position: relative;
+        }
+        .drawflow .drawflow-node {
+            background: white;
+            border: 1px solid #CBD5E1;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            width: 250px;
+            z-index: 2;
+        }
+        .drawflow .drawflow-node .title-box {
+            height: 35px;
+            line-height: 35px;
+            background: #EFF6FF;
+            border-bottom: 1px solid #BFDBFE;
+            border-radius: 8px 8px 0 0;
+            padding: 0 10px;
+            font-weight: 600;
+            color: #1E3A8A;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .drawflow .drawflow-node .box {
+            padding: 10px;
+            font-size: 0.8rem;
+            color: #475569;
+        }
+        .drawflow .connection .main-path {
+            stroke: #3B82F6;
+            stroke-width: 3px;
+        }
+        .drawflow .drawflow-node.selected {
+            border: 2px solid #E85B14;
+        }
         .config-container {
             flex: 1;
             padding: 30px;
@@ -223,11 +269,30 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             <i class="fa-solid fa-search"></i>
                             <input type="text" id="searchRule" placeholder="Buscar por disparador o mensaje...">
                         </div>
-                        <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
-                            <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
-                        </button>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-secondary" id="btnToggleView" onclick="toggleViewMode()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px;">
+                                <i class="fa-solid fa-project-diagram me-1"></i> Modo Visual
+                            </button>
+                            <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
+                                <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
+                            </button>
+                        </div>
                     </div>
-                    <div class="table-responsive">
+                    
+                    <!-- VISTA DRAWFLOW -->
+                    <div id="drawflowContainer" style="display: none; padding: 20px;">
+                        <div class="d-flex justify-content-between mb-3">
+                            <div>
+                                <h5 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-code-branch text-primary me-2"></i>Árbol Conversacional</h5>
+                                <small class="text-muted">Arrastra conexiones entre las salidas y entradas de los nodos. Haz doble clic en un nodo para editarlo.</small>
+                            </div>
+                            <button class="btn btn-success fw-bold px-4 shadow-sm" onclick="saveDrawflowNetwork()"><i class="fa-solid fa-save me-1"></i> Guardar Red</button>
+                        </div>
+                        <div id="drawflow"></div>
+                    </div>
+
+                    <!-- VISTA TABLA -->
+                    <div class="table-responsive" id="tableContainer">
                     <table class="table table-hover align-middle table-borderless mb-0">
                         <thead style="background-color: #F8FAFC; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">
                             <tr>
