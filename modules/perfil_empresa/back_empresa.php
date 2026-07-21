@@ -25,6 +25,12 @@ if (!$con) {
 // Asegurar existencia de las 4 tablas corporativas
 @mysqli_query($con, "CREATE TABLE IF NOT EXISTS empresa_perfil (id INT AUTO_INCREMENT PRIMARY KEY, id_sede INT NOT NULL DEFAULT 1, razon_social VARCHAR(255) NOT NULL, letra CHAR(1) DEFAULT 'J', rif VARCHAR(50) NOT NULL, email VARCHAR(255), telefono VARCHAR(50), direccion TEXT, web VARCHAR(255), instagram VARCHAR(100), condicion ENUM('[ORDINARIO]', '[ESPECIAL]') DEFAULT '[ORDINARIO]', logo_empresa VARCHAR(255)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+// Asegurar existencia de la empresa ID 1 (Ficha Única)
+$check_emp = mysqli_query($con, "SELECT id FROM empresa_perfil WHERE id = 1");
+if ($check_emp && mysqli_num_rows($check_emp) == 0) {
+    mysqli_query($con, "INSERT INTO empresa_perfil (id, id_sede, razon_social, letra, rif, email, telefono, direccion, web, instagram, condicion) VALUES (1, 1, 'STARFI C.A.', 'J', '000000000', 'contacto@starfi.com', '+58 000 0000000', 'Sede Principal', 'www.starfi.com', 'starfi_crm', '[ORDINARIO]')");
+}
+
 @mysqli_query($con, "CREATE TABLE IF NOT EXISTS empresa_firmantes (id INT AUTO_INCREMENT PRIMARY KEY, id_empresa INT NOT NULL, id_sede INT NOT NULL DEFAULT 1, nombre VARCHAR(255) NOT NULL, cedula VARCHAR(50) NOT NULL, telefono VARCHAR(50), email VARCHAR(255), cargo VARCHAR(100), direccion TEXT, firma VARCHAR(255)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
 @mysqli_query($con, "CREATE TABLE IF NOT EXISTS empresa_registro (id INT AUTO_INCREMENT PRIMARY KEY, id_empresa INT NOT NULL, id_sede INT NOT NULL DEFAULT 1, fecha DATE NOT NULL, n_registro VARCHAR(50) NOT NULL, n_tomo VARCHAR(50) NOT NULL, descripcion TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");

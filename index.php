@@ -243,6 +243,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
         <!-- Módulos Grid -->
         <div class="row g-4 justify-content-center">
             <!-- 1. Bandeja Omnicanal -->
+            <?php if (hasPermission('bandeja')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/bandeja/bandeja.php" class="module-card">
                     <div>
@@ -250,7 +251,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-chat-left-text-fill"></i>
                         </div>
                         <h4 class="module-title">Bandeja Omnicanal</h4>
-                        <p class="module-desc">Bandeja de entrada unificada para gestionar y responder a todos los chats
+                        <p class="module-desc">Bandeja de entrada unificada para gestionar y responder to-dos los chats
                             de tus clientes y bots en tiempo real.</p>
                     </div>
                     <div class="action-link">
@@ -258,8 +259,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
             <!-- 2. Gestor de Bots -->
+            <?php if (hasPermission('gestor_bots')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/gestor_bots/gestor_bots.php" class="module-card">
                     <div>
@@ -275,8 +278,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
             <!-- 3. Directorio de Clientes -->
+            <?php if (hasPermission('directorio')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/directorio/directorio.php" class="module-card">
                     <div>
@@ -292,8 +297,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
             <!-- 4. Estadísticas y Reportes -->
+            <?php if (hasPermission('dashboard')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/dashboard.php" class="module-card">
                     <div>
@@ -309,8 +316,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
             <!-- 5. Configuración del Sistema -->
+            <?php if (hasPermission('configuracion')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/configuracion/configuracion.php" class="module-card">
                     <div>
@@ -326,8 +335,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
             <!-- 6. Métricas y Facturación WhatsApp -->
+            <?php if (hasPermission('dashboard')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/whatsapp_analytics.php" class="module-card">
                     <div>
@@ -344,43 +355,9 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
 
-            <!-- 7. Gestión de Usuarios -->
-            <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/gestion_usuarios/index.php" class="module-card">
-                    <div>
-                        <div class="icon-container" style="background-color: rgba(79, 70, 229, 0.1); color: #4F46E5;">
-                            <i class="bi bi-people-fill"></i>
-                        </div>
-                        <h4 class="module-title">Gestión de Usuarios</h4>
-                        <p class="module-desc">Administra cuentas de operadores y supervisores, controla el estado
-                            activo/inactivo y habilita permisos de acceso al CRM.</p>
-                    </div>
-                    <div class="action-link" style="color: #4F46E5;">
-                        Gestionar Usuarios <i class="bi bi-arrow-right"></i>
-                    </div>
-                </a>
-            </div>
-
-            <!-- 8. Perfil de Empresa -->
-            <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/perfil_empresa/index.php" class="module-card">
-                    <div>
-                        <div class="icon-container" style="background-color: rgba(234, 88, 12, 0.1); color: #EA580C;">
-                            <i class="bi bi-building"></i>
-                        </div>
-                        <h4 class="module-title">Perfil de Empresa</h4>
-                        <p class="module-desc">Información corporativa, datos fiscales RIF, representantes legales/firmantes, registro mercantil y expedientes digitales.</p>
-                    </div>
-                    <div class="action-link" style="color: #EA580C;">
-                        Ver Perfil Empresa <i class="bi bi-arrow-right"></i>
-                    </div>
-                </a>
-            </div>
-        </div>
-        
-        <?php if ($rol_agente === 'MASTER'): ?>
-        <div class="row g-4 mt-1">
+            <?php if ($rol_agente === 'MASTER'): ?>
             <!-- 7. Panel de Órdenes de Cobro (Solo MASTER) -->
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/waba_ordenes.php" class="module-card">
@@ -412,8 +389,63 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
+
+            <!-- 7. Gestión de Usuarios -->
+            <?php if (hasPermission('gestion_usuarios')): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/gestion_usuarios/index.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(79, 70, 229, 0.1); color: #4F46E5;">
+                            <i class="bi bi-people-fill"></i>
+                        </div>
+                        <h4 class="module-title">Gestión de Usuarios</h4>
+                        <p class="module-desc">Administra cuentas de operadores y supervisores, controla el estado
+                            activo/inactivo y habilita permisos de acceso al CRM.</p>
+                    </div>
+                    <div class="action-link" style="color: #4F46E5;">
+                        Gestionar Usuarios <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            <?php endif; ?>
+
+            <!-- 8. Perfil de Empresa -->
+            <?php if (hasPermission('perfil_empresa')): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/perfil_empresa/index.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(234, 88, 12, 0.1); color: #EA580C;">
+                            <i class="bi bi-building"></i>
+                        </div>
+                        <h4 class="module-title">Perfil de Empresa</h4>
+                        <p class="module-desc">Información corporativa, datos fiscales RIF, representantes legales/firmantes, registro mercantil y expedientes digitales.</p>
+                    </div>
+                    <div class="action-link" style="color: #EA580C;">
+                        Ver Perfil Empresa <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            <?php endif; ?>
+
+            <!-- 9. Roles y Permisos (Solo MASTER) -->
+            <?php if (hasPermission('gestion_roles')): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/gestion_roles/index.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(245, 158, 11, 0.1); color: #F59E0B;">
+                            <i class="bi bi-shield-lock-fill"></i>
+                        </div>
+                        <h4 class="module-title">Roles y Permisos</h4>
+                        <p class="module-desc">Configura accesos y permisos por módulo para los distintos roles de operadores y administradores.</p>
+                    </div>
+                    <div class="action-link" style="color: #F59E0B;">
+                        Gestionar Roles <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            <?php endif; ?>
         </div>
-        <?php endif; ?>
     </div>
 
     <!-- Footer -->

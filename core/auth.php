@@ -67,8 +67,8 @@ function getAgenteInfo() {
     }
     
     // Primero buscar en el nuevo sistema de usuarios registrados
-    $stmt_new = $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, r.nombre AS rol, u.id_empresa, u.estado, 
-                                      (SELECT razon_social FROM empresa_perfil WHERE id = u.id_empresa LIMIT 1) AS empresa_nombre
+    $stmt_new = $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, r.nombre AS rol, u.id_sede, u.estado, 
+                                      (SELECT nombre_sede FROM sedes WHERE id = u.id_sede LIMIT 1) AS sede_nombre
                                FROM usuario u 
                                JOIN usuario_perfil up ON u.id = up.id_usuario 
                                LEFT JOIN roles r ON u.rol = r.id
@@ -95,6 +95,115 @@ function getAgenteInfo() {
 }
 
 /**
+ * Verifica si el usuario actual tiene permiso para acceder a un módulo específico.
+ * @param string $modulo Nombre identificador del módulo.
+ * @return bool
+ */
+function hasPermission($modulo) {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (!isset($_SESSION['agente_id'])) {
+        return false;
+    }
+    
+    // El home/dashboard principal siempre está permitido
+    if ($modulo === 'dashboard_main') {
+        return true;
+    }
+    
+    $con = getDbConnection('core');
+    if (!$con) {
+        return false;
+    }
+    
+    $id = intval($_SESSION['agente_id']);
+    
+    // Failsafe: ID 1 siempre es MASTER/Propietario del sistema
+    if ($id === 1) {
+        return true;
+    }
+    
+    // Obtener rol del usuario
+    $stmt = $con->prepare("SELECT u.rol, r.nombre AS rol_nombre 
+                           FROM usuario u 
+                           LEFT JOIN roles r ON u.rol = r.id 
+                           WHERE u.id = ?");
+    if ($stmt) {
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($row = $res->fetch_assoc()) {
+            $stmt->close();
+            
+            // MASTER tiene bypass global
+            if ($row['rol_nombre'] === 'MASTER') {
+                return true;
+            }
+            
+            $rol_id = intval($row['rol']);
+            
+            // Consultar permisos_roles
+            $stmt_perm = $con->prepare("SELECT permitido FROM permisos_roles WHERE id_rol = ? AND modulo = ?");
+            if ($stmt_perm) {
+                $stmt_perm->bind_param("is", $rol_id, $modulo);
+                $stmt_perm->execute();
+                $res_perm = $stmt_perm->get_result();
+                if ($row_perm = $res_perm->fetch_assoc()) {
+                    $stmt_perm->close();
+                    return (intval($row_perm['permitido']) === 1);
+                }
+                $stmt_perm->close();
+            }
+        } else {
+            $stmt->close();
+        }
+    }
+    
+    // Fallback por defecto si no hay regla explícita
+    return false;
+}
+
+/**
+ * Bloquea el acceso a la página actual si el usuario no tiene permisos para el módulo especificado.
+ * @param string $modulo Nombre identificador del módulo.
+ */
+function requirePermission($modulo) {
+    if (!hasPermission($modulo)) {
+        // Redirigir a una pantalla de error o mostrar mensaje
+        echo '<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <title>Acceso Denegado | STARFI CRM</title>
+            <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+            <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
+            <style>
+                body { background-color: #F8FAFC; height: 100vh; display: flex; align-items: center; justify-content: center; font-family: "Inter", sans-serif; }
+                .error-card { background: #html; border-radius: 16px; padding: 40px; text-align: center; max-width: 480px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #E2E8F0; background-color: white; }
+            </style>
+        </head>
+        <body>
+            <div class="error-card">
+                <div class="mx-auto rounded-circle d-flex align-items-center justify-content-center mb-4" style="background-color: rgba(239, 68, 68, 0.1); width: 80px; height: 80px; color: #EF4444;">
+                    <i class="fa-solid fa-shield-halved" style="font-size: 2.5rem;"></i>
+                </div>
+                <h4 class="fw-bold text-dark mb-3">Acceso Restringido</h4>
+                <p class="text-muted mb-4" style="font-size: 0.95rem; line-height: 1.6;">
+                    Su rol actual no cuenta con autorización para acceder al módulo de <strong>' . htmlspecialchars(ucwords(str_replace('_', ' ', $modulo))) . '</strong>.
+                </p>
+                <a href="../../index.php" class="btn btn-primary px-5 py-2.5 fw-semibold text-white" style="background-color: var(--primary); border-color: var(--primary); border-radius: 30px; text-decoration: none;">
+                    Volver al Dashboard
+                </a>
+            </div>
+        </body>
+        </html>';
+        exit();
+    }
+}
+
+/**
  * Renderiza el sidebar de navegación dinámica para todos los módulos de STARFI CRM.
  * @param string $active El identificador del módulo activo.
  */
@@ -111,6 +220,7 @@ function renderSidebar($active = '') {
         'perfil_empresa' => ['link' => '../perfil_empresa/index.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
         'directorio' => ['link' => '../directorio/directorio.php', 'icon' => 'fa-solid fa-address-book', 'label' => 'Directorio 360'],
         'gestion_usuarios' => ['link' => '../gestion_usuarios/index.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],
+        'gestion_roles' => ['link' => '../gestion_roles/index.php', 'icon' => 'fa-solid fa-user-shield', 'label' => 'Roles y Permisos'],
         'dashboard' => ['link' => '../dashboard/dashboard.php', 'icon' => 'fa-solid fa-chart-line', 'label' => 'Métricas y KPIs'],
         'gestor_bots' => ['link' => '../gestor_bots/gestor_bots.php', 'icon' => 'fa-solid fa-robot', 'label' => 'Gestor de Bots'],
         'configuracion' => ['link' => '../configuracion/configuracion.php', 'icon' => 'fa-solid fa-gear', 'label' => 'Configuración']
@@ -126,6 +236,9 @@ function renderSidebar($active = '') {
     echo '        <nav class="sidebar-nav">';
     
     foreach ($items as $key => $info) {
+        if (!hasPermission($key)) {
+            continue;
+        }
         $activeClass = ($key === $active) ? ' active' : '';
         echo '            <a href="' . $info['link'] . '" class="nav-item' . $activeClass . '">';
         echo '                <i class="' . $info['icon'] . '"></i>';
