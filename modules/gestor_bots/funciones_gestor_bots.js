@@ -72,16 +72,60 @@ $(document).ready(function() {
 let botModalObj = null;
 
 function loadBotRules() {
+    let selectObj = $('#sedeFilter');
+    let idSede = selectObj.val();
+    
+    if (!idSede || idSede === "0") {
+        $('#botToggleContainer').hide();
+        $('#botContentContainer').hide();
+        return;
+    }
+    
+    // Set current bot status
+    let botActivo = selectObj.find('option:selected').data('bot-activo');
+    $('#botStatusToggle').prop('checked', botActivo == 1);
+    
+    $('#botToggleContainer').css('display', 'flex');
+    $('#botContentContainer').fadeIn();
+
     $.ajax({
         url: 'back_gestor_bots.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_rules' },
+        data: { action: 'load_rules', id_sede: idSede },
         success: function(response) {
             if (response.status === 'success') {
                 allRules = response.data;
                 applyFiltersAndRender();
             } else {
+                Swal.fire('Error', response.message, 'error');
+            }
+        }
+    });
+}
+
+function toggleBotStatus() {
+    let idSede = $('#sedeFilter').val();
+    let isActive = $('#botStatusToggle').is(':checked') ? 1 : 0;
+    
+    $.ajax({
+        url: 'back_gestor_bots.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'toggle_bot', id_sede: idSede, status: isActive },
+        success: function(response) {
+            if (response.status === 'success') {
+                $('#sedeFilter').find('option:selected').data('bot-activo', isActive);
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: 'Estado del Bot Actualizado',
+                    showConfirmButton: false,
+                    timer: 2000
+                });
+            } else {
+                $('#botStatusToggle').prop('checked', !isActive);
                 Swal.fire('Error', response.message, 'error');
             }
         }
@@ -135,9 +179,14 @@ function renderTablePage() {
         tbody.append('<tr><td colspan="5" class="text-center text-muted p-5"><i class="fa-solid fa-robot fs-2 mb-3 d-block"></i>No se encontraron reglas.</td></tr>');
     } else {
         paginatedItems.forEach(rule => {
-            let tipoBadge = rule.tipo === 'EVENTO_SISTEMA' 
-                ? '<span class="badge bg-secondary">Evento</span>' 
-                : '<span class="badge bg-primary">Palabra Clave</span>';
+            let tipoBadge = '';
+            if (rule.tipo === 'EVENTO_SISTEMA') {
+                tipoBadge = '<span class="badge bg-secondary">Evento</span>';
+            } else if (rule.tipo === 'CIERRE_CSAT') {
+                tipoBadge = '<span class="badge bg-danger"><i class="fa-solid fa-star me-1"></i>CSAT & Cierre</span>';
+            } else {
+                tipoBadge = '<span class="badge bg-primary">Palabra Clave</span>';
+            }
                 
             let estadoBadge = rule.estado === 'ACTIVO'
                 ? '<span class="badge bg-success">Activo</span>'
@@ -173,6 +222,11 @@ function renderTablePage() {
 }
 
 function openBotModal() {
+    let idSede = $('#sedeFilter').val();
+    if (!idSede || idSede === "0") {
+        Swal.fire('Atención', 'Por favor, selecciona una sede en el menú desplegable primero.', 'warning');
+        return;
+    }
     $('#botForm')[0].reset();
     $('#ruleId').val('0');
     $('#botModalTitle').text('Nueva Respuesta Automática');
@@ -197,6 +251,7 @@ function saveBotRule() {
     const data = {
         action: 'save_rule',
         id: $('#ruleId').val(),
+        id_sede: $('#sedeFilter').val(),
         tipo: $('#ruleType').val(),
         disparador: $('#ruleTrigger').val(),
         mensaje: $('#ruleMessage').val(),

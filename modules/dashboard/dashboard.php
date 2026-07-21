@@ -237,7 +237,7 @@ if ($res_sedes) {
             <!-- KPIs Row -->
             <div class="row g-4 mb-4">
                 <!-- KPI 1 -->
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="kpi-card">
                         <div class="kpi-card-header">
                             <h3 class="kpi-title">Volumen de Chats</h3>
@@ -251,25 +251,11 @@ if ($res_sedes) {
                 </div>
 
                 <!-- KPI 2 -->
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="kpi-card">
                         <div class="kpi-card-header">
-                            <h3 class="kpi-title">T. Promedio 1ra Respuesta (FRT)</h3>
-                            <div class="kpi-icon success"><i class="fa-solid fa-stopwatch"></i></div>
-                        </div>
-                        <div id="kpiAvgFrt" class="kpi-value">...</div>
-                        <div class="kpi-trend up">
-                            <i class="fa-solid fa-arrow-trend-down"></i> Estable
-                        </div>
-                    </div>
-                </div>
-
-                <!-- KPI 3 -->
-                <div class="col-md-4">
-                    <div class="kpi-card">
-                        <div class="kpi-card-header">
-                            <h3 class="kpi-title">Tiempo Promedio Resolución</h3>
-                            <div class="kpi-icon dark"><i class="fa-solid fa-check-double"></i></div>
+                            <h3 class="kpi-title">Ciclo de Ventas Promedio</h3>
+                            <div class="kpi-icon dark"><i class="fa-solid fa-stopwatch"></i></div>
                         </div>
                         <div id="kpiAvgRes" class="kpi-value">...</div>
                         <div class="kpi-trend down">
@@ -277,14 +263,53 @@ if ($res_sedes) {
                         </div>
                     </div>
                 </div>
+
+                <!-- KPI 3: Tasa de Conversión -->
+                <div class="col-md-3">
+                    <div class="kpi-card">
+                        <div class="kpi-card-header">
+                            <h3 class="kpi-title">Tasa de Conversión</h3>
+                            <div class="kpi-icon success"><i class="fa-solid fa-bullseye"></i></div>
+                        </div>
+                        <div id="kpiConversion" class="kpi-value">...</div>
+                        <div class="kpi-trend up">
+                            <i class="fa-solid fa-arrow-trend-up"></i> Basado en chats cerrados
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KPI 4: CAC -->
+                <div class="col-md-3">
+                    <div class="kpi-card">
+                        <div class="kpi-card-header">
+                            <h3 class="kpi-title">Costo Adquisición (CAC)</h3>
+                            <div class="kpi-icon text-white" style="background-color: #E85B14;"><i class="fa-solid fa-sack-dollar"></i></div>
+                        </div>
+                        <div id="kpiCAC" class="kpi-value">...</div>
+                        <div class="kpi-trend text-muted">
+                            <i class="fa-solid fa-info-circle"></i> Costo WABA / Ventas
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Charts Row -->
             <div class="row g-4">
-                <div class="col-md-8">
+                <div class="col-md-5">
+                    <div class="chart-card h-100">
+                        <h5 class="brand-font fw-bold text-starfi-dark mb-1">Motivos de Cierre (Embudo)</h5>
+                        <p class="text-muted" style="font-size: 0.8rem;">Distribución de resultados comerciales</p>
+                        
+                        <div class="chart-container" style="position: relative; height:250px; width:100%; margin-top:20px;">
+                            <canvas id="motivosChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
                     <div class="chart-card">
-                        <h5 class="brand-font fw-bold text-starfi-dark mb-1">Volumen de Chats por Día</h5>
-                        <p class="text-muted" style="font-size: 0.8rem;">Distribución de conversaciones en la semana actual</p>
+                        <h5 class="brand-font fw-bold text-starfi-dark mb-1">Volumen de Chats</h5>
+                        <p class="text-muted" style="font-size: 0.8rem;">Distribución de conversaciones en los días</p>
                         
                         <div class="chart-container" style="position: relative; height:250px; width:100%; margin-top:20px;">
                             <canvas id="chatsChart"></canvas>
@@ -292,13 +317,27 @@ if ($res_sedes) {
                     </div>
                 </div>
 
-                <div class="col-md-4">
-                    <div class="chart-card h-100">
-                        <h5 class="brand-font fw-bold text-starfi-dark mb-1">Desempeño Operadores</h5>
-                        <p class="text-muted" style="font-size: 0.8rem;">Resolución de tickets</p>
+                <div class="col-md-3">
+                    <div class="chart-card h-100 d-flex flex-column justify-content-between">
+                        <div>
+                            <h5 class="brand-font fw-bold text-starfi-dark mb-1">Calidad (Scores)</h5>
+                            <p class="text-muted" style="font-size: 0.8rem;">Evaluaciones del servicio</p>
+                        </div>
                         
-                        <div class="mt-4" id="operatorPerformanceContainer">
-                            <!-- JS Inject -->
+                        <div class="mt-2 text-center pb-2 border-bottom">
+                            <small class="text-muted fw-bold d-block mb-1">Lead Scoring (Operador)</small>
+                            <h2 class="display-5 fw-bold text-warning mb-0" id="kpiLeadScore">...</h2>
+                            <div class="text-warning fs-5 mb-1" id="leadStarsContainer">
+                                <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-regular fa-star"></i><i class="fa-regular fa-star"></i>
+                            </div>
+                        </div>
+
+                        <div class="mt-2 text-center pt-2">
+                            <small class="text-muted fw-bold d-block mb-1">CSAT (Cliente)</small>
+                            <h2 class="display-5 fw-bold text-success mb-0" id="kpiCsatScore">...</h2>
+                            <div class="text-success fs-5 mb-1" id="csatStarsContainer">
+                                <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-regular fa-star"></i><i class="fa-regular fa-star"></i>
+                            </div>
                         </div>
                     </div>
                 </div>

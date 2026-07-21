@@ -69,5 +69,5 @@ echo "<h3>Simulación de Mensaje Entrante</h3>";
 echo "Se envió un mensaje de prueba al webhook.<br>";
 echo "<strong>Código HTTP:</strong> " . $httpcode . "<br>";
 echo "<strong>Respuesta:</strong> " . htmlspecialchars($response) . "<br><br>";
-echo "¡Ve a tu <b>Bandeja Omnicanal</b>, revisa la pestaña <b>No Leído</b> o <b>Todos</b> y deberías ver el mensaje al instante!";
+echo "¡Ve a tu <b>Centro de Mensajes</b>, revisa la pestaña <b>No Leído</b> o <b>Todos</b> y deberías ver el mensaje al instante!";
 ?>

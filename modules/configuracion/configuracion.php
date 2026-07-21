@@ -423,7 +423,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 <div class="card h-100 shadow-sm border-0" style="border-radius: 12px; border: 1px solid #E2E8F0 !important;">
                                     <div class="card-body p-4">
                                         <h5 class="fw-bold text-dark mb-3"><i class="fa-brands fa-whatsapp text-primary me-2"></i> Simular Mensaje Entrante (Bandeja)</h5>
-                                        <p class="text-muted small mb-4">Simula que un cliente ha enviado un mensaje a tu webhook de WhatsApp. Esto te permite verificar la recepción y visualización instantánea en la Bandeja Omnicanal.</p>
+                                        <p class="text-muted small mb-4">Simula que un cliente ha enviado un mensaje a tu webhook de WhatsApp. Esto te permite verificar la recepción y visualización instantánea en el Centro de Mensajes.</p>
                                         <button class="btn btn-outline-primary fw-bold" onclick="ejecutarSimulador()" style="border-radius: 8px;">
                                             <i class="fa-solid fa-paper-plane me-2"></i> Simular Recepción de Mensaje
                                         </button>
@@ -737,12 +737,15 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                     <input type="hidden" id="plantillas_id_sede">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-muted me-2"></i>Lista de Plantillas Sincronizadas</h6>
-                        <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
-                            <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
-                        </button>
+                        <div>
+                            <button type="button" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
+                                <i class="fa-solid fa-star me-1"></i> Auto-Crear Plantilla CSAT
+                            </button>
+                            <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
+                                <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
+                            </button>
+                        </div>
                     </div>
-
-                    <!-- VISTA: Lista de Plantillas -->
                     <div id="vistaListaPlantillas">
                         <div class="table-responsive">
                             <table class="table table-hover table-borderless align-middle bg-white rounded-3 shadow-sm" id="tablaPlantillasMeta">

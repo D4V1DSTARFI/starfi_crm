@@ -226,6 +226,42 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         return;
     }
     
+    // VERIFICAR SI ES UNA RESPUESTA CSAT (1 al 5) PARA UN CHAT RECIENTEMENTE CERRADO
+    $is_csat = false;
+    $csat_value = 0;
+    if ($tipo_bd === 'TEXTO' && preg_match('/^[1-5]$/', trim($cuerpo_mensaje))) {
+        $csat_value = intval(trim($cuerpo_mensaje));
+    } else if (isset($GLOBALS['tipo_interactivo']) && $GLOBALS['tipo_interactivo'] === 'button_reply') {
+        // En caso de que la plantilla use botones numéricos (1, 2, 3, 4, 5)
+        if (preg_match('/^[1-5]$/', trim($cuerpo_mensaje))) {
+            $csat_value = intval(trim($cuerpo_mensaje));
+        }
+    }
+
+    if ($csat_value > 0) {
+        // Buscar la última conversación cerrada de este cliente
+        $q_last_closed = mysqli_query($con, "SELECT id, csat_score FROM conversaciones WHERE id_cliente = $id_cliente AND estado = 'CERRADO' ORDER BY id DESC LIMIT 1");
+        if ($q_last_closed && mysqli_num_rows($q_last_closed) > 0) {
+            $row_last = mysqli_fetch_assoc($q_last_closed);
+            if (empty($row_last['csat_score'])) {
+                // Es una respuesta a la encuesta CSAT!
+                mysqli_query($con, "UPDATE conversaciones SET csat_score = $csat_value WHERE id = " . $row_last['id']);
+                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (" . $row_last['id'] . ", 'EVENTO_SISTEMA', 'El cliente calificó la atención con $csat_value estrellas (CSAT).')");
+                
+                // Enviar mensaje de agradecimiento
+                if ($id_linea) {
+                    $q_t = mysqli_query($con, "SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id = $id_linea");
+                    if ($q_t && mysqli_num_rows($q_t) > 0) {
+                        $l_info = mysqli_fetch_assoc($q_t);
+                        enviar_mensaje_texto_api($con, $l_info, $telefono_cliente, "¡Gracias por tu calificación! Nos ayuda a mejorar.", $row_last['id']);
+                        marcar_como_leido_api($l_info, $id_mensaje_meta);
+                    }
+                }
+                return; // Cortamos el flujo aquí para que no abra un nuevo chat
+            }
+        }
+    }
+
     // 3. BUSCAR O CREAR CONVERSACION
     $id_conversacion = null;
     $estado_conv = null;
@@ -253,7 +289,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         return;
     }
 
-    // LÓGICA DE BOT_RECOPILANDO
+    /* LÓGICA DE BOT_RECOPILANDO OBSOLETA
     if (!$nueva_conversacion && $estado_conv === 'BOT_RECOPILANDO' && $tipo_bd === 'TEXTO') {
         // Extraer y limpiar el nombre ingresado
         $nombre_ingresado = extract_clean_name($cuerpo_mensaje, $perfil);
@@ -266,6 +302,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         $estado_conv = 'ESPERA_ASIGNACION';
         $nueva_conversacion = true; // Forzamos el envío del saludo y operadores
     }
+    */
     
     // 4. INSERTAR MENSAJE RECIBIDO
     $url_archivo_esc = $url_archivo ? "'" . mysqli_real_escape_string($con, $url_archivo) . "'" : "NULL";
@@ -280,33 +317,56 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     
     // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS
     if ($id_linea) {
-        $q_token = mysqli_query($con, "SELECT meta_app_id, meta_token, id_sede FROM lineas_whatsapp WHERE id = $id_linea");
+        $q_token = mysqli_query($con, "SELECT l.meta_app_id, l.meta_token, l.id_sede, s.bot_activo FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id = $id_linea");
         if($q_token && mysqli_num_rows($q_token) > 0) {
             $linea_info = mysqli_fetch_assoc($q_token);
             
             // Marcar el mensaje entrante como leído (doble check azul)
             marcar_como_leido_api($linea_info, $id_mensaje_meta);
             
-            /*
-             * NOTA: Las respuestas automáticas genéricas fueron deshabilitadas.
-             * Más adelante se configurará una respuesta personalizada por cada sede.
-             *
-            if ($estado_conv === 'BOT_RECOPILANDO') {
-                // Pedir nombre si es la primera vez
+            // ====== LÓGICA DE ROBOT / BOT DE SEDE ======
+            // Solo responde si el bot está activado en la sede y la conversación no ha sido tomada por un agente
+            $bot_activo = (isset($linea_info['bot_activo']) && $linea_info['bot_activo'] == 1);
+            if ($bot_activo && ($estado_conv === 'BOT_RECOPILANDO' || $estado_conv === 'ESPERA_ASIGNACION')) {
+                $id_sede = intval($linea_info['id_sede']);
+                $cuerpo_upper = strtoupper(trim($cuerpo_mensaje));
+                $bot_respondio = false;
+
                 if ($nueva_conversacion) {
-                    $mensaje_bot = "Hola, buenos días. ¿Cuál es tu nombre, por favor me indicas?";
-                    enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje_bot, $id_conversacion);
+                    // Si es nueva conversación, buscamos el mensaje de BIENVENIDA o HOLA
+                    $q_bienvenida = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND (tipo = 'BIENVENIDA' OR disparador = 'HOLA') LIMIT 1");
+                    if ($q_bienvenida && mysqli_num_rows($q_bienvenida) > 0) {
+                        $row = mysqli_fetch_assoc($q_bienvenida);
+                        enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                        $bot_respondio = true;
+                        if ($row['tipo'] === 'CIERRE_CSAT') {
+                            enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                        }
+                    }
+                } else {
+                    // Buscar coincidencia de palabra clave
+                    $q_match = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND UPPER(disparador) = '$cuerpo_upper' LIMIT 1");
+                    if ($q_match && mysqli_num_rows($q_match) > 0) {
+                        $row = mysqli_fetch_assoc($q_match);
+                        enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                        $bot_respondio = true;
+                        if ($row['tipo'] === 'CIERRE_CSAT') {
+                            enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                        }
+                    } else {
+                        // Si no hay coincidencia, buscar DEFAULT
+                        $q_def = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND disparador = 'DEFAULT' LIMIT 1");
+                        if ($q_def && mysqli_num_rows($q_def) > 0) {
+                            $row = mysqli_fetch_assoc($q_def);
+                            enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                            $bot_respondio = true;
+                            if ($row['tipo'] === 'CIERRE_CSAT') {
+                                enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                            }
+                        }
+                    }
                 }
-            } else if ($nueva_conversacion && $estado_conv === 'ESPERA_ASIGNACION') {
-                // Saludar por nombre y mandar operadores
-                $nombre_saludo = !empty($nombre_db) ? $nombre_db : $perfil;
-                $mensaje_bot = "Hola $nombre_saludo, ¿en qué te puedo ayudar? Te comunicaremos con uno de nuestros operadores.";
-                enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje_bot, $id_conversacion);
-                
-                $id_sede = $linea_info['id_sede'] ?? null;
-                enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
             }
-            */
         }
     }
 }
@@ -506,4 +566,125 @@ function extract_clean_name($text, $profile_fallback = 'Usuario') {
     // 5. Convertir a Capitalización Tipo Título (Ej: "Juan Pérez")
     return mb_convert_case($clean, MB_CASE_TITLE, "UTF-8");
 }
+
+/**
+ * Envía la encuesta CSAT y cierra la conversación
+ */
+function enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion) {
+    $telefonoID = $linea_info['meta_app_id'] ?? null;
+    $token_seguro = $linea_info['meta_token'] ?? null;
+    
+    if(empty($telefonoID) || empty($token_seguro)) {
+        return;
+    }
+    
+    // 1. Enviar la plantilla starfi_csat_survey
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $payload = json_encode([
+        'messaging_product' => 'whatsapp',
+        'to' => $telefono_cliente,
+        'type' => 'template',
+        'template' => [
+            'name' => 'starfi_csat_survey',
+            'language' => [
+                'code' => 'es'
+            ]
+        ]
+    ]);
+    
+    $ch_csat = curl_init($url);
+    curl_setopt($ch_csat, CURLOPT_POST, 1);
+    curl_setopt($ch_csat, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch_csat, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $token_seguro, 'Content-Type: application/json']);
+    curl_setopt($ch_csat, CURLOPT_RETURNTRANSFER, true);
+    curl_exec($ch_csat);
+    curl_close($ch_csat);
+    
+    // 2. Cerrar la conversación
+    mysqli_query($con, "UPDATE conversaciones SET estado = 'CERRADO' WHERE id = $id_conversacion");
+    
+    // 3. Registrar en eventos
+    mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'Encuesta CSAT enviada y conversación cerrada por el BOT.')");
+}
 ?>
+
+/**
+ * Enviar mensaje de imagen vía Meta API
+ */
+function enviar_mensaje_imagen_api($con, $linea_info, $telefono_cliente, $image_url, $caption, $id_conversacion) {
+    $telefonoID = $linea_info['meta_app_id'];
+    $token_seguro = $linea_info['meta_token'];
+    
+    if(empty($telefonoID) || empty($token_seguro)) return;
+    
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $mensaje_enviar = json_encode([
+        'messaging_product' => 'whatsapp',
+        'recipient_type' => 'individual',
+        'to' => $telefono_cliente,
+        'type' => 'image',
+        'image' => [
+            'link' => $image_url,
+            'caption' => $caption
+        ]
+    ]);
+    
+    $header = [
+        "Authorization: Bearer " . $token_seguro,
+        "Content-Type: application/json"
+    ];
+    
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje_enviar);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($curl);
+    curl_close($curl);
+    
+    $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, url_archivo) VALUES ($id_conversacion, 'BOT', 'IMAGEN', '" . mysqli_real_escape_string($con, $caption) . "', '" . mysqli_real_escape_string($con, $image_url) . "')";
+    mysqli_query($con, $q_guardar);
+}
+
+/**
+ * Enviar mensaje de ubicación vía Meta API
+ */
+function enviar_mensaje_ubicacion_api($con, $linea_info, $telefono_cliente, $latitud, $longitud, $nombre_lugar, $id_conversacion) {
+    $telefonoID = $linea_info['meta_app_id'];
+    $token_seguro = $linea_info['meta_token'];
+    
+    if(empty($telefonoID) || empty($token_seguro)) return;
+    
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $mensaje_enviar = json_encode([
+        'messaging_product' => 'whatsapp',
+        'recipient_type' => 'individual',
+        'to' => $telefono_cliente,
+        'type' => 'location',
+        'location' => [
+            'latitude' => $latitud,
+            'longitude' => $longitud,
+            'name' => $nombre_lugar,
+            'address' => 'Sede'
+        ]
+    ]);
+    
+    $header = [
+        "Authorization: Bearer " . $token_seguro,
+        "Content-Type: application/json"
+    ];
+    
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje_enviar);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($curl);
+    curl_close($curl);
+    
+    $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'BOT', 'UBICACION', '" . mysqli_real_escape_string($con, $nombre_lugar . " (Lat: $latitud, Lng: $longitud)") . "')";
+    mysqli_query($con, $q_guardar);
+}

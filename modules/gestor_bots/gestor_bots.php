@@ -199,17 +199,36 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="table-toolbar d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-3">
                         <h4 class="config-card-title m-0" style="border: none; padding: 0;"><i class="fa-solid fa-robot text-starfi-primary"></i> Respuestas Automáticas</h4>
-                        <div class="search-bar-modern" style="margin-left: 20px;">
+                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px;" onchange="loadBotRules()">
+                            <option value="0">Seleccionar Sede...</option>
+                            <?php
+                            $con = getDbConnection();
+                            $s_res = $con->query("SELECT id, nombre_sede, bot_activo FROM sedes WHERE id_empresa = 1");
+                            if($s_res) {
+                                while($s_row = $s_res->fetch_assoc()) {
+                                    echo '<option value="'.$s_row['id'].'" data-bot-activo="'.$s_row['bot_activo'].'">'.$s_row['nombre_sede'].'</option>';
+                                }
+                            }
+                            ?>
+                        </select>
+                        <div id="botToggleContainer" class="form-check form-switch ms-3" style="display: none; align-items: center;">
+                            <input class="form-check-input" type="checkbox" id="botStatusToggle" style="cursor: pointer; transform: scale(1.2);" onchange="toggleBotStatus()">
+                            <label class="form-check-label fw-bold text-muted ms-2" for="botStatusToggle" style="font-size: 0.85rem; cursor: pointer;">Robot Activado</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="botContentContainer" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
+                        <div class="search-bar-modern">
                             <i class="fa-solid fa-search"></i>
                             <input type="text" id="searchRule" placeholder="Buscar por disparador o mensaje...">
                         </div>
+                        <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
+                            <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
+                        </button>
                     </div>
-                    <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
-                        <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
-                    </button>
-                </div>
-                
-                <div class="table-responsive">
+                    <div class="table-responsive">
                     <table class="table table-hover align-middle table-borderless mb-0">
                         <thead style="background-color: #F8FAFC; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">
                             <tr>
@@ -226,7 +245,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     </table>
                 </div>
 
+                </div>
                 <!-- Paginación -->
+                <div id="paginationContainer">
                 <div class="pagination-container">
                     <span class="page-info" id="pageInfo">Mostrando 0 - 0 de 0 reglas</span>
                     <div class="d-flex gap-2">
@@ -234,6 +255,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <button class="page-btn" id="btnNextPage" disabled>Siguiente <i class="fa-solid fa-chevron-right ms-1"></i></button>
                     </div>
                 </div>
+                </div>
+                </div> <!-- End botContentContainer -->
             </div>
         </div>
     </main>
@@ -249,16 +272,33 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="modal-body" style="padding: 30px;">
                     <form id="botForm">
                         <input type="hidden" id="ruleId">
+                        <input type="hidden" id="parentId" value="">
+                        
+                        <div id="parentRuleBadge" style="display:none; margin-bottom: 15px; background-color: #EFF6FF; border: 1px solid #BFDBFE; padding: 10px; border-radius: 8px;">
+                            <span style="font-size: 0.75rem; color: #1E3A8A; font-weight: bold;"><i class="fa-solid fa-level-down-alt me-2"></i>Creando sub-opción para:</span>
+                            <div id="parentRuleText" style="font-size: 0.85rem; color: #1E40AF; font-weight: 600; margin-top: 4px;"></div>
+                        </div>
                         
                         <div class="row">
-                            <div class="col-md-6 mb-4">
+                            <div class="col-md-4 mb-4">
                                 <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Tipo de Regla</label>
                                 <select class="form-select bg-light" id="ruleType" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" required>
                                     <option value="EVENTO_SISTEMA">Evento General (Ej: Bienvenida)</option>
-                                    <option value="PALABRA_CLAVE">Palabra Clave (Ej: "Precio")</option>
+                                    <option value="PALABRA_CLAVE">Palabra Clave / Opción</option>
+                                    <option value="CIERRE_CSAT">Cerrar Chat + Enviar CSAT</option>
                                 </select>
                             </div>
-                            <div class="col-md-6 mb-4">
+                            <div class="col-md-4 mb-4">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Formato</label>
+                                <select class="form-select bg-light" id="ruleFormat" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" required onchange="toggleFormatFields()">
+                                    <option value="TEXTO">Texto Múltiple</option>
+                                    <option value="IMAGEN">Imagen</option>
+                                    <option value="DOCUMENTO">Documento (PDF)</option>
+                                    <option value="UBICACION">Ubicación GPS</option>
+                                    <option value="CONTACTOS">Tarjeta de Contacto</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4 mb-4">
                                 <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Estado de Regla</label>
                                 <select class="form-select bg-light" id="ruleState" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;">
                                     <option value="ACTIVO">✅ Activo</option>
@@ -269,12 +309,34 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                         <div class="mb-4">
                             <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Disparador / Evento</label>
-                            <input type="text" class="form-control bg-light" id="ruleTrigger" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" placeholder="Ej: SALUDO_NUEVO, precio, ubicacion..." required>
-                            <small class="text-muted mt-2 d-block" style="font-size: 0.75rem;"><i class="fa-solid fa-circle-info me-1"></i>Para palabras clave, separa con comas (ej: precio, costo, valor)</small>
+                            <input type="text" class="form-control bg-light" id="ruleTrigger" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" placeholder="Ej: SALUDO_NUEVO, precio, ubicacion, 1, 2..." required>
+                            <small class="text-muted mt-2 d-block" style="font-size: 0.75rem;"><i class="fa-solid fa-circle-info me-1"></i>Para palabras clave, separa con comas (ej: precio, costo, valor). Si es un menú, usa números (1, 2, 3).</small>
+                        </div>
+                        
+                        <!-- Campos Multimedia Dinámicos -->
+                        <div id="mediaFields" class="mb-4" style="display:none; background-color: #F8FAFC; border: 1px dashed #CBD5E1; padding: 15px; border-radius: 10px;">
+                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Archivo Adjunto (URL o Subir)</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-light" id="ruleMediaUrl" placeholder="https://ejemplo.com/imagen.jpg o ruta local">
+                                <button class="btn btn-outline-secondary" type="button" onclick="document.getElementById('fileUpload').click()"><i class="fa-solid fa-upload"></i> Subir</button>
+                            </div>
+                            <input type="file" id="fileUpload" style="display:none;" onchange="handleFileUpload(this)">
+                        </div>
+                        
+                        <!-- Campos Ubicación Dinámicos -->
+                        <div id="locationFields" class="mb-4 row" style="display:none; background-color: #F8FAFC; border: 1px dashed #CBD5E1; padding: 15px; border-radius: 10px; margin-left: 0; margin-right: 0;">
+                            <div class="col-md-6">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Latitud</label>
+                                <input type="text" class="form-control bg-light" id="ruleLat" placeholder="Ej: 10.4806">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Longitud</label>
+                                <input type="text" class="form-control bg-light" id="ruleLng" placeholder="Ej: -66.9036">
+                            </div>
                         </div>
 
                         <div class="mb-4">
-                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;">Mensaje de Respuesta</label>
+                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px;" id="messageLabel">Mensaje de Respuesta / Texto que acompaña</label>
                             <textarea class="form-control bg-light" id="ruleMessage" rows="4" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" placeholder="Escribe la respuesta del bot aquí..." required></textarea>
                             <div class="mt-2 d-flex align-items-center gap-2">
                                 <span class="text-muted" style="font-size: 0.75rem;">Variables Mágicas:</span>
@@ -286,6 +348,14 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <div class="advanced-bot-features p-4" style="background-color: #F8FAFC; border-radius: 12px; border: 1px dashed #CBD5E1;">
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <h6 class="m-0 fw-bold text-dark"><i class="fa-solid fa-bolt text-warning me-2"></i>Funciones Avanzadas</h6>
+                            </div>
+                            
+                            <div class="form-check form-switch mb-3 p-3 bg-white rounded border d-flex justify-content-between align-items-center" style="cursor: pointer;">
+                                <div>
+                                    <label class="form-check-label fw-bold text-dark mb-1" for="enableWait" style="cursor: pointer;">¿Es un Menú de Opciones? (Esperar Respuesta)</label>
+                                    <p class="text-muted m-0" style="font-size: 0.75rem;">Si activas esto, el bot pausará las reglas globales y esperará que el cliente seleccione una opción (1, 2, 3...) de las sub-reglas que crees a partir de esta.</p>
+                                </div>
+                                <input class="form-check-input ms-3" type="checkbox" id="enableWait" style="cursor: pointer; transform: scale(1.3);">
                             </div>
                             
                             <!-- Toggle Botones -->
@@ -324,7 +394,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
+        <script src="../../assets/js/drawflow.min.js"></script>
     <script src="funciones_gestor_bots.js"></script>
+    <script src="drawflow_integration.js"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {
             document.getElementById('sidebar').classList.toggle('collapsed');
