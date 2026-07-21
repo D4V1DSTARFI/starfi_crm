@@ -32,14 +32,22 @@ switch ($action) {
         $mensaje = $_POST['mensaje'] ?? '';
         $estado = $_POST['estado'] ?? 'ACTIVO';
         
+        // Nuevos campos para Flujos Avanzados
+        $id_padre = !empty($_POST['id_padre']) ? intval($_POST['id_padre']) : null;
+        $formato_respuesta = $_POST['formato_respuesta'] ?? 'TEXTO';
+        $media_url = !empty($_POST['media_url']) ? $_POST['media_url'] : null;
+        $latitud = !empty($_POST['latitud']) ? $_POST['latitud'] : null;
+        $longitud = !empty($_POST['longitud']) ? $_POST['longitud'] : null;
+        $espera_respuesta = isset($_POST['espera_respuesta']) && $_POST['espera_respuesta'] == '1' ? 1 : 0;
+        
         if (empty($tipo) || empty($disparador) || empty($mensaje) || $id_sede == 0) {
             echo json_encode(['status' => 'error', 'message' => 'Datos incompletos o falta seleccionar Sede.']);
             exit;
         }
 
         if ($id > 0) {
-            $stmt = $con->prepare("UPDATE bot_respuestas SET id_sede = ?, tipo = ?, disparador = ?, mensaje = ?, estado = ? WHERE id = ?");
-            $stmt->bind_param("issssi", $id_sede, $tipo, $disparador, $mensaje, $estado, $id);
+            $stmt = $con->prepare("UPDATE bot_respuestas SET id_sede = ?, id_padre = ?, tipo = ?, formato_respuesta = ?, disparador = ?, mensaje = ?, media_url = ?, latitud = ?, longitud = ?, espera_respuesta = ?, estado = ? WHERE id = ?");
+            $stmt->bind_param("iisssssssisi", $id_sede, $id_padre, $tipo, $formato_respuesta, $disparador, $mensaje, $media_url, $latitud, $longitud, $espera_respuesta, $estado, $id);
             if ($stmt->execute()) {
                 echo json_encode(['status' => 'success', 'message' => 'Regla actualizada.']);
             } else {
@@ -47,8 +55,8 @@ switch ($action) {
             }
         } else {
             $id_empresa = 1;
-            $stmt = $con->prepare("INSERT INTO bot_respuestas (id_empresa, id_sede, tipo, disparador, mensaje, estado) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("iissss", $id_empresa, $id_sede, $tipo, $disparador, $mensaje, $estado);
+            $stmt = $con->prepare("INSERT INTO bot_respuestas (id_empresa, id_sede, id_padre, tipo, formato_respuesta, disparador, mensaje, media_url, latitud, longitud, espera_respuesta, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("iiisssssssis", $id_empresa, $id_sede, $id_padre, $tipo, $formato_respuesta, $disparador, $mensaje, $media_url, $latitud, $longitud, $espera_respuesta, $estado);
             if ($stmt->execute()) {
                 echo json_encode(['status' => 'success', 'message' => 'Regla creada con éxito.']);
             } else {

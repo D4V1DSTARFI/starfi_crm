@@ -608,3 +608,83 @@ function enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conv
     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'Encuesta CSAT enviada y conversación cerrada por el BOT.')");
 }
 ?>
+
+/**
+ * Enviar mensaje de imagen vía Meta API
+ */
+function enviar_mensaje_imagen_api($con, $linea_info, $telefono_cliente, $image_url, $caption, $id_conversacion) {
+    $telefonoID = $linea_info['meta_app_id'];
+    $token_seguro = $linea_info['meta_token'];
+    
+    if(empty($telefonoID) || empty($token_seguro)) return;
+    
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $mensaje_enviar = json_encode([
+        'messaging_product' => 'whatsapp',
+        'recipient_type' => 'individual',
+        'to' => $telefono_cliente,
+        'type' => 'image',
+        'image' => [
+            'link' => $image_url,
+            'caption' => $caption
+        ]
+    ]);
+    
+    $header = [
+        "Authorization: Bearer " . $token_seguro,
+        "Content-Type: application/json"
+    ];
+    
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje_enviar);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($curl);
+    curl_close($curl);
+    
+    $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, url_archivo) VALUES ($id_conversacion, 'BOT', 'IMAGEN', '" . mysqli_real_escape_string($con, $caption) . "', '" . mysqli_real_escape_string($con, $image_url) . "')";
+    mysqli_query($con, $q_guardar);
+}
+
+/**
+ * Enviar mensaje de ubicación vía Meta API
+ */
+function enviar_mensaje_ubicacion_api($con, $linea_info, $telefono_cliente, $latitud, $longitud, $nombre_lugar, $id_conversacion) {
+    $telefonoID = $linea_info['meta_app_id'];
+    $token_seguro = $linea_info['meta_token'];
+    
+    if(empty($telefonoID) || empty($token_seguro)) return;
+    
+    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    
+    $mensaje_enviar = json_encode([
+        'messaging_product' => 'whatsapp',
+        'recipient_type' => 'individual',
+        'to' => $telefono_cliente,
+        'type' => 'location',
+        'location' => [
+            'latitude' => $latitud,
+            'longitude' => $longitud,
+            'name' => $nombre_lugar,
+            'address' => 'Sede'
+        ]
+    ]);
+    
+    $header = [
+        "Authorization: Bearer " . $token_seguro,
+        "Content-Type: application/json"
+    ];
+    
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje_enviar);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($curl);
+    curl_close($curl);
+    
+    $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'BOT', 'UBICACION', '" . mysqli_real_escape_string($con, $nombre_lugar . " (Lat: $latitud, Lng: $longitud)") . "')";
+    mysqli_query($con, $q_guardar);
+}
