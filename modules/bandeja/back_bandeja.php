@@ -83,9 +83,17 @@ switch ($action) {
             // Todos los chats
         }
         
-        $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
-        if ($id_sede > 0) {
-            $query .= " AND l.id_sede = $id_sede";
+        $agente = getAgenteInfo();
+        $rol = $agente['rol'] ?? 'AGENTE';
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        
+        if ($rol !== 'MASTER' && $user_sede > 0) {
+            $query .= " AND l.id_sede = $user_sede";
+        } else {
+            $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
+            if ($id_sede > 0) {
+                $query .= " AND l.id_sede = $id_sede";
+            }
         }
 
         $query .= " ORDER BY IFNULL(ultimo_mensaje_ts, c.fecha_inicio) DESC";

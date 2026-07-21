@@ -1,11 +1,8 @@
 <?php
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('buzon_correos');
 $agente = getAgenteInfo();
-
-if ($agente['rol'] !== 'MASTER') {
-    die("Acceso Denegado. Solo MASTER puede ver este panel.");
-}
 
 $con = getDbConnection();
 
