@@ -178,10 +178,21 @@ class MailerService {
             }
 
             $mail->send();
+            
+            // Log to cola_correos
+            $stmt = $this->db_core->prepare("INSERT INTO cola_correos (destinatario_email, destinatario_nombre, asunto, cuerpo_html, adjunto_ruta, estado, sent_at) VALUES (?, ?, ?, ?, ?, 'Enviado', NOW())");
+            $stmt->bind_param("sssss", $destinatario_email, $destinatario_nombre, $asunto, $cuerpo_html, $adjunto_ruta);
+            $stmt->execute();
+            
             return ['status' => 'success', 'message' => 'Correo enviado correctamente.'];
 
         } catch (Exception $e) {
-            return ['status' => 'error', 'message' => 'Error al enviar correo: ' . $mail->ErrorInfo];
+            $error_msg = $mail->ErrorInfo;
+            $stmt = $this->db_core->prepare("INSERT INTO cola_correos (destinatario_email, destinatario_nombre, asunto, cuerpo_html, adjunto_ruta, estado, error_mensaje) VALUES (?, ?, ?, ?, ?, 'Error', ?)");
+            $stmt->bind_param("ssssss", $destinatario_email, $destinatario_nombre, $asunto, $cuerpo_html, $adjunto_ruta, $error_msg);
+            $stmt->execute();
+            
+            return ['status' => 'error', 'message' => 'Error al enviar correo: ' . $error_msg];
         }
     }
 }
