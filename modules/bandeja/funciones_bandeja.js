@@ -652,7 +652,7 @@ function renderMessages(messages, scrollToBottom) {
                     </div>
                 </div>
             `;
-        } else if (msg.origen === 'BOT' || msg.origen === 'EVENTO_SISTEMA') {
+        } else if (msg.origen === 'BOT') {
             if (msg.tipo === 'CONTACTO') {
                 let contactName = msg.contenido.substring(18, msg.contenido.indexOf('(')).trim();
                 let contactPhone = msg.contenido.substring(msg.contenido.indexOf('(') + 1, msg.contenido.indexOf(')'));
@@ -673,13 +673,25 @@ function renderMessages(messages, scrollToBottom) {
                 </div>`;
             } else {
                 msgHtml = `
-                    <div class="system-event">
-                        <div class="event-pill">
-                            <i class="fa-solid fa-info-circle"></i> ${msg.contenido} (${timeLabel})
+                    <div class="message bot-message" style="align-self: flex-end; background-color: #FEF3C7; border: 1px solid #FDE68A; max-width: 80%; border-radius: 18px 18px 2px 18px; padding: 10px 14px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                        <div style="font-size: 0.65rem; color: #D97706; margin-bottom: 6px; border-bottom: 1px solid #FDE68A; padding-bottom: 3px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                            <i class="fa-solid fa-robot"></i> Asistente Virtual
+                        </div>
+                        <p style="margin-bottom:0; color: #92400E; font-size: 0.95rem; line-height: 1.4;">${msg.contenido}</p>
+                        <div style="text-align: right; margin-top: 4px;">
+                            <span class="msg-time" style="color: #B45309; font-size: 0.7rem;">${timeLabel} <i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i></span>
                         </div>
                     </div>
                 `;
             }
+        } else if (msg.origen === 'EVENTO_SISTEMA') {
+            msgHtml = `
+                <div class="system-event">
+                    <div class="event-pill">
+                        <i class="fa-solid fa-info-circle"></i> ${msg.contenido} (${timeLabel})
+                    </div>
+                </div>
+            `;
         } else {
             // AGENTE or API_TRANSACCIONAL
             let colorStlye = msg.origen === 'API_TRANSACCIONAL' ? 'background-color: #ffffff; border: 1px solid #E5E7EB;' : 'background-color: #EFF6FF; border: 1px solid #BFDBFE;';
