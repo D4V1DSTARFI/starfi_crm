@@ -75,6 +75,27 @@ switch ($action) {
         }
         break;
 
+    case 'update_network':
+        $nodes_json = $_POST['nodes'] ?? '[]';
+        $nodes = json_decode($nodes_json, true);
+        
+        if (is_array($nodes)) {
+            $success_count = 0;
+            $stmt = $con->prepare("UPDATE bot_respuestas SET id_padre = ? WHERE id = ?");
+            foreach ($nodes as $n) {
+                $db_id = intval($n['id']);
+                $id_padre = !empty($n['id_padre']) ? intval($n['id_padre']) : null;
+                if ($db_id > 0) {
+                    $stmt->bind_param("ii", $id_padre, $db_id);
+                    if($stmt->execute()) $success_count++;
+                }
+            }
+            echo json_encode(['status' => 'success', 'message' => "Árbol actualizado ($success_count nodos)."]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'JSON inválido.']);
+        }
+        break;
+
     case 'toggle_bot':
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $status = intval($_POST['status'] ?? 0);

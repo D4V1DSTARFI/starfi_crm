@@ -244,13 +244,16 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     </table>
                 </div>
 
+                </div>
                 <!-- Paginación -->
+                <div id="paginationContainer">
                 <div class="pagination-container">
                     <span class="page-info" id="pageInfo">Mostrando 0 - 0 de 0 reglas</span>
                     <div class="d-flex gap-2">
                         <button class="page-btn" id="btnPrevPage" disabled><i class="fa-solid fa-chevron-left me-1"></i> Anterior</button>
                         <button class="page-btn" id="btnNextPage" disabled>Siguiente <i class="fa-solid fa-chevron-right ms-1"></i></button>
                     </div>
+                </div>
                 </div>
                 </div> <!-- End botContentContainer -->
             </div>
@@ -390,7 +393,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
+        <script src="../../assets/js/drawflow.min.js"></script>
     <script src="funciones_gestor_bots.js"></script>
+    <script src="drawflow_integration.js"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {
             document.getElementById('sidebar').classList.toggle('collapsed');
