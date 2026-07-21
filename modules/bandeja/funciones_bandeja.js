@@ -779,8 +779,8 @@ function renderMessages(messages, scrollToBottom) {
             mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${realUrl}" target="_blank" style="text-decoration:none; font-weight:bold; color:#111827;">Documento Adjunto</a></div>`;
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
             msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
-            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}?stream=1" style="max-width: 250px;"></audio></div>`;
+            let realUrl = `../../get_media.php?id=${encodeURIComponent(msg.url_archivo)}&chat_id=${activeChatId}`;
+            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
         }
         let replyBtn = '';
         if (msg.id_mensaje_meta && (msg.tipo === 'TEXTO' || msg.tipo === 'IMAGEN' || msg.tipo === 'DOCUMENTO' || msg.tipo === 'AUDIO')) {
