@@ -344,6 +344,72 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </div>
     </main>
 
+        <!-- Modal Vendedores -->
+    <div class="modal fade" id="modalContactos" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title brand-font fw-bold"><i class="fa-solid fa-address-book text-starfi-primary"></i> Vendedores del Bot</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <p class="text-muted mb-0" style="font-size:0.9rem;">Estas tarjetas se envían cuando el bot menciona asesores.</p>
+                        <button class="btn btn-primary btn-sm rounded-pill px-3" onclick="newContacto()"><i class="fa-solid fa-plus"></i> Nuevo</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-modern">
+                            <thead>
+                                <tr>
+                                    <th>Nombre</th>
+                                    <th>Teléfono</th>
+                                    <th>Estado</th>
+                                    <th class="text-end">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contactosTableBody">
+                                <!-- Llenado por JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal Formulario Contacto -->
+    <div class="modal fade" id="modalContactoForm" tabindex="-1" aria-hidden="true" style="z-index: 1060;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-light border-0">
+                    <h5 class="modal-title fw-bold" id="contactoModalTitle">Nuevo Vendedor</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <form id="contactoForm">
+                        <input type="hidden" id="contacto_id" name="id">
+                        <input type="hidden" id="contacto_sede" name="id_sede" value="0">
+                        <div class="mb-3">
+                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Nombre Completo</label>
+                            <input type="text" class="form-control bg-light" id="contacto_nombre" name="nombre" required placeholder="Ej. Gabriel Benitez">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Número de WhatsApp</label>
+                            <input type="text" class="form-control bg-light" id="contacto_telefono" name="telefono" required placeholder="Ej. +584120000000">
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Estado</label>
+                            <select class="form-select bg-light" id="contacto_estado" name="estado">
+                                <option value="ACTIVO">Activo</option>
+                                <option value="INACTIVO">Inactivo</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 rounded-pill py-2 fw-bold">Guardar Vendedor</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
     <!-- Modal Formulario Bot Premium -->
     <div class="modal fade" id="botModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
