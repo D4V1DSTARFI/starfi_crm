@@ -882,6 +882,13 @@ body {
 
 /* Mobile Responsiveness for Bandeja */
 @media (max-width: 991px) {
+    body {
+        position: fixed;
+        width: 100vw;
+        height: 100dvh;
+        overflow: hidden;
+    }
+    
     .main-content {
         flex-direction: column;
     }
@@ -910,10 +917,17 @@ body {
     }
     .mobile-chat-active .conversation-panel {
         display: flex !important;
+        overflow: hidden !important;
+    }
+    
+    #activeChatView {
+        flex: 1;
+        overflow: hidden;
     }
     
     .app-container {
         height: calc(100dvh - 60px) !important;
+        overflow: hidden !important;
     }
     
     .conv-header {
