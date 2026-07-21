@@ -82,3 +82,54 @@ CREATE TABLE IF NOT EXISTS mensajes_y_eventos (
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_conversacion) REFERENCES conversaciones(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tablas del Módulo Perfil de Empresa
+CREATE TABLE IF NOT EXISTS empresa_perfil (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_sede INT NOT NULL DEFAULT 1,
+    razon_social VARCHAR(255) NOT NULL,
+    letra CHAR(1) DEFAULT 'J',
+    rif VARCHAR(50) NOT NULL,
+    email VARCHAR(255),
+    telefono VARCHAR(50),
+    direccion TEXT,
+    web VARCHAR(255),
+    instagram VARCHAR(100),
+    condicion ENUM('[ORDINARIO]', '[ESPECIAL]') DEFAULT '[ORDINARIO]',
+    logo_empresa VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS empresa_firmantes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_empresa INT NOT NULL,
+    id_sede INT NOT NULL DEFAULT 1,
+    nombre VARCHAR(255) NOT NULL,
+    cedula VARCHAR(50) NOT NULL,
+    telefono VARCHAR(50),
+    email VARCHAR(255),
+    cargo VARCHAR(100),
+    direccion TEXT,
+    firma VARCHAR(255),
+    FOREIGN KEY (id_empresa) REFERENCES empresa_perfil(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS empresa_registro (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_empresa INT NOT NULL,
+    id_sede INT NOT NULL DEFAULT 1,
+    fecha DATE NOT NULL,
+    n_registro VARCHAR(50) NOT NULL,
+    n_tomo VARCHAR(50) NOT NULL,
+    descripcion TEXT,
+    FOREIGN KEY (id_empresa) REFERENCES empresa_perfil(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS empresa_expediente (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_empresa INT NOT NULL,
+    id_sede INT NOT NULL DEFAULT 1,
+    fecha DATE NOT NULL,
+    descripcion VARCHAR(255) NOT NULL,
+    ruta VARCHAR(255) NOT NULL,
+    FOREIGN KEY (id_empresa) REFERENCES empresa_perfil(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

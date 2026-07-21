@@ -92,9 +92,15 @@ if ($stmt) {
 mysqli_begin_transaction($con);
 
 try {
-    // 1. Insertar en la tabla usuario
+    // 1. Insertar en la tabla usuario (inactivo por defecto, sin rol y sin empresa asignada)
     $contrasena_hash = password_hash($contrasena, PASSWORD_BCRYPT);
-    $stmtUser = $con->prepare("INSERT INTO usuario (usuario, contrasena) VALUES (?, ?)");
+    
+    // Asegurar existencia de columnas necesarias
+    @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN estado ENUM('ACTIVO', 'INACTIVO') DEFAULT 'INACTIVO'");
+    @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN rol ENUM('MASTER', 'ADMINISTRADOR', 'OPERADOR') DEFAULT NULL");
+    @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN id_empresa INT DEFAULT NULL");
+
+    $stmtUser = $con->prepare("INSERT INTO usuario (usuario, contrasena, estado, rol, id_empresa) VALUES (?, ?, 'INACTIVO', NULL, NULL)");
     if (!$stmtUser) {
         throw new Exception("Error al preparar el registro de usuario.");
     }

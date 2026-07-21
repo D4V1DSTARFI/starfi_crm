@@ -616,9 +616,12 @@ switch ($action) {
     // --- OTROS ---
     case 'load_users':
         $query = "
-            SELECT u.id, u.nombre_completo as nombre, u.rol, s.nombre_sede as sede, u.limite_chats_simultaneos as limite
-            FROM usuarios_agentes u
-            LEFT JOIN sedes s ON u.id_sede = s.id
+            SELECT u.id, COALESCE(up.nombre, u.usuario) as nombre, r.nombre as rol, 
+                   (SELECT nombre_sede FROM sedes WHERE id = u.id_empresa LIMIT 1) as sede, 
+                   u.limite_chats_simultaneos as limite
+            FROM usuario u
+            LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
+            LEFT JOIN roles r ON u.rol = r.id
             WHERE u.id_empresa = $id_empresa AND u.estado = 'ACTIVO'
         ";
         $res = $con->query($query);
@@ -635,8 +638,7 @@ switch ($action) {
         $nombre = $_POST['nombre'] ?? '';
         $email = $_POST['email'] ?? '';
         $password = password_hash($_POST['password'] ?? '123456', PASSWORD_DEFAULT);
-        $rol = $_POST['rol'] ?? 'AGENTE';
-        $sede_id = intval($_POST['sede_id'] ?? 0);
+        $rol_name = $_POST['rol'] ?? 'OPERADOR';
         $limite = intval($_POST['limite'] ?? 5);
 
         if (empty($nombre) || empty($email)) {
@@ -644,15 +646,23 @@ switch ($action) {
             exit;
         }
 
-        $sede_val = $sede_id > 0 ? $sede_id : null;
+        // Obtener ID del rol
+        $q_rol = $con->query("SELECT id FROM roles WHERE nombre = '" . mysqli_real_escape_string($con, $rol_name) . "' LIMIT 1");
+        $rol_id = ($q_rol && $row_rol = $q_rol->fetch_assoc()) ? intval($row_rol['id']) : 3;
 
-        $stmt = $con->prepare("INSERT INTO usuarios_agentes (id_empresa, id_sede, nombre_completo, email, password_hash, rol, limite_chats_simultaneos) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        // Crear usuario
+        $usuario_str = strstr($email, '@', true) ?: $nombre;
+        $stmt = $con->prepare("INSERT INTO usuario (usuario, contrasena, estado, rol, id_empresa, limite_chats_simultaneos) VALUES (?, ?, 'ACTIVO', ?, ?, ?)");
         if ($stmt) {
-            $stmt->bind_param("iissssi", $id_empresa, $sede_val, $nombre, $email, $password, $rol, $limite);
+            $stmt->bind_param("ssiii", $usuario_str, $password, $rol_id, $id_empresa, $limite);
             if ($stmt->execute()) {
+                $new_uid = mysqli_insert_id($con);
+                $stmt->close();
+                
+                $con->query("INSERT INTO usuario_perfil (id_usuario, nombre, correo) VALUES ($new_uid, '" . mysqli_real_escape_string($con, $nombre) . "', '" . mysqli_real_escape_string($con, $email) . "')");
                 echo json_encode(['status' => 'success', 'message' => 'Operador creado correctamente.']);
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'El correo electrónico ya está registrado.']);
+                echo json_encode(['status' => 'error', 'message' => 'El usuario o correo electrónico ya está registrado.']);
             }
         }
         break;
@@ -715,7 +725,7 @@ switch ($action) {
             $diagnostico['database'] = ['status' => 'ok', 'message' => 'Conexión a la base de datos exitosa.'];
             
             // 2. Verificar tablas
-            $tablas = ['empresas', 'sedes', 'lineas_whatsapp', 'usuarios_agentes', 'clientes_contactos', 'conversaciones', 'mensajes_y_eventos', 'notificacion_enviada'];
+            $tablas = ['empresas', 'sedes', 'lineas_whatsapp', 'usuario', 'clientes_contactos', 'conversaciones', 'mensajes_y_eventos', 'notificacion_enviada'];
             $tablas_status = [];
             foreach ($tablas as $tabla) {
                 $check = $con->query("SHOW TABLES LIKE '$tabla'");

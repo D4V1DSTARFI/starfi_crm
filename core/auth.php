@@ -67,29 +67,24 @@ function getAgenteInfo() {
     }
     
     // Primero buscar en el nuevo sistema de usuarios registrados
-    $stmt_new = $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, 'AGENTE' AS rol, NULL AS id_sede, 5 AS limite_chats_simultaneos FROM usuario u JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = ?");
+    $stmt_new = $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, r.nombre AS rol, u.id_empresa, u.estado, 
+                                      (SELECT razon_social FROM empresa_perfil WHERE id = u.id_empresa LIMIT 1) AS empresa_nombre
+                               FROM usuario u 
+                               JOIN usuario_perfil up ON u.id = up.id_usuario 
+                               LEFT JOIN roles r ON u.rol = r.id
+                               WHERE u.id = ?");
     if ($stmt_new) {
         $stmt_new->bind_param("i", $id);
         $stmt_new->execute();
         $res_new = $stmt_new->get_result();
         if ($row_new = $res_new->fetch_assoc()) {
             $stmt_new->close();
+            if (empty($row_new['rol'])) {
+                $row_new['rol'] = 'SIN_ROL';
+            }
             return $row_new;
         }
         $stmt_new->close();
-    }
-    
-    // Fallback: Obtener los datos frescos de la BD para agentes heredados
-    $stmt = $con->prepare("SELECT id, nombre_completo, email, rol, id_sede, limite_chats_simultaneos FROM usuarios_agentes WHERE id = ? AND estado = 'ACTIVO'");
-    if ($stmt) {
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        if ($row = $res->fetch_assoc()) {
-            $stmt->close();
-            return $row;
-        }
-        $stmt->close();
     }
     
     // Si no lo encuentra o no está ACTIVO, forzamos cierre de sesión
@@ -113,7 +108,9 @@ function renderSidebar($active = '') {
     $items = [
         'dashboard_main' => ['link' => '../../index.php', 'icon' => 'fa-solid fa-house', 'label' => 'Volver al Dashboard'],
         'bandeja' => ['link' => '../bandeja/bandeja.php', 'icon' => 'fa-solid fa-inbox', 'label' => 'Bandeja Omnicanal'],
+        'perfil_empresa' => ['link' => '../perfil_empresa/index.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
         'directorio' => ['link' => '../directorio/directorio.php', 'icon' => 'fa-solid fa-address-book', 'label' => 'Directorio 360'],
+        'gestion_usuarios' => ['link' => '../gestion_usuarios/index.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],
         'dashboard' => ['link' => '../dashboard/dashboard.php', 'icon' => 'fa-solid fa-chart-line', 'label' => 'Métricas y KPIs'],
         'gestor_bots' => ['link' => '../gestor_bots/gestor_bots.php', 'icon' => 'fa-solid fa-robot', 'label' => 'Gestor de Bots'],
         'configuracion' => ['link' => '../configuracion/configuracion.php', 'icon' => 'fa-solid fa-gear', 'label' => 'Configuración']

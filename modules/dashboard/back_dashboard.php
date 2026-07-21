@@ -64,8 +64,9 @@ switch ($action) {
         $op_where_sql = " WHERE " . implode(" AND ", $op_where_clauses);
 
         $query4 = "
-            SELECT u.nombre_completo, COUNT(c.id) as chats_atendidos 
-            FROM usuarios_agentes u 
+            SELECT COALESCE(up.nombre, u.usuario) as nombre_completo, COUNT(c.id) as chats_atendidos 
+            FROM usuario u 
+            LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
             LEFT JOIN conversaciones c ON u.id = c.id_agente 
             LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
             $op_where_sql

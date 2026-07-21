@@ -322,7 +322,7 @@ switch ($action) {
         if($conversacion_id > 0 && $nuevo_agente_id > 0) {
             $con->query("UPDATE conversaciones SET id_agente = $nuevo_agente_id, estado = 'ESPERA_ASIGNACION' WHERE id = $conversacion_id");
             
-            $res = $con->query("SELECT nombre_completo FROM usuarios_agentes WHERE id = $nuevo_agente_id");
+            $res = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_completo FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $nuevo_agente_id");
             $nombre_agente = $res->fetch_assoc()['nombre_completo'];
 
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
@@ -345,7 +345,7 @@ switch ($action) {
         break;
 
     case 'get_agents':
-        $res = $con->query("SELECT id, nombre_completo FROM usuarios_agentes WHERE estado = 'ACTIVO'");
+        $res = $con->query("SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre_completo FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.estado = 'ACTIVO'");
         $agents = [];
         while($row = $res->fetch_assoc()) {
             $agents[] = $row;

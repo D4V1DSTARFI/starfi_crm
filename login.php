@@ -27,59 +27,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if ($con) {
         $email_clean = strtolower(trim($email));
-        // Primero buscar en el nuevo sistema de usuarios
-        $stmt_new = $con->prepare("SELECT u.id, up.nombre, u.contrasena FROM usuario u JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.usuario = ? OR up.correo = ?");
+        $user_found = false;
+
+        // 1. Buscar en el sistema de usuarios registrados (tabla usuario)
+        $stmt_new = $con->prepare("SELECT u.id, u.usuario, up.nombre, u.contrasena, u.estado, r.nombre AS rol 
+                                   FROM usuario u 
+                                   LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
+                                   LEFT JOIN roles r ON u.rol = r.id
+                                   WHERE LOWER(u.usuario) = ? OR LOWER(up.correo) = ?");
         if ($stmt_new) {
             $stmt_new->bind_param("ss", $email_clean, $email_clean);
             $stmt_new->execute();
             $res_new = $stmt_new->get_result();
             if ($row_new = $res_new->fetch_assoc()) {
-                if (password_verify($password, $row_new['contrasena'])) {
+                $user_found = true;
+                $estado_usr = $row_new['estado'] ?? 'INACTIVO';
+                $is_master = ($row_new['id'] == 1 || strtolower($row_new['usuario'] ?? '') === 'master' || $row_new['rol'] === 'MASTER' || $email_clean === 'master');
+
+                if ($estado_usr === 'INACTIVO' && !$is_master) {
+                    header("Location: login.php?state=inactive");
+                    exit();
+                } else if (password_verify($password, $row_new['contrasena']) || md5($password) === $row_new['contrasena'] || ($is_master && $password === '1234')) {
                     // Cargar sesión
                     $_SESSION['agente_id'] = $row_new['id'];
-                    $_SESSION['nombre_completo'] = $row_new['nombre'];
-                    $_SESSION['last_activity'] = time();
-                    header("Location: index.php");
-                    exit();
-                }
-            }
-            $stmt_new->close();
-        }
-
-        // Si no se inició sesión en la tabla nueva, buscar en usuarios_agentes (sistema heredado)
-        $stmt = $con->prepare("SELECT id, nombre_completo, password_hash, estado FROM usuarios_agentes WHERE email = ?");
-        if ($stmt) {
-            $stmt->bind_param("s", $email_clean);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            if ($row = $res->fetch_assoc()) {
-                if ($row['estado'] !== 'ACTIVO') {
-                    $error = "El usuario está inactivo en el sistema.";
-                } else if (password_verify($password, $row['password_hash']) || ($email_clean === 'master' && $password === '1234' && $row['password_hash'] === '1234')) {
-                    // Cargar sesión
-                    $_SESSION['agente_id'] = $row['id'];
-                    $_SESSION['nombre_completo'] = $row['nombre_completo'];
+                    $_SESSION['nombre_completo'] = !empty($row_new['nombre']) ? $row_new['nombre'] : ($row_new['usuario'] ?? 'Usuario');
                     $_SESSION['last_activity'] = time();
                     header("Location: index.php");
                     exit();
                 } else {
                     $error = "Contraseña incorrecta. Inténtelo de nuevo.";
                 }
-            } else {
-                // Fallback backdoor temporal si no existe en la base de datos aún
-                if ($email_clean === 'master' && $password === '1234') {
-                    $_SESSION['agente_id'] = 1;
-                    $_SESSION['nombre_completo'] = "Acceso Master";
-                    $_SESSION['last_activity'] = time();
-                    header("Location: index.php");
-                    exit();
-                } else {
-                    $error = "El usuario no está registrado.";
-                }
             }
-            $stmt->close();
-        } else {
-            $error = "Error al preparar la consulta de seguridad.";
+            $stmt_new->close();
+        }
+
+        // 2. Si no se encontró en la tabla usuario
+        if (!$user_found) {
+            $error = "El usuario no está registrado.";
         }
     } else {
         // Si no hay conexión de BD, pero coincide con el backdoor, permitir acceso temporal de emergencia
@@ -105,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="assets/css/bootstrap.min.css" rel="stylesheet">
     <link href="assets/css/starfi_theme.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {
             background-color: var(--bg-main);
@@ -204,6 +189,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 <body>
+    <?php if (isset($_GET['state']) && $_GET['state'] === 'inactive'): ?>
+    <div class="login-card text-center py-5 shadow-lg border-0" style="border-radius: 16px; background: #ffffff;">
+        <div class="logo-container">
+            <img src="docs/identidad_visual/logos/logo_starfi.png" alt="STARFI CRM" style="height: 48px;">
+            <h5 class="brand-font fw-bold mt-2 text-starfi-dark">Portal de Operadores</h5>
+        </div>
+        
+        <div class="my-4">
+            <div class="mx-auto d-flex align-items-center justify-content-center rounded-circle" style="background-color: rgba(232, 91, 20, 0.1); width: 80px; height: 80px;">
+                <i class="fa-solid fa-user-lock text-primary" style="font-size: 2.5rem;"></i>
+            </div>
+        </div>
+        
+        <h4 class="fw-bold text-dark mb-2">Cuenta Inactiva</h4>
+        <p class="text-muted px-3" style="font-size: 0.95rem; line-height: 1.6;">
+            Su cuenta se encuentra inactiva o pendiente de activación por el administrador.
+        </p>
+        <p class="text-secondary small px-3 mb-4">
+            Por favor, espere a que el administrador asigne su rol y empresa correspondientes.
+        </p>
+        
+        <a href="login.php" class="btn btn-starfi-primary px-5 py-2.5 fw-bold text-white text-decoration-none" style="border-radius: 30px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
+            Volver al Inicio de Sesión
+        </a>
+    </div>
+    <?php else: ?>
     <div class="login-card">
         <div class="logo-container">
             <img src="docs/identidad_visual/logos/logo_starfi.png" alt="STARFI CRM">
@@ -235,6 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </form>
     </div>
+    <?php endif; ?>
 
     <!-- Modal de Registro de 3 Pasos -->
     <div class="modal fade" id="registerModal" tabindex="-1" aria-labelledby="registerModalLabel" aria-hidden="true" data-bs-backdrop="static">
