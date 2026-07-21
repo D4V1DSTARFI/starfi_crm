@@ -22,11 +22,13 @@ switch ($action) {
                 IFNULL(c.fecha_inicio, cl.fecha_registro) as fecha_inicio,
                 (SELECT MAX(timestamp) FROM mensajes_y_eventos WHERE id_conversacion = c.id) as ultimo_mensaje_ts,
                 IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
-                IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede
+                IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
+                up.nombre as nombre_asesor
             FROM clientes_contactos cl
             LEFT JOIN conversaciones c ON cl.id = c.id_cliente AND c.estado != 'CERRADO'
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
             LEFT JOIN sedes s ON l.id_sede = s.id
+            LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
             WHERE cl.id_empresa = 1
         ";
         
