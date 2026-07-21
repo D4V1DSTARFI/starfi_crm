@@ -54,7 +54,11 @@ else if (strpos($mime, 'ogg') !== false) $ext = 'ogg';
 else if (strpos($mime, 'pdf') !== false) $ext = 'pdf';
 
 $filename = "media_{$media_id}.$ext";
-$save_path = __DIR__ . "/assets/uploads/$filename";
+$upload_dir = __DIR__ . "/assets/uploads";
+if (!is_dir($upload_dir)) {
+    mkdir($upload_dir, 0777, true);
+}
+$save_path = $upload_dir . "/$filename";
 
 // Step 2: Download the binary file
 $ch2 = curl_init($meta_media_url);
@@ -65,7 +69,12 @@ curl_close($ch2);
 
 if ($binary) {
     file_put_contents($save_path, $binary);
-    $local_url = "/starfi_crm/assets/uploads/$filename";
+    
+    // Calcular el directorio relativo para que funcione independientemente de si está en /starfi_crm o en raíz
+    $base_path = dirname($_SERVER['SCRIPT_NAME']);
+    if ($base_path == '/' || $base_path == '\\') $base_path = '';
+    
+    $local_url = $base_path . "/assets/uploads/$filename";
     
     // Update DB to cache it
     $con->query("UPDATE mensajes_y_eventos SET url_archivo = '$local_url' WHERE url_archivo = '$media_id'");
