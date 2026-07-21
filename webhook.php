@@ -134,15 +134,18 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         } else if ($tipo_interactivo === 'list_reply') {
             $mensaje_texto = $msg['interactive']['list_reply']['title'] ?? '';
         }
-    } else if (in_array($tipo_mensaje, ['sticker', 'location', 'reaction'])) {
+    } else if ($tipo_mensaje === 'sticker') {
+        $tipo_bd = 'IMAGEN';
+        $mensaje_texto = 'Sticker recibido';
+        $url_archivo = $msg['sticker']['id']; 
+        $mime_type = $msg['sticker']['mime_type'] ?? 'image/webp';
+    } else if (in_array($tipo_mensaje, ['location', 'reaction'])) {
         $tipo_bd = 'EVENTO_SISTEMA';
         if ($tipo_mensaje === 'reaction') {
             $emoji = $msg['reaction']['emoji'] ?? '';
             $mensaje_texto = "El usuario reaccionó con: $emoji";
         } else if ($tipo_mensaje === 'location') {
             $mensaje_texto = "El usuario envió una ubicación.";
-        } else {
-            $mensaje_texto = "El usuario envió un sticker.";
         }
     } else {
         $tipo_bd = 'EVENTO_SISTEMA';
