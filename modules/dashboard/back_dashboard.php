@@ -87,15 +87,9 @@ switch ($action) {
         $op_where_clauses[] = "c.id IS NOT NULL";
         $op_where_sql = " WHERE " . implode(" AND ", $op_where_clauses);
         $query4 = "
-<<<<<<< HEAD
             SELECT COALESCE(up.nombre, u.usuario) as nombre_completo, COUNT(c.id) as chats_atendidos 
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
-=======
-            SELECT up.nombre AS nombre_completo, COUNT(c.id) as chats_atendidos 
-            FROM usuario u 
-            JOIN usuario_perfil up ON u.id = up.id_usuario
->>>>>>> ebaa681d04de0eff8aace2ea568a98e5878ac3e6
             LEFT JOIN conversaciones c ON u.id = c.id_agente 
             LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
             $op_where_sql
