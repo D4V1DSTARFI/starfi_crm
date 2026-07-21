@@ -688,3 +688,44 @@ function enviar_mensaje_ubicacion_api($con, $linea_info, $telefono_cliente, $lat
     $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'BOT', 'UBICACION', '" . mysqli_real_escape_string($con, $nombre_lugar . " (Lat: $latitud, Lng: $longitud)") . "')";
     mysqli_query($con, $q_guardar);
 }
+/**
+ * Envia lista de asesores de la sede (como texto formateado con sus números)
+ */
+function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente, $id_conversacion, $id_sede, $mensaje_inicial) {
+    // Buscar agentes en esa sede
+    // Asumiremos que el teléfono está en usuario_perfil.telefono o que se puede mapear.
+    // Si no sabemos la estructura exacta, hacemos un SHOW COLUMNS temporal para armar la query si es necesario, 
+    // pero intentaremos buscar up.telefono o up.celular
+    
+    // Primero, verificamos si 'telefono' existe en usuario_perfil
+    $col_check = mysqli_query($con, "SHOW COLUMNS FROM usuario_perfil LIKE 'telefono'");
+    $campo_tel = (mysqli_num_rows($col_check) > 0) ? 'up.telefono' : 'up.celular';
+    
+    // Si no existe celular tampoco, no pasa nada, fallará limpio en la query
+    $q_asesores = mysqli_query($con, "
+        SELECT up.nombre, $campo_tel as telefono, r.nombre as rol
+        FROM usuario u 
+        JOIN usuario_perfil up ON u.id = up.id_usuario 
+        LEFT JOIN roles r ON u.rol = r.id 
+        WHERE u.id_sede = $id_sede AND u.estado = 'ACTIVO' AND r.nombre IN ('ASESOR', 'AGENTE', 'VENDEDOR')
+    ");
+    
+    $lista_contactos = $mensaje_inicial . "\n\n";
+    $hay_contactos = false;
+    
+    if ($q_asesores && mysqli_num_rows($q_asesores) > 0) {
+        while ($row = mysqli_fetch_assoc($q_asesores)) {
+            if (!empty($row['telefono'])) {
+                $lista_contactos .= "👤 *" . $row['nombre'] . "*\n";
+                $lista_contactos .= "📱 Wa.me/" . preg_replace('/[^0-9]/', '', $row['telefono']) . "\n\n";
+                $hay_contactos = true;
+            }
+        }
+    }
+    
+    if (!$hay_contactos) {
+        $lista_contactos = "Lo sentimos, no hay asesores disponibles registrados para esta sede en este momento.";
+    }
+    
+    enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $lista_contactos, $id_conversacion);
+}
