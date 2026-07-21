@@ -813,7 +813,7 @@ function renderMessages(messages, scrollToBottom) {
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
             msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
             let realUrl = `../../get_media.php?id=${encodeURIComponent(msg.url_archivo)}&chat_id=${activeChatId}`;
-            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
+            mediaHtml = `<div style="margin-bottom:8px;"><audio controls data-src="${realUrl}" class="async-audio" style="max-width: 250px;">Cargando audio...</audio></div>`;
         }
         let replyBtn = '';
         if (msg.id_mensaje_meta && (msg.tipo === 'TEXTO' || msg.tipo === 'IMAGEN' || msg.tipo === 'DOCUMENTO' || msg.tipo === 'AUDIO')) {
@@ -983,6 +983,26 @@ function renderMessages(messages, scrollToBottom) {
         }
         area.append(msgHtml);
     });
+    
+    // Async audio fetcher to bypass Cloudflare streaming restrictions
+    setTimeout(() => {
+        document.querySelectorAll('.async-audio').forEach(audio => {
+            if (!audio.src && audio.dataset.src && !audio.dataset.fetching) {
+                audio.dataset.fetching = 'true';
+                fetch(audio.dataset.src)
+                    .then(res => res.blob())
+                    .then(blob => {
+                        audio.src = URL.createObjectURL(blob);
+                        audio.innerHTML = '';
+                    })
+                    .catch(err => {
+                        console.error('Error fetching audio:', err);
+                        audio.innerHTML = 'Error al cargar audio';
+                    });
+            }
+        });
+    }, 100);
+
     if (scrollToBottom) area.scrollTop(area[0].scrollHeight);
 }
 
