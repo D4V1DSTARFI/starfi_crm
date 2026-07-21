@@ -20,6 +20,30 @@ switch ($action) {
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
+    case 'get_bot_respuestas':
+        $agente = getAgenteInfo();
+        $rol = $agente['rol'] ?? 'AGENTE';
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        
+        $id_sede = 2; // Default to Sede 2 (SUPERFORMICA) if MASTER or Sede 1 referenced
+        if ($rol !== 'MASTER' && $user_sede > 0) {
+            $id_sede = $user_sede;
+        }
+        
+        $stmt = $con->prepare("SELECT disparador, mensaje FROM bot_respuestas WHERE id_sede = ? AND estado = 'ACTIVO' ORDER BY disparador ASC");
+        $data = [];
+        if ($stmt) {
+            $stmt->bind_param("i", $id_sede);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $data[] = $row;
+            }
+            $stmt->close();
+        }
+        echo json_encode(['status' => 'success', 'data' => $data]);
+        break;
+
     case 'create_quick_reply':
         $titulo = trim($_POST['titulo'] ?? '');
         $mensaje = trim($_POST['mensaje'] ?? '');

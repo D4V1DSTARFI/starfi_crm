@@ -255,15 +255,19 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             $query_s .= " AND id = $user_sede";
                         }
                         ?>
-                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px; <?= ($rol !== 'MASTER' && $user_sede > 0) ? 'display: none !important;' : '' ?>" onchange="loadBotRules()">
-                            <?php if ($rol === 'MASTER' || $user_sede === 0): ?>
-                            <option value="0">Seleccionar Sede...</option>
-                            <?php endif; ?>
+                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px;" <?= ($rol !== 'MASTER' && $user_sede > 0) ? 'disabled' : '' ?> onchange="loadBotRules()">
                             <?php
                             $s_res = $con->query($query_s);
                             if($s_res) {
+                                $first = true;
                                 while($s_row = $s_res->fetch_assoc()) {
-                                    $selected = ($rol !== 'MASTER' && $user_sede === (int)$s_row['id']) ? 'selected' : '';
+                                    $selected = '';
+                                    if ($rol !== 'MASTER' && $user_sede === (int)$s_row['id']) {
+                                        $selected = 'selected';
+                                    } elseif ($rol === 'MASTER' && $first) {
+                                        $selected = 'selected';
+                                        $first = false;
+                                    }
                                     echo '<option value="'.$s_row['id'].'" data-bot-activo="'.$s_row['bot_activo'].'" '.$selected.'>'.$s_row['nombre_sede'].'</option>';
                                 }
                             }
@@ -321,8 +325,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </tbody>
                     </table>
                 </div>
-
-                </div>
+                
                 <!-- Paginación -->
                 <div id="paginationContainer">
                 <div class="pagination-container">

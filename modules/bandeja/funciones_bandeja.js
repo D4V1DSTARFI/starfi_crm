@@ -141,6 +141,39 @@ $(document).ready(function () {
                 }
             }
         });
+
+        // Cargar respuestas automáticas (Bot)
+        $('#botAnswersList').html('<tr><td colspan="3" class="text-center text-muted py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando respuestas automáticas...</td></tr>');
+        $.ajax({
+            url: 'back_bandeja.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'get_bot_respuestas' },
+            success: function(res) {
+                if (res.status === 'success') {
+                    let list = $('#botAnswersList');
+                    list.empty();
+                    if (res.data.length === 0) {
+                        list.html('<tr><td colspan="3" class="text-center text-muted py-3">No hay respuestas del bot configuradas.</td></tr>');
+                    } else {
+                        res.data.forEach(r => {
+                            let textEscaped = r.mensaje.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let row = `
+                            <tr>
+                                <td class="fw-bold"><span class="badge bg-light text-dark border">${r.disparador}</span></td>
+                                <td><small class="text-muted d-block text-wrap" style="max-width: 250px;">${r.mensaje}</small></td>
+                                <td style="text-align: right;">
+                                    <button type="button" class="btn btn-sm btn-light text-primary" onclick="selectTemplate('${textEscaped}')">
+                                        <i class="fa-solid fa-paper-plane"></i>
+                                    </button>
+                                </td>
+                            </tr>`;
+                            list.append(row);
+                        });
+                    }
+                }
+            }
+        });
     });
 
     window.selectTemplate = function (text) {
