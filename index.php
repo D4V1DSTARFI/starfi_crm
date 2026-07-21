@@ -248,7 +248,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                 <a href="modules/bandeja/bandeja.php" class="module-card">
                     <div class="module-content">
                         <div class="icon-container icon-bandeja">
-                            <i class="fa-solid fa-comments"></i>
+                            <i class="bi bi-chat-dots-fill"></i>
                         </div>
                         <h4 class="module-title">Centro de Mensajes</h4>
                         <p class="module-desc">Bandeja de entrada unificada para gestionar y responder a todos los chats
