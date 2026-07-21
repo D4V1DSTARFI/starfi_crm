@@ -27,23 +27,23 @@ function getDbConnection($tipo = 'core')
 
     // Configuración dura según el entorno (Ignorando DB_HOST del .env)
     switch (APP_ENV) {
-            case 'SANDBOX':
-                $servidor = "192.168.0.71";
-                $usuario = "starfi_v2_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'PRODUCCION':
-                $servidor = "192.168.0.80";
-                $usuario = "starfi_v2_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'LOCAL':
-            default:
-                $servidor = "localhost";
-                $usuario = "starfi_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-        }
+        case 'SANDBOX':
+            $servidor = "192.168.0.71";
+            $usuario = "starfi_v2_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+        case 'PRODUCCION':
+            $servidor = "192.168.0.80";
+            $usuario = "starfi_v2_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+        case 'LOCAL':
+        default:
+            $servidor = "localhost";
+            $usuario = "starfi_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+    }
 
     // Usar la base de datos core (starfi_crm) para todo
     $bd = "starfi_crm";
