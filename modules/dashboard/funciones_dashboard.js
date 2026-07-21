@@ -33,20 +33,99 @@ function loadDashboardData() {
                 
                 // Actualizar KPIs superiores
                 $('#kpiTotalChats').text(data.total_chats);
-                $('#kpiAvgFrt').text(data.avg_frt);
                 $('#kpiAvgRes').text(data.avg_res);
+                $('#kpiConversion').text(data.conversion_rate);
+                $('#kpiCAC').text(data.cac);
+                
+                // Actualizar Lead Scoring y CSAT
+                $('#kpiLeadScore').text(data.lead_score);
+                $('#leadStarsContainer').html(generateStarsHTML(data.lead_score));
+                
+                $('#kpiCsatScore').text(data.csat_score);
+                $('#csatStarsContainer').html(generateStarsHTML(data.csat_score));
 
                 // Actualizar Lista de Operadores
                 renderOperatorPerformance(data.operadores);
                 
-                // Actualizar Gráfico
+                // Actualizar Gráficos
                 renderChart(data.chart_data);
+                renderMotivosChart(data.motivos_data);
             }
         }
     });
 }
 
+function generateStarsHTML(score) {
+    let numScore = parseFloat(score);
+    let html = '';
+    for (let i = 1; i <= 5; i++) {
+        if (i <= Math.floor(numScore)) {
+            html += '<i class="fa-solid fa-star"></i>';
+        } else if (i === Math.ceil(numScore) && !Number.isInteger(numScore)) {
+            html += '<i class="fa-solid fa-star-half-stroke"></i>';
+        } else {
+            html += '<i class="fa-regular fa-star"></i>';
+        }
+    }
+    return html;
+}
+
 let chatsChartInstance = null;
+let motivosChartInstance = null;
+
+function renderMotivosChart(chartData) {
+    if (motivosChartInstance) {
+        motivosChartInstance.destroy();
+    }
+
+    const ctx = document.getElementById('motivosChart').getContext('2d');
+    
+    if (!chartData || chartData.length === 0) {
+        motivosChartInstance = new Chart(ctx, {
+            type: 'doughnut',
+            data: { labels: ['Sin datos'], datasets: [{ data: [1], backgroundColor: ['#E2E8F0'] }] }
+        });
+        return;
+    }
+
+    let labels = [];
+    let values = [];
+    let bgColors = [];
+
+    chartData.forEach(item => {
+        let label = item.motivo.replace(/_/g, ' ');
+        labels.push(label);
+        values.push(item.cantidad);
+        
+        // Asignar colores según el motivo
+        if (item.motivo === 'VENTA_CERRADA') bgColors.push('#10B981');
+        else if (item.motivo === 'DUDA_RESUELTA') bgColors.push('#3B82F6');
+        else if (item.motivo === 'NO_INTERESADO') bgColors.push('#EF4444');
+        else if (item.motivo === 'NO_ESPECIFICADO') bgColors.push('#9CA3AF');
+        else bgColors.push('#F59E0B'); // Otro
+    });
+
+    motivosChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: bgColors,
+                borderWidth: 0,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
+            },
+            cutout: '70%'
+        }
+    });
+}
 
 function renderChart(chartData) {
     if (chatsChartInstance) {
@@ -56,7 +135,6 @@ function renderChart(chartData) {
     const ctx = document.getElementById('chatsChart').getContext('2d');
     
     if (!chartData || chartData.length === 0) {
-        // Grafico vacio
         chatsChartInstance = new Chart(ctx, {
             type: 'bar',
             data: { labels: ['Sin datos'], datasets: [{ label: 'Volumen', data: [0] }] }

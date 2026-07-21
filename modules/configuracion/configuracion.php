@@ -736,12 +736,15 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                     <input type="hidden" id="plantillas_id_sede">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-muted me-2"></i>Lista de Plantillas Sincronizadas</h6>
-                        <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
-                            <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
-                        </button>
+                        <div>
+                            <button type="button" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
+                                <i class="fa-solid fa-star me-1"></i> Auto-Crear Plantilla CSAT
+                            </button>
+                            <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
+                                <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
+                            </button>
+                        </div>
                     </div>
-
-                    <!-- VISTA: Lista de Plantillas -->
                     <div id="vistaListaPlantillas">
                         <div class="table-responsive">
                             <table class="table table-hover table-borderless align-middle bg-white rounded-3 shadow-sm" id="tablaPlantillasMeta">

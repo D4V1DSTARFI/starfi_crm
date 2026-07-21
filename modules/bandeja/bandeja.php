@@ -294,6 +294,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="tabs">
                     <button class="tab active" data-target="todos">Todos</button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
+                    <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>
             </header>
 

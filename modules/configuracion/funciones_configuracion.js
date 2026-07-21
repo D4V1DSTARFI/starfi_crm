@@ -488,6 +488,42 @@ function guardarNuevaPlantilla() {
     });
 }
 
+function crearPlantillaCSAT() {
+    let id_sede = $('#plantillas_id_sede').val();
+    
+    Swal.fire({
+        title: '¿Crear Plantilla CSAT?',
+        text: "Se enviará automáticamente a Meta una plantilla estandarizada llamada 'starfi_csat_survey' donde se le pedirá al cliente calificar la atención del 1 al 5.",
+        icon: 'info',
+        showCancelButton: true,
+        confirmButtonColor: '#E85B14',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Sí, crear'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+            
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'create_csat_template', id_sede: id_sede },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        Swal.fire('Plantilla Creada', 'La plantilla CSAT ha sido enviada a revisión. En breve estará disponible para su uso.', 'success');
+                        cargarPlantillasDeMeta();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                },
+                error: function() {
+                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+                }
+            });
+        }
+    });
+}
+
 function eliminarPlantilla(name) {
     Swal.fire({
         title: '¿Eliminar Plantilla?',

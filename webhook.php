@@ -226,6 +226,42 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         return;
     }
     
+    // VERIFICAR SI ES UNA RESPUESTA CSAT (1 al 5) PARA UN CHAT RECIENTEMENTE CERRADO
+    $is_csat = false;
+    $csat_value = 0;
+    if ($tipo_bd === 'TEXTO' && preg_match('/^[1-5]$/', trim($cuerpo_mensaje))) {
+        $csat_value = intval(trim($cuerpo_mensaje));
+    } else if (isset($GLOBALS['tipo_interactivo']) && $GLOBALS['tipo_interactivo'] === 'button_reply') {
+        // En caso de que la plantilla use botones numéricos (1, 2, 3, 4, 5)
+        if (preg_match('/^[1-5]$/', trim($cuerpo_mensaje))) {
+            $csat_value = intval(trim($cuerpo_mensaje));
+        }
+    }
+
+    if ($csat_value > 0) {
+        // Buscar la última conversación cerrada de este cliente
+        $q_last_closed = mysqli_query($con, "SELECT id, csat_score FROM conversaciones WHERE id_cliente = $id_cliente AND estado = 'CERRADO' ORDER BY id DESC LIMIT 1");
+        if ($q_last_closed && mysqli_num_rows($q_last_closed) > 0) {
+            $row_last = mysqli_fetch_assoc($q_last_closed);
+            if (empty($row_last['csat_score'])) {
+                // Es una respuesta a la encuesta CSAT!
+                mysqli_query($con, "UPDATE conversaciones SET csat_score = $csat_value WHERE id = " . $row_last['id']);
+                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (" . $row_last['id'] . ", 'EVENTO_SISTEMA', 'El cliente calificó la atención con $csat_value estrellas (CSAT).')");
+                
+                // Enviar mensaje de agradecimiento
+                if ($id_linea) {
+                    $q_t = mysqli_query($con, "SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id = $id_linea");
+                    if ($q_t && mysqli_num_rows($q_t) > 0) {
+                        $l_info = mysqli_fetch_assoc($q_t);
+                        enviar_mensaje_texto_api($con, $l_info, $telefono_cliente, "¡Gracias por tu calificación! Nos ayuda a mejorar.", $row_last['id']);
+                        marcar_como_leido_api($l_info, $id_mensaje_meta);
+                    }
+                }
+                return; // Cortamos el flujo aquí para que no abra un nuevo chat
+            }
+        }
+    }
+
     // 3. BUSCAR O CREAR CONVERSACION
     $id_conversacion = null;
     $estado_conv = null;

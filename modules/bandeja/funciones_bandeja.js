@@ -238,29 +238,100 @@ $(document).ready(function () {
         loadProfile360();
     });
 
-    // 3. Cerrar Chat
+    // 3. Cerrar Chat con Métricas
     $('#btnCloseChat').on('click', function () {
         if (!activeChatId || activeChatId === 0) return;
+        
         Swal.fire({
-            title: '¿Cerrar Conversación?',
-            text: "El chat se marcará como resuelto.",
-            icon: 'warning',
+            title: 'Cerrar Conversación',
+            html: `
+                <div class="text-start mt-3">
+                    <label class="form-label text-muted fw-bold" style="font-size: 0.85rem;">Motivo del Cierre</label>
+                    <select id="motivo_cierre_modal" class="form-select mb-2" onchange="if(this.value==='OTRO'){document.getElementById('motivo_cierre_custom').style.display='block';}else{document.getElementById('motivo_cierre_custom').style.display='none';}">
+                        <option value="VENTA_CERRADA">Venta Cerrada (Éxito)</option>
+                        <option value="DUDA_RESUELTA">Duda / Consulta Resuelta</option>
+                        <option value="NO_INTERESADO">No Interesado / Spam</option>
+                        <option value="OTRO">Otro... (Especificar)</option>
+                    </select>
+                    <input type="text" id="motivo_cierre_custom" class="form-control mb-3" placeholder="Escribe el nuevo motivo..." style="display:none;">
+
+                    <label class="form-label text-muted fw-bold" style="font-size: 0.85rem;">Calificación del Cliente (Lead Scoring)</label>
+                    <div class="d-flex justify-content-between mb-3">
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="calidad_lead" id="cal1" value="1">
+                            <label class="form-check-label" for="cal1">⭐ 1</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="calidad_lead" id="cal2" value="2">
+                            <label class="form-check-label" for="cal2">⭐ 2</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="calidad_lead" id="cal3" value="3" checked>
+                            <label class="form-check-label" for="cal3">⭐ 3</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="calidad_lead" id="cal4" value="4">
+                            <label class="form-check-label" for="cal4">⭐ 4</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="calidad_lead" id="cal5" value="5">
+                            <label class="form-check-label" for="cal5">⭐ 5</label>
+                        </div>
+                    </div>
+
+                    <label class="form-label text-muted fw-bold" style="font-size: 0.85rem;">Observación (Opcional)</label>
+                    <textarea id="observacion_cierre_modal" class="form-control" rows="2" placeholder="Deja una reseña sobre el cliente o detalles de la atención..."></textarea>
+                    
+                    <div class="form-check mt-3 mb-1 text-start">
+                        <input class="form-check-input" type="checkbox" id="enviar_csat" value="1" checked>
+                        <label class="form-check-label text-muted fw-bold" for="enviar_csat" style="font-size: 0.85rem;">
+                            Enviar encuesta de satisfacción (CSAT)
+                        </label>
+                    </div>
+                </div>
+            `,
+            icon: 'question',
             showCancelButton: true,
             confirmButtonColor: '#E85B14',
-            confirmButtonText: 'Sí, cerrar'
+            confirmButtonText: 'Guardar y Cerrar',
+            preConfirm: () => {
+                let motivo = document.getElementById('motivo_cierre_modal').value;
+                if(motivo === 'OTRO') {
+                    motivo = document.getElementById('motivo_cierre_custom').value.trim();
+                    if(!motivo) {
+                        Swal.showValidationMessage('Debes especificar el motivo de cierre.');
+                        return false;
+                    }
+                }
+                return {
+                    motivo: motivo,
+                    calidad: document.querySelector('input[name="calidad_lead"]:checked').value,
+                    observacion: document.getElementById('observacion_cierre_modal').value,
+                    enviar_csat: document.getElementById('enviar_csat').checked ? 1 : 0
+                }
+            }
         }).then((result) => {
             if (result.isConfirmed) {
                 $.ajax({
                     url: 'back_bandeja.php', type: 'POST', dataType: 'json',
-                    data: { action: 'close_chat', conversacion_id: activeChatId },
+                    data: { 
+                        action: 'close_chat', 
+                        conversacion_id: activeChatId,
+                        cliente_id: activeClientId,
+                        motivo_cierre: result.value.motivo,
+                        calificacion_calidad: result.value.calidad,
+                        observacion: result.value.observacion,
+                        enviar_csat: result.value.enviar_csat
+                    },
                     success: function (res) {
                         if (res.status === 'success') {
                             activeChatId = null;
+                            activeClientId = null;
                             loadChats();
                             $('#activeChatView').hide();
                             $('#emptyState').removeClass('d-none').css('display', 'flex');
                             $('#modalProfile360').modal('hide');
-                            Swal.fire('Cerrado', '', 'success');
+                            Swal.fire('Cerrado', 'Métricas guardadas correctamente', 'success');
                         }
                     }
                 });
@@ -358,7 +429,7 @@ function renderChatList(chats) {
         let unreadDot = '';
         if (chat.no_leidos > 0) {
             totalUnread++;
-            unreadDot = `<div style="width:10px;height:10px;background:#e85b14;border-radius:50%;margin-left:auto;"></div>`;
+            unreadDot = `<span class="badge bg-danger rounded-pill" style="margin-left:auto; font-size: 0.7rem;">${chat.no_leidos}</span>`;
         }
 
         let isActiveClass = (chat.id == activeChatId && chat.id_cliente == activeClientId) ? 'active' : '';
@@ -366,6 +437,25 @@ function renderChatList(chats) {
         let lastTime = chat.ultimo_mensaje_ts ? chat.ultimo_mensaje_ts : chat.fecha_inicio;
         let asesorBadge = chat.nombre_asesor ? `<span class="badge bg-light text-dark rounded-pill px-2 py-0.5 border" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-headset text-muted me-1"></i> ${chat.nombre_asesor}</span>` : '';
         
+        let starsHtml = '';
+        if (chat.calificacion_calidad && chat.calificacion_calidad > 0) {
+            let numStars = parseInt(chat.calificacion_calidad);
+            let stars = '';
+            for (let i = 1; i <= 5; i++) {
+                if (i <= numStars) stars += '<i class="fa-solid fa-star text-warning"></i>';
+                else stars += '<i class="fa-regular fa-star text-warning"></i>';
+            }
+            starsHtml = `<span class="badge bg-light text-dark rounded-pill px-2 py-0.5 border" style="font-size: 0.65rem; margin-left: 4px;" title="Lead Scoring: ${numStars}">${stars}</span>`;
+        }
+        
+        let estadoLabel = chat.estado;
+        let estadoColor = 'bg-secondary';
+        if (estadoLabel === 'ESPERA_ASIGNACION' || estadoLabel === 'BOT_RECOPILANDO') estadoColor = 'bg-warning text-dark';
+        else if (estadoLabel === 'EN_PROCESO') estadoColor = 'bg-primary';
+        else if (estadoLabel === 'CERRADO' || estadoLabel === 'RESUELTO') estadoColor = 'bg-success';
+        
+        let estadoBadge = `<span class="badge ${estadoColor} rounded-pill px-2 py-0.5" style="font-size: 0.6rem; margin-left: 4px;">${estadoLabel.replace('_', ' ')}</span>`;
+
         let html = `
             <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}">
                 <div class="chat-avatar">
@@ -378,7 +468,9 @@ function renderChatList(chats) {
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
+                        ${estadoBadge}
                         ${asesorBadge}
+                        ${starsHtml}
                     </div>
                     <div class="chat-bottom" style="display:flex; align-items:center;">
                         <p class="preview" style="margin-right:10px;">Haz clic para ver la conversación</p>

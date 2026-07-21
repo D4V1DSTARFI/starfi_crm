@@ -12,6 +12,11 @@ switch ($action) {
     case 'load_chats':
         $filter = $_POST['filter'] ?? 'mis-chats';
         
+        $join_condition = "AND c.estado != 'CERRADO'";
+        if ($filter === 'cerrados') {
+            $join_condition = "AND c.estado = 'CERRADO'";
+        }
+
         $query = "
             SELECT 
                 IFNULL(c.id, 0) as id, 
@@ -23,9 +28,10 @@ switch ($action) {
                 (SELECT MAX(timestamp) FROM mensajes_y_eventos WHERE id_conversacion = c.id) as ultimo_mensaje_ts,
                 IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
                 IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
-                up.nombre as nombre_asesor
+                up.nombre as nombre_asesor,
+                IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad
             FROM clientes_contactos cl
-            LEFT JOIN conversaciones c ON cl.id = c.id_cliente AND c.estado != 'CERRADO'
+            LEFT JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
             LEFT JOIN sedes s ON l.id_sede = s.id
             LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
@@ -33,13 +39,13 @@ switch ($action) {
         ";
         
         if ($filter === 'mis-chats') {
-            // Solo los que hemos escrito (asignados al agente)
             $query .= " AND c.id_agente = $agente_id";
         } elseif ($filter === 'no-leido') {
-            // Solo los que tienen mensajes sin leer
             $query .= " AND c.mensajes_no_leidos > 0";
+        } elseif ($filter === 'cerrados') {
+            $query .= " AND c.estado = 'CERRADO'";
         } elseif ($filter === 'todos') {
-            // Todos los chats (ya sean nuevos o en proceso, ya manejados por el LEFT JOIN)
+            // Todos los chats
         }
         
         $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
@@ -480,9 +486,79 @@ switch ($action) {
 
     case 'close_chat':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $motivo = $_POST['motivo_cierre'] ?? 'NO_ESPECIFICADO';
+        $calidad = intval($_POST['calificacion_calidad'] ?? 0);
+        $observacion = trim($_POST['observacion'] ?? '');
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        
         if($conversacion_id > 0) {
-            $con->query("UPDATE conversaciones SET estado = 'CERRADO', fecha_resolucion = NOW() WHERE id = $conversacion_id");
-            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación cerrada por el operador')");
+            $update_conv = "UPDATE conversaciones SET estado = 'CERRADO', fecha_resolucion = NOW(), resultado_comercial = ?";
+            if ($motivo === 'VENTA_CERRADA') {
+                $update_conv .= ", fecha_cierre_venta = NOW()";
+            }
+            $update_conv .= " WHERE id = ?";
+            
+            $stmt = $con->prepare($update_conv);
+            $stmt->bind_param("si", $motivo, $conversacion_id);
+            $stmt->execute();
+            
+            if ($cliente_id > 0 && $calidad > 0) {
+                $stmt_cli = $con->prepare("UPDATE clientes_contactos SET calificacion_calidad = ? WHERE id = ?");
+                $stmt_cli->bind_param("ii", $calidad, $cliente_id);
+                $stmt_cli->execute();
+            }
+
+            $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo | Lead Scoring: $calidad estrellas";
+            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', '$evento_texto')");
+            
+            if (!empty($observacion)) {
+                $agente_id_actual = intval($_SESSION['agente_id']);
+                $stmt_obs = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, id_agente, tipo, contenido) VALUES (?, 'NOTA_INTERNA', ?, 'TEXTO', ?)");
+                $stmt_obs->bind_param("iis", $conversacion_id, $agente_id_actual, $observacion);
+                $stmt_obs->execute();
+            }
+            
+            // AUTOMATIZACIÓN CSAT: Enviar la plantilla starfi_csat_survey al cliente
+            $enviar_csat = intval($_POST['enviar_csat'] ?? 1);
+            if ($enviar_csat === 1) {
+                $queryChat = "
+                    SELECT cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id
+                    FROM conversaciones c
+                    JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                    JOIN lineas_whatsapp l ON c.id_linea = l.id
+                    WHERE c.id = $conversacion_id
+                ";
+                $resChat = $con->query($queryChat);
+                if ($resChat && $rowChat = $resChat->fetch_assoc()) {
+                    $numero_destino = $rowChat['numero_whatsapp'];
+                    $meta_token = $rowChat['meta_token'];
+                    $phone_number_id = $rowChat['phone_number_id'];
+                    
+                    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                    $post_csat = [
+                        'messaging_product' => 'whatsapp',
+                        'to' => $numero_destino,
+                        'type' => 'template',
+                        'template' => [
+                            'name' => 'starfi_csat_survey',
+                            'language' => [
+                                'code' => 'es'
+                            ]
+                        ]
+                    ];
+                    
+                    $ch_csat = curl_init($msg_url);
+                    curl_setopt($ch_csat, CURLOPT_POST, 1);
+                    curl_setopt($ch_csat, CURLOPT_POSTFIELDS, json_encode($post_csat));
+                    curl_setopt($ch_csat, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
+                    curl_setopt($ch_csat, CURLOPT_RETURNTRANSFER, true);
+                    $res_csat_json = curl_exec($ch_csat);
+                    curl_close($ch_csat);
+                    
+                    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Encuesta CSAT (starfi_csat_survey) enviada al cliente automáticamente.')");
+                }
+            }
+            
             echo json_encode(['status' => 'success']);
         }
         break;
