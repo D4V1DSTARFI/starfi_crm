@@ -516,10 +516,17 @@ switch ($action) {
         break;
 
     case 'get_agents':
-        $res = $con->query("SELECT id, nombre_completo FROM usuarios_agentes WHERE estado = 'ACTIVO'");
+        $res = $con->query("
+            SELECT u.id, up.nombre AS nombre_completo 
+            FROM usuario u 
+            JOIN usuario_perfil up ON u.id = up.id_usuario 
+            WHERE u.estado = 'ACTIVO' OR u.estado = 1
+        ");
         $agents = [];
-        while($row = $res->fetch_assoc()) {
-            $agents[] = $row;
+        if ($res) {
+            while($row = $res->fetch_assoc()) {
+                $agents[] = $row;
+            }
         }
         echo json_encode(['status' => 'success', 'data' => $agents]);
         break;
