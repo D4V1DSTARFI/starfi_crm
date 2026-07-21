@@ -133,6 +133,7 @@ $(document).ready(function() {
                         <td>${notifBadge}</td>
                         <td>
                             <div class="btn-group btn-group-sm">
+                                <a href="imprimir_orden_waba.php?id=${o.id}" target="_blank" class="btn btn-outline-secondary" title="Imprimir / PDF"><i class="fas fa-file-pdf"></i></a>
                                 <button class="btn btn-outline-info btn-detalle" data-id="${o.id}" data-monto="${o.monto_total}" title="Ver Detalles"><i class="fas fa-list"></i></button>
                                 ${o.estado === 'PENDIENTE' ? `<button class="btn btn-outline-primary btn-notificar" data-id="${o.id}" title="Reenviar Notificación"><i class="fas fa-paper-plane"></i></button>` : ''}
                                 <button class="btn btn-outline-success btn-pagar" data-id="${o.id}" ${o.estado !== 'PENDIENTE' ? 'disabled' : ''} title="Marcar Pagado"><i class="fas fa-check"></i></button>
