@@ -77,8 +77,8 @@ if ($binary) {
     file_put_contents($save_path, $binary);
     
     // Calcular el directorio relativo para que funcione independientemente de si está en /starfi_crm o en raíz
-    $base_path = dirname($_SERVER['SCRIPT_NAME']);
-    if ($base_path == '/' || $base_path == '\\') $base_path = '';
+    $base_path = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+    if ($base_path == '/') $base_path = '';
     
     $local_url = $base_path . "/assets/uploads/$filename";
     
