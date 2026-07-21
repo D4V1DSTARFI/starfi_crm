@@ -424,10 +424,33 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
           </div>
-          <div class="modal-body p-3" style="background-color: #F8FAFC; border-radius: 0 0 20px 20px;">
-            <div class="list-group list-group-flush gap-2" id="templatesList">
-                <div class="text-center p-3 text-muted">
-                    <i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando respuestas...
+          <div class="modal-body p-3" style="background-color: #F8FAFC; border-radius: 0 0 20px 20px; max-height: 70vh; overflow-y: auto;">
+            <div class="mb-4">
+                <h6 class="fw-bold text-muted mb-3"><i class="fa-solid fa-bolt me-1 text-warning"></i> Respuestas Rápidas</h6>
+                <div class="list-group list-group-flush gap-2" id="templatesList">
+                    <div class="text-center p-3 text-muted">
+                        <i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando respuestas...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="border-top pt-3">
+                <h6 class="fw-bold text-muted mb-3"><i class="fa-solid fa-robot me-1 text-primary"></i> Respuestas Automáticas (Bot)</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle" style="font-size: 0.85rem; border-collapse: separate; border-spacing: 0 4px;">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="border: none;">Disparador</th>
+                                <th style="border: none;">Mensaje</th>
+                                <th style="border: none; text-align: right;">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="botAnswersList">
+                            <tr>
+                                <td colspan="3" class="text-center text-muted py-3">Cargando respuestas automáticas...</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
           </div>

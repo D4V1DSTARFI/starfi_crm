@@ -214,19 +214,27 @@ if ($res_sedes) {
             $selected_sede_get = $_GET['sede'] ?? 'all';
             ?>
             <div class="filters-panel">
-                <?php if ($agente['rol'] === 'MASTER'): ?>
                 <div class="filter-group">
                     <label>Sede / Sucursal</label>
-                    <select id="filterSede" class="filter-control">
+                    <select id="filterSede" class="filter-control" <?= ($agente['rol'] !== 'MASTER') ? 'disabled' : '' ?>>
+                        <?php if ($agente['rol'] === 'MASTER'): ?>
                         <option value="all" <?= $selected_sede_get === 'all' ? 'selected' : '' ?>>Todas las sedes</option>
+                        <?php endif; ?>
                         <?php foreach ($sedes as $s): ?>
-                            <option value="<?= $s['id'] ?>" <?= (string)$s['id'] === (string)$selected_sede_get ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                            <?php 
+                            $isSelected = false;
+                            if ($agente['rol'] !== 'MASTER') {
+                                if ((int)$s['id'] === (int)$agente['id_sede']) $isSelected = true;
+                            } else {
+                                if ((string)$s['id'] === (string)$selected_sede_get) $isSelected = true;
+                            }
+                            ?>
+                            <?php if ($agente['rol'] === 'MASTER' || (int)$s['id'] === (int)$agente['id_sede']): ?>
+                            <option value="<?= $s['id'] ?>" <?= $isSelected ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                            <?php endif; ?>
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <?php else: ?>
-                <input type="hidden" id="filterSede" value="<?= $agente['id_sede'] ?? '0' ?>">
-                <?php endif; ?>
                 <div class="filter-group">
                     <label>Fecha Desde</label>
                     <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
