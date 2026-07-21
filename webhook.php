@@ -343,7 +343,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                         $row = mysqli_fetch_assoc($q_bienvenida);
                         enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                         $bot_respondio = true;
-                        if ($row['tipo'] === 'CIERRE_CSAT') {
+                        if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
+if ($row['tipo'] === 'CIERRE_CSAT') {
                             enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                         }
                     }
@@ -354,7 +355,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                         $row = mysqli_fetch_assoc($q_match);
                         enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                         $bot_respondio = true;
-                        if ($row['tipo'] === 'CIERRE_CSAT') {
+                        if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
+if ($row['tipo'] === 'CIERRE_CSAT') {
                             enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                         }
                     } else {
@@ -364,7 +366,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                             $row = mysqli_fetch_assoc($q_def);
                             enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                             $bot_respondio = true;
-                            if ($row['tipo'] === 'CIERRE_CSAT') {
+                            if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
+if ($row['tipo'] === 'CIERRE_CSAT') {
                                 enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                             }
                         }
