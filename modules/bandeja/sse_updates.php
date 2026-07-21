@@ -12,7 +12,11 @@ header('X-Accel-Buffering: no');
 
 $con = getDbConnection();
 $agente_id = intval($_SESSION['agente_id']);
-$last_check = date('Y-m-d H:i:s', time() - 2); // 2 segundos atrás
+
+// Obtener la hora actual de la base de datos para evitar desfasajes con PHP
+$res_time = $con->query("SELECT NOW() - INTERVAL 2 SECOND as db_time");
+$row_time = $res_time->fetch_assoc();
+$last_check = $row_time['db_time'];
 
 // Mantener la conexión abierta por un máximo de 60 segundos para evitar procesos colgados
 $max_loops = 30; 
@@ -32,7 +36,11 @@ for ($i = 0; $i < $max_loops; $i++) {
     $res = $con->query($query);
     
     if ($res && $res->num_rows > 0) {
-        $last_check = date('Y-m-d H:i:s');
+        // Actualizar last_check con la hora de la DB
+        $res_time = $con->query("SELECT NOW() as db_time");
+        $row_time = $res_time->fetch_assoc();
+        $last_check = $row_time['db_time'];
+        
         echo "data: {\"type\": \"update\"}\n\n";
         ob_flush();
         flush();
