@@ -332,9 +332,16 @@ if ($action === 'generate_order') {
             
             // EMAIL
             if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
-                $headers = "From: facturacion@starfi.com\r\nContent-Type: text/plain; charset=UTF-8\r\n";
-                @mail($s['gerente_email'], "Estado de Cuenta WhatsApp API - {$s['nombre_sede']}", $msg, $headers);
-                $notificado = 1;
+                require_once __DIR__ . '/../../core/services/MailerService.php';
+                $mailer = new MailerService($con);
+                
+                $html_msg = str_replace("\n", "<br>", $msg);
+                $asunto = "Estado de Cuenta WhatsApp API - {$s['nombre_sede']}";
+                
+                $mail_res = $mailer->sendDirectEmail($s['gerente_email'], $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
+                if ($mail_res['status'] === 'success') {
+                    $notificado = 1;
+                }
             }
             
             if ($notificado == 1) {
@@ -456,9 +463,17 @@ if ($action === 'resend_notification') {
         
         // EMAIL
         if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
-            $headers = "From: facturacion@starfi.com\r\nContent-Type: text/plain; charset=UTF-8\r\n";
-            @mail($s['gerente_email'], "Recordatorio de Estado de Cuenta WhatsApp API - {$s['nombre_sede']}", $msg, $headers);
-            $notificado = 1;
+            require_once __DIR__ . '/../../core/services/MailerService.php';
+            $mailer = new MailerService($con);
+            
+            // Format HTML email for better appearance
+            $html_msg = str_replace("\n", "<br>", $msg);
+            $asunto = "Recordatorio de Estado de Cuenta WhatsApp API - {$s['nombre_sede']}";
+            
+            $mail_res = $mailer->sendDirectEmail($s['gerente_email'], $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
+            if ($mail_res['status'] === 'success') {
+                $notificado = 1;
+            }
         }
         
         if ($notificado == 1) {
