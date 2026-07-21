@@ -113,12 +113,84 @@ $(document).ready(function () {
             return;
         }
         $('#modalTemplates').modal('show');
+        
+        // Cargar respuestas rápidas
+        $('#templatesList').html('<div class="text-center p-3 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando respuestas...</div>');
+        $.ajax({
+            url: 'back_bandeja.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'get_respuestas_rapidas' },
+            success: function(res) {
+                if (res.status === 'success') {
+                    let list = $('#templatesList');
+                    list.empty();
+                    if (res.data.length === 0) {
+                        list.html('<div class="text-center p-3 text-muted">No hay respuestas rápidas configuradas.</div>');
+                    } else {
+                        res.data.forEach(r => {
+                            let textEscaped = r.mensaje.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let btn = `
+                            <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('${textEscaped}')">
+                                <strong class="text-primary"><i class="fa-solid fa-bolt me-1"></i> ${r.titulo}</strong><br>
+                                <small class="text-muted mt-1 d-block">${r.mensaje}</small>
+                            </button>`;
+                            list.append(btn);
+                        });
+                    }
+                }
+            }
+        });
     });
 
     window.selectTemplate = function (text) {
         $('#chatInput').val(text);
         $('#modalTemplates').modal('hide');
         $('#chatInput').focus();
+    };
+
+    window.createNewQuickReply = function() {
+        // Close Bootstrap modal first so it doesn't steal focus
+        $('#modalTemplates').modal('hide');
+        
+        setTimeout(() => {
+            Swal.fire({
+                title: 'Nueva Respuesta Rápida',
+                html: `
+                    <input type="text" id="swal-qr-title" class="swal2-input" placeholder="Título (ej: Saludo)">
+                    <textarea id="swal-qr-msg" class="swal2-textarea" placeholder="Mensaje a enviar..."></textarea>
+                `,
+                focusConfirm: false,
+                showCancelButton: true,
+                confirmButtonText: 'Guardar',
+                cancelButtonText: 'Cancelar',
+                preConfirm: () => {
+                    const titulo = document.getElementById('swal-qr-title').value.trim();
+                    const mensaje = document.getElementById('swal-qr-msg').value.trim();
+                    if (!titulo || !mensaje) {
+                        Swal.showValidationMessage(`Por favor ingrese título y mensaje`);
+                    }
+                    return { titulo: titulo, mensaje: mensaje }
+                }
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    $.post('back_bandeja.php', {
+                        action: 'create_quick_reply',
+                        titulo: result.value.titulo,
+                        mensaje: result.value.mensaje
+                    }, function(res) {
+                        if (res.status === 'success') {
+                            Swal.fire({ icon: 'success', title: 'Guardada', toast: true, position: 'top-end', showConfirmButton: false, timer: 2000 });
+                        } else {
+                            Swal.fire('Error', res.message, 'error');
+                        }
+                    }, 'json');
+                } else {
+                    // Re-open templates modal if they canceled
+                    $('#modalTemplates').modal('show');
+                }
+            });
+        }, 400); // Wait for Bootstrap modal transition to finish
     };
 
     // 3. Attachments
@@ -543,13 +615,118 @@ function loadProfile360() {
             if (res.status === 'success') {
                 const client = res.data;
                 let cName = client.nombre || client.numero_whatsapp;
-                $('#profPrevName').text(cName);
+                $('#profPrevNameInput').val(client.nombre || '');
+                $('#profPrevEmailInput').val(client.email || '');
                 $('#profPrevPhone').text('+' + client.numero_whatsapp);
                 $('#profPrevImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(cName)}&background=F3F4F6&size=128`);
+                
+                // Tags
+                renderTags(client.etiquetas);
             }
         }
     });
+
+    // Populate datalist with existing tags
+    $.post('back_bandeja.php', { action: 'get_all_tags' }, function(res) {
+        if (res.status === 'success' && res.data) {
+            let datalist = $('#existingTagsList');
+            datalist.empty();
+            res.data.forEach(tag => {
+                datalist.append(`<option value="${tag}">`);
+            });
+        }
+    }, 'json');
 }
+
+function renderTags(tagsData) {
+    let container = $('#profTagsContainer');
+    container.empty();
+    if (!tagsData) return;
+    
+    let tags = [];
+    if (typeof tagsData === 'string') {
+        try {
+            tags = JSON.parse(tagsData);
+        } catch(e) {
+            // Fallback for legacy comma-separated
+            tags = tagsData.split(',').map(t => t.trim()).filter(t => t);
+        }
+    } else if (Array.isArray(tagsData)) {
+        tags = tagsData;
+    }
+    
+    tags.forEach(t => {
+        let tagHtml = `<span class="badge bg-primary bg-opacity-10 text-primary rounded-pill px-3 py-2 border border-primary me-1 mb-1">
+            ${t} <i class="fa-solid fa-times ms-1" style="cursor:pointer;" onclick="removeTag('${t}')"></i>
+        </span>`;
+        container.append(tagHtml);
+    });
+}
+
+window.removeTag = function(tagToRemove) {
+    Swal.fire({
+        title: '¿Quitar etiqueta?',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, quitar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            $.post('back_bandeja.php', { action: 'remove_tag', cliente_id: activeClientId, tag: tagToRemove }, function(res) {
+                if (res.status === 'success') loadProfile360();
+            }, 'json');
+        }
+    });
+};
+
+$('#btnAddTag').on('click', function() {
+    let newTag = $('#newTagInput').val().trim();
+    if (!newTag) return;
+    
+    $.post('back_bandeja.php', { action: 'add_tag', cliente_id: activeClientId, tag: newTag }, function(res) {
+        if (res.status === 'success') {
+            $('#newTagInput').val('');
+            loadProfile360();
+        } else {
+            Swal.fire('Error', res.message, 'error');
+        }
+    }, 'json');
+});
+
+$('#newTagInput').on('keypress', function(e) {
+    if (e.which == 13) {
+        e.preventDefault();
+        $('#btnAddTag').click();
+    }
+});
+
+$('#btnSaveProfile').on('click', function() {
+    let nombre = $('#profPrevNameInput').val().trim();
+    let email = $('#profPrevEmailInput').val().trim();
+    
+    $(this).prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-2"></i> Guardando...');
+    
+    $.post('back_bandeja.php', { action: 'save_profile', cliente_id: activeClientId, nombre: nombre, email: email }, function(res) {
+        $('#btnSaveProfile').prop('disabled', false).html('<i class="fa-solid fa-save me-2"></i> Guardar Cambios');
+        if (res.status === 'success') {
+            Swal.fire({
+                icon: 'success',
+                title: 'Perfil guardado',
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 3000
+            });
+            // Update UI
+            $('#chatHeaderName').text(nombre || '+' + $('#profPrevPhone').text().replace('+', ''));
+            loadChats(); // Refresh the sidebar list to show updated names
+        } else {
+            Swal.fire('Error', res.message || 'Ocurrió un error al guardar', 'error');
+        }
+    }, 'json').fail(function(xhr) {
+        $('#btnSaveProfile').prop('disabled', false).html('<i class="fa-solid fa-save me-2"></i> Guardar Cambios');
+        Swal.fire('Error', 'Error de red o servidor al guardar el perfil.', 'error');
+    });
+});
 
 function loadMessages(id, scrollToBottom = true) {
     $.ajax({

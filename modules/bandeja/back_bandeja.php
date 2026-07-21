@@ -9,6 +9,41 @@ $action = $_POST['action'] ?? '';
 $agente_id = intval($_SESSION['agente_id']);
 
 switch ($action) {
+    case 'get_respuestas_rapidas':
+        $res = $con->query("SELECT titulo, mensaje FROM respuestas_rapidas WHERE estado = 'ACTIVO' ORDER BY id DESC");
+        $data = [];
+        if($res){
+            while ($row = $res->fetch_assoc()) {
+                $data[] = $row;
+            }
+        }
+        echo json_encode(['status' => 'success', 'data' => $data]);
+        break;
+
+    case 'create_quick_reply':
+        $titulo = trim($_POST['titulo'] ?? '');
+        $mensaje = trim($_POST['mensaje'] ?? '');
+        if (!empty($titulo) && !empty($mensaje)) {
+            $agente = getAgenteInfo();
+            $id_sede = $agente['id_sede'] ?? 1; // Fallback to 1 if no sede is found
+
+            $stmt = $con->prepare("INSERT INTO respuestas_rapidas (id_sede, titulo, mensaje, estado) VALUES (?, ?, ?, 'ACTIVO')");
+            if ($stmt) {
+                $stmt->bind_param("iss", $id_sede, $titulo, $mensaje);
+                if ($stmt->execute()) {
+                    echo json_encode(['status' => 'success']);
+                } else {
+                    echo json_encode(['status' => 'error', 'message' => 'Error al guardar la respuesta']);
+                }
+                $stmt->close();
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error de base de datos']);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Título y mensaje son obligatorios']);
+        }
+        break;
+
     case 'load_chats':
         $filter = $_POST['filter'] ?? 'mis-chats';
         
@@ -589,6 +624,101 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado']);
             }
         }
+        break;
+
+    case 'get_all_tags':
+        $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE etiquetas IS NOT NULL AND etiquetas != ''");
+        $all_tags = [];
+        while ($row = $res->fetch_assoc()) {
+            $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
+            if (is_array($tags)) {
+                foreach ($tags as $t) {
+                    $t_trim = trim($t);
+                    if (!empty($t_trim) && !in_array($t_trim, $all_tags)) {
+                        $all_tags[] = $t_trim;
+                    }
+                }
+            }
+        }
+        sort($all_tags);
+        echo json_encode(['status' => 'success', 'data' => $all_tags]);
+        break;
+
+    case 'save_profile':
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $nombre = $_POST['nombre'] ?? '';
+        $email = $_POST['email'] ?? '';
+        if ($cliente_id > 0) {
+            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, email = ? WHERE id = ?");
+            if ($stmt) {
+                $stmt->bind_param("ssi", $nombre, $email, $cliente_id);
+                if ($stmt->execute()) {
+                    echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
+                } else {
+                    echo json_encode(['status' => 'error', 'message' => 'Error al guardar el perfil: ' . $stmt->error]);
+                }
+                $stmt->close();
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error de preparación: ' . $con->error]);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'ID de cliente inválido.']);
+        }
+        break;
+
+    case 'add_tag':
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $new_tag = trim($_POST['tag'] ?? '');
+        if ($cliente_id > 0 && !empty($new_tag)) {
+            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE id = $cliente_id");
+            if ($row = $res->fetch_assoc()) {
+                $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
+                if (!is_array($tags)) $tags = [];
+                
+                if (!in_array($new_tag, $tags)) {
+                    $tags[] = $new_tag;
+                    $tags_json = json_encode(array_values($tags));
+                    $stmt = $con->prepare("UPDATE clientes_contactos SET etiquetas = ? WHERE id = ?");
+                    if ($stmt) {
+                        $stmt->bind_param("si", $tags_json, $cliente_id);
+                        if ($stmt->execute()) {
+                            echo json_encode(['status' => 'success']);
+                            exit;
+                        }
+                    }
+                } else {
+                    echo json_encode(['status' => 'error', 'message' => 'La etiqueta ya existe.']);
+                    exit;
+                }
+            }
+        }
+        echo json_encode(['status' => 'error', 'message' => 'Error al añadir la etiqueta.']);
+        break;
+
+    case 'remove_tag':
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $tag_to_remove = trim($_POST['tag'] ?? '');
+        if ($cliente_id > 0 && !empty($tag_to_remove)) {
+            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE id = $cliente_id");
+            if ($row = $res->fetch_assoc()) {
+                $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
+                if (!is_array($tags)) $tags = [];
+                
+                $new_tags = array_filter($tags, function($t) use ($tag_to_remove) {
+                    return $t !== $tag_to_remove;
+                });
+                $tags_json = json_encode(array_values($new_tags));
+                $stmt = $con->prepare("UPDATE clientes_contactos SET etiquetas = ? WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param("si", $tags_json, $cliente_id);
+                    if ($stmt->execute()) {
+                        echo json_encode(['status' => 'success']);
+                        exit;
+                    }
+                }
+            }
+        }
+        echo json_encode(['status' => 'error', 'message' => 'Error al quitar la etiqueta.']);
         break;
 
     case 'get_agents':

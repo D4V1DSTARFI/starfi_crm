@@ -185,6 +185,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <li class="nav-item" role="presentation">
                     <button class="nav-link fw-bold" id="pruebas-tab" data-bs-toggle="tab" data-bs-target="#pruebas" type="button" role="tab"><i class="fa-solid fa-flask text-danger me-1"></i> Pruebas y Diagnóstico</button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-bold" id="respuestas-tab" data-bs-toggle="tab" data-bs-target="#respuestas" type="button" role="tab"><i class="fa-solid fa-bolt text-warning me-1"></i> Respuestas Rápidas</button>
+                </li>
             </ul>
 
             <div class="tab-content" id="configTabsContent">
@@ -480,6 +483,24 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                         <div id="resultadoNotifPrueba" class="mt-3"></div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RESPUESTAS RÁPIDAS -->
+                <div class="tab-pane fade" id="respuestas" role="tabpanel">
+                    <div class="config-card" style="padding: 0;">
+                        <div class="d-flex justify-content-between align-items-center" style="padding: 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.04);">
+                            <h4 class="config-card-title border-0 pb-0 mb-0"><i class="fa-solid fa-bolt text-warning me-2"></i> Gestión de Respuestas Rápidas</h4>
+                            <button class="btn btn-warning text-dark fw-bold" style="border-radius: 30px; padding: 8px 20px;" onclick="addRespuestaRapida()">
+                                <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
+                            </button>
+                        </div>
+                        <div class="p-4" style="background-color: #F1F5F9; min-height: 400px;">
+                            <div class="row g-4" id="respuestasContainer">
+                                <!-- Respuestas se cargarán aquí vía JS -->
+                                <div class="col-12 text-center text-muted">Cargando respuestas rápidas...</div>
                             </div>
                         </div>
                     </div>
@@ -811,6 +832,44 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
     </div>
 
 
+
+    <!-- Modal Añadir Respuesta Rápida -->
+    <div class="modal fade" id="modalRespuestaRapida" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content modal-content-premium">
+                <div class="modal-header modal-header-premium">
+                    <h5 class="modal-title brand-font fw-bold text-starfi-dark mb-0"><i class="fa-solid fa-bolt text-warning me-2"></i>Nueva Respuesta Rápida</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <form id="formRespuesta">
+                        <input type="hidden" id="id_respuesta" name="id_respuesta">
+                        <div class="row g-3">
+                            <div class="col-md-12">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Sede <span class="text-danger">*</span></label>
+                                <select class="form-select form-select-premium" id="resp_id_sede" name="id_sede" required>
+                                    <option value="">Seleccione una sede...</option>
+                                    <!-- Options injected via JS -->
+                                </select>
+                            </div>
+                            <div class="col-md-12">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Título Corto <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control form-control-premium" id="resp_titulo" name="titulo" required placeholder="Ej: Saludo inicial">
+                            </div>
+                            <div class="col-md-12">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Mensaje Completo <span class="text-danger">*</span></label>
+                                <textarea class="form-control form-control-premium" id="resp_mensaje" name="mensaje" rows="4" required placeholder="Hola, soy el asesor asignado. ¿En qué puedo ayudarte?"></textarea>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer border-top-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light fw-bold" style="border-radius: 10px; padding: 10px 20px;" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-warning text-dark fw-bold shadow-sm" style="border-radius: 10px; padding: 10px 20px;" id="btnSaveRespuesta">Guardar Respuesta</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- JavaScript Local Bootstrap -->
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
