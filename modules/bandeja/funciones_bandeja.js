@@ -1104,15 +1104,6 @@ function formatTime(datetimeStr) {
 }
 
 // Back to chats list on mobile
-\.on('click', '#btnBackToChats', function() {
-    \.main-content.removeClass('mobile-chat-active');
-    activeChatId = null;
-    activeClientId = null;
-    \.chat-item.removeClass('active');
-});
-
-
-// Back to chats list on mobile
 $(document).on('click', '#btnBackToChats', function() {
     $('.main-content').removeClass('mobile-chat-active');
     activeChatId = null;
