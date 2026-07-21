@@ -240,6 +240,7 @@ body {
     flex-direction: column;
     z-index: 5;
     box-shadow: 2px 0 10px rgba(0,0,0,0.02);
+    overflow: hidden;
 }
 
 .chats-header {
@@ -882,12 +883,20 @@ body {
 
 /* Mobile Responsiveness for Bandeja */
 @media (max-width: 991px) {
+    body {
+        position: fixed;
+        width: 100vw;
+        height: 100dvh;
+        overflow: hidden;
+    }
+    
     .main-content {
         flex-direction: column;
     }
     .chats-panel {
         width: 100% !important;
         flex: 1;
+        overflow: hidden !important;
     }
     .conversation-panel {
         display: none !important; /* Hidden by default on mobile */
@@ -910,6 +919,32 @@ body {
     }
     .mobile-chat-active .conversation-panel {
         display: flex !important;
+        overflow: hidden !important;
+    }
+    
+    #activeChatView {
+        flex: 1;
+        overflow: hidden;
+    }
+    
+    .app-container {
+        height: calc(100dvh - 60px) !important;
+        overflow: hidden !important;
+    }
+    
+    .conv-header {
+        padding: 10px 15px !important;
+        height: auto !important;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .client-info {
+        gap: 8px !important;
+    }
+    
+    #chatHeaderName {
+        font-size: 1rem !important;
     }
     
     .mobile-back-btn {

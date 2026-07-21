@@ -10,6 +10,22 @@ if (empty($media_id) || $chat_id <= 0) {
     exit;
 }
 
+// If media_id is already a path (from old DB format), try to serve it directly
+if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_') !== false) {
+    $filename = basename(str_replace('\\', '/', $media_id));
+    $direct_path = __DIR__ . '/assets/uploads/' . $filename;
+    if (file_exists($direct_path) && filesize($direct_path) > 200) {
+        $mime_local = mime_content_type($direct_path);
+        if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+        header('Content-Type: ' . $mime_local);
+        header('Content-Length: ' . filesize($direct_path));
+        header('Accept-Ranges: bytes');
+        header('Cache-Control: public, max-age=31536000');
+        readfile($direct_path);
+        exit;
+    }
+}
+
 // Check if we already cached it in DB
 $res = $con->query("SELECT url_archivo FROM mensajes_y_eventos WHERE url_archivo LIKE '%$media_id%' AND id_conversacion = $chat_id LIMIT 1");
 if ($res && $res->num_rows > 0) {
@@ -19,7 +35,13 @@ if ($res && $res->num_rows > 0) {
         // Fallback relative path calculation to check if file exists
         $local_path = __DIR__ . substr($url, strpos($url, '/assets/uploads/'));
         if (file_exists($local_path) && filesize($local_path) > 200) {
-            header("Location: " . $url);
+            $mime_local = mime_content_type($local_path);
+            if (strpos($local_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+            header('Content-Type: ' . $mime_local);
+            header('Content-Length: ' . filesize($local_path));
+            header('Accept-Ranges: bytes');
+        header('Cache-Control: public, max-age=31536000');
+            readfile($local_path);
             exit;
         }
     }
@@ -77,15 +99,22 @@ if ($binary) {
     file_put_contents($save_path, $binary);
     
     // Calcular el directorio relativo para que funcione independientemente de si está en /starfi_crm o en raíz
-    $base_path = dirname($_SERVER['SCRIPT_NAME']);
-    if ($base_path == '/' || $base_path == '\\') $base_path = '';
+    $base_path = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
+    if ($base_path == '/') $base_path = '';
     
     $local_url = $base_path . "/assets/uploads/$filename";
     
     // Update DB to cache it
     $con->query("UPDATE mensajes_y_eventos SET url_archivo = '$local_url' WHERE url_archivo = '$media_id'");
     
-    header("Location: " . $local_url);
+    $mime_local = mime_content_type($save_path);
+    if (strpos($save_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+    header('Content-Type: ' . $mime_local);
+    header('Content-Length: ' . filesize($save_path));
+    header('Accept-Ranges: bytes');
+        header('Cache-Control: public, max-age=31536000');
+    readfile($save_path);
+    exit;
 } else {
     http_response_code(500);
 }
