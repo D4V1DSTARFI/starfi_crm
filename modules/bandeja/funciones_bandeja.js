@@ -491,13 +491,18 @@ function renderMessages(messages, scrollToBottom) {
             let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
             mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
         }
+        let replyBtn = '';
+        if (msg.id_mensaje_meta && (msg.tipo === 'TEXTO' || msg.tipo === 'IMAGEN' || msg.tipo === 'DOCUMENTO' || msg.tipo === 'AUDIO')) {
+            let safeText = (msg.contenido || 'Archivo multimedia').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            replyBtn = `<i class="fa-solid fa-reply reply-btn" data-meta-id="${msg.id_mensaje_meta}" data-text="${safeText}" style="cursor:pointer; color:#9CA3AF; margin-right:8px;" title="Responder"></i>`;
+        }
 
         if (msg.origen === 'CLIENTE') {
             msgHtml = `
                 <div class="message client-message" style="align-self: flex-start; background-color: white; border: 1px solid #E5E7EB; border-radius: 18px 18px 18px 2px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); max-width: 80%;">
                     ${mediaHtml}
                     ${msg.contenido && msg.contenido !== 'Imagen recibida' && msg.contenido !== 'Documento recibido' && msg.contenido !== 'Audio recibido' ? `<p style="margin-bottom:0; color: #111827;">${msg.contenido}</p>` : ''}
-                    <div style="text-align:right;"><span class="msg-time">${timeLabel}</span></div>
+                    <div style="text-align:right;">${replyBtn}<span class="msg-time">${timeLabel}</span></div>
                 </div>
             `;
         } else if (msg.origen === 'NOTA_INTERNA') {
@@ -620,12 +625,6 @@ function renderMessages(messages, scrollToBottom) {
             if (msg.estado_envio === 'FALLIDO') {
                 estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1" style="color: #EF4444;"></i>
                               <i class="fa-solid fa-rotate-right retry-btn ms-1" data-id="${msg.id}" style="cursor:pointer; color:#EF4444;" title="Reintentar Envío"></i>`;
-            }
-
-            let replyBtn = '';
-            if (msg.id_mensaje_meta && msg.tipo === 'TEXTO') {
-                let safeText = (msg.contenido || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-                replyBtn = `<i class="fa-solid fa-reply reply-btn" data-meta-id="${msg.id_mensaje_meta}" data-text="${safeText}" style="cursor:pointer; color:#9CA3AF; margin-right:8px;" title="Responder"></i>`;
             }
 
             msgHtml = `
