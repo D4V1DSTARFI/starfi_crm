@@ -24,7 +24,7 @@ for ($i = 0; $i < $max_loops; $i++) {
         SELECT m.id 
         FROM mensajes_y_eventos m
         JOIN conversaciones c ON m.id_conversacion = c.id
-        WHERE m.timestamp > '$last_check' 
+        WHERE m.updated_at > '$last_check' 
         AND (c.id_agente = $agente_id OR c.estado = 'ESPERA_ASIGNACION')
         LIMIT 1
     ";
@@ -37,19 +37,6 @@ for ($i = 0; $i < $max_loops; $i++) {
         ob_flush();
         flush();
     }
-    
-    // Verificar si hay actualizaciones de estados de entrega (doble check)
-    $query_estado = "
-        SELECT m.id 
-        FROM mensajes_y_eventos m
-        JOIN conversaciones c ON m.id_conversacion = c.id
-        WHERE m.estado_envio IS NOT NULL AND m.timestamp > '$last_check'
-        AND c.id_agente = $agente_id
-        LIMIT 1
-    ";
-    
-    // Por simplicidad, también enviamos update si hay cambios de estado recientes
-    // Nota: Deberíamos rastrear la última fecha de actualización, pero usamos timestamp simplificado aquí
     
     echo ": ping\n\n"; // Comentario SSE para mantener viva la conexión
     ob_flush();
