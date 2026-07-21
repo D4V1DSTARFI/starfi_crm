@@ -9,7 +9,16 @@ $action = $_POST['action'] ?? '';
 
 switch ($action) {
     case 'load_kpis':
-        $id_sede = $_POST['id_sede'] ?? 'all';
+        $agente = getAgenteInfo();
+        $rol = $agente['rol'] ?? 'AGENTE';
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+
+        if ($rol !== 'MASTER' && $user_sede > 0) {
+            $id_sede = $user_sede;
+        } else {
+            $id_sede = $_POST['id_sede'] ?? 'all';
+        }
+        
         $fecha_desde = $_POST['fecha_desde'] ?? '';
         $fecha_hasta = $_POST['fecha_hasta'] ?? '';
 

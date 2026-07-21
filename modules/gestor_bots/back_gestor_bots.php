@@ -6,6 +6,15 @@ header('Content-Type: application/json');
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 
+$agente = getAgenteInfo();
+$rol = $agente['rol'] ?? 'AGENTE';
+$user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+
+if ($rol !== 'MASTER' && $user_sede > 0) {
+    $_POST['id_sede'] = $user_sede;
+    $_REQUEST['id_sede'] = $user_sede;
+}
+
 switch ($action) {
     case 'load_rules':
         $id_sede = intval($_POST['id_sede'] ?? 0);

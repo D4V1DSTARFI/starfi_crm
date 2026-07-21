@@ -245,14 +245,26 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="table-toolbar d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-3">
                         <h4 class="config-card-title m-0" style="border: none; padding: 0;"><i class="fa-solid fa-robot text-starfi-primary"></i> Respuestas Automáticas</h4>
-                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px;" onchange="loadBotRules()">
+                        <?php
+                        $con = getDbConnection();
+                        $rol = $agente['rol'] ?? 'AGENTE';
+                        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+                        
+                        $query_s = "SELECT id, nombre_sede, bot_activo FROM sedes WHERE id_empresa = 1";
+                        if ($rol !== 'MASTER' && $user_sede > 0) {
+                            $query_s .= " AND id = $user_sede";
+                        }
+                        ?>
+                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px; <?= ($rol !== 'MASTER' && $user_sede > 0) ? 'display: none !important;' : '' ?>" onchange="loadBotRules()">
+                            <?php if ($rol === 'MASTER' || $user_sede === 0): ?>
                             <option value="0">Seleccionar Sede...</option>
+                            <?php endif; ?>
                             <?php
-                            $con = getDbConnection();
-                            $s_res = $con->query("SELECT id, nombre_sede, bot_activo FROM sedes WHERE id_empresa = 1");
+                            $s_res = $con->query($query_s);
                             if($s_res) {
                                 while($s_row = $s_res->fetch_assoc()) {
-                                    echo '<option value="'.$s_row['id'].'" data-bot-activo="'.$s_row['bot_activo'].'">'.$s_row['nombre_sede'].'</option>';
+                                    $selected = ($rol !== 'MASTER' && $user_sede === (int)$s_row['id']) ? 'selected' : '';
+                                    echo '<option value="'.$s_row['id'].'" data-bot-activo="'.$s_row['bot_activo'].'" '.$selected.'>'.$s_row['nombre_sede'].'</option>';
                                 }
                             }
                             ?>

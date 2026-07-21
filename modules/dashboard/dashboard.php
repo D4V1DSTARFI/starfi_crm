@@ -214,6 +214,7 @@ if ($res_sedes) {
             $selected_sede_get = $_GET['sede'] ?? 'all';
             ?>
             <div class="filters-panel">
+                <?php if ($agente['rol'] === 'MASTER'): ?>
                 <div class="filter-group">
                     <label>Sede / Sucursal</label>
                     <select id="filterSede" class="filter-control">
@@ -223,6 +224,9 @@ if ($res_sedes) {
                         <?php endforeach; ?>
                     </select>
                 </div>
+                <?php else: ?>
+                <input type="hidden" id="filterSede" value="<?= $agente['id_sede'] ?? '0' ?>">
+                <?php endif; ?>
                 <div class="filter-group">
                     <label>Fecha Desde</label>
                     <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
