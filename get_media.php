@@ -1,4 +1,72 @@
 <?php
+function stream_file($file, $content_type) {
+    if (!file_exists($file)) {
+        header("HTTP/1.1 404 Not Found");
+        exit;
+    }
+
+    $size = filesize($file);
+    $length = $size;
+    $start = 0;
+    $end = $size - 1;
+
+    header("Content-Type: $content_type");
+    header("Accept-Ranges: bytes");
+    header("Cache-Control: public, max-age=31536000");
+
+    if (isset($_SERVER['HTTP_RANGE'])) {
+        $c_start = $start;
+        $c_end = $end;
+
+        list(, $range) = explode('=', $_SERVER['HTTP_RANGE'], 2);
+        if (strpos($range, ',') !== false) {
+            header('HTTP/1.1 416 Requested Range Not Satisfiable');
+            header("Content-Range: bytes $start-$end/$size");
+            exit;
+        }
+
+        if ($range == '-') {
+            $c_start = $size - substr($range, 1);
+        } else {
+            $range = explode('-', $range);
+            $c_start = $range[0];
+            $c_end = (isset($range[1]) && is_numeric($range[1])) ? $range[1] : $size;
+        }
+
+        $c_end = ($c_end > $end) ? $end : $c_end;
+
+        if ($c_start > $c_end || $c_start > $size - 1 || $c_end >= $size) {
+            header('HTTP/1.1 416 Requested Range Not Satisfiable');
+            header("Content-Range: bytes $start-$end/$size");
+            exit;
+        }
+
+        $start = $c_start;
+        $end = $c_end;
+        $length = $end - $start + 1;
+
+        header('HTTP/1.1 206 Partial Content');
+        header("Content-Range: bytes $start-$end/$size");
+    } else {
+        header('HTTP/1.1 200 OK');
+    }
+
+    header("Content-Length: $length");
+
+    $fp = fopen($file, 'rb');
+    fseek($fp, $start);
+    $buffer_size = 1024 * 8; // 8kb
+    $bytes_sent = 0;
+
+    while (!feof($fp) && ($bytes_sent < $length) && (connection_status() == 0)) {
+        $buffer = fread($fp, $buffer_size);
+        echo $buffer;
+        flush();
+        $bytes_sent += strlen($buffer);
+    }
+    fclose($fp);
+    exit;
+}
 require_once 'config/database.php';
 $con = getDbConnection();
 
@@ -17,11 +85,7 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
     if (file_exists($direct_path) && filesize($direct_path) > 200) {
         $mime_local = mime_content_type($direct_path);
         if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-        header('Content-Type: ' . $mime_local);
-        header('Content-Length: ' . filesize($direct_path));
-        header('Accept-Ranges: bytes');
-        header('Cache-Control: public, max-age=31536000');
-        readfile($direct_path);
+        stream_file($direct_path, $mime_local);
         exit;
     }
 }
@@ -37,11 +101,7 @@ if ($res && $res->num_rows > 0) {
         if (file_exists($local_path) && filesize($local_path) > 200) {
             $mime_local = mime_content_type($local_path);
             if (strpos($local_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-            header('Content-Type: ' . $mime_local);
-            header('Content-Length: ' . filesize($local_path));
-            header('Accept-Ranges: bytes');
-        header('Cache-Control: public, max-age=31536000');
-            readfile($local_path);
+            stream_file($local_path, $mime_local);
             exit;
         }
     }
@@ -109,11 +169,7 @@ if ($binary) {
     
     $mime_local = mime_content_type($save_path);
     if (strpos($save_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-    header('Content-Type: ' . $mime_local);
-    header('Content-Length: ' . filesize($save_path));
-    header('Accept-Ranges: bytes');
-        header('Cache-Control: public, max-age=31536000');
-    readfile($save_path);
+    stream_file($save_path, $mime_local);
     exit;
 } else {
     http_response_code(500);
