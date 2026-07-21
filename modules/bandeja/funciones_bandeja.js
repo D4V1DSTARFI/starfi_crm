@@ -474,7 +474,7 @@ function renderMessages(messages, scrollToBottom) {
 
         let mediaHtml = '';
         if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
             let imgStyle = realUrl.endsWith('.webp') 
                 ? 'max-width: 150px; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1));' 
                 : 'max-width: 100%; height: auto; border-radius: 8px; display: block;';
@@ -484,10 +484,10 @@ function renderMessages(messages, scrollToBottom) {
             
             mediaHtml = `<div style="${containerStyle}"><img src="${realUrl}" style="${imgStyle}" alt="Archivo adjunto" loading="lazy"></div>`;
         } else if (msg.tipo === 'DOCUMENTO' && msg.url_archivo) {
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
             mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${realUrl}" target="_blank" style="text-decoration:none; font-weight:bold; color:#111827;">Documento Adjunto</a></div>`;
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
             mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
         }
 
