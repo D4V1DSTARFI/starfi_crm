@@ -548,7 +548,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="funciones_gestor_bots.js"></script>
     <script src="drawflow_integration.js"></script>
     <script>
-        document.getElementById('toggleSidebar').addEventListener('click', function() {
+        const toggleBtn = document.getElementById('toggleSidebar');
+        if (toggleBtn) toggleBtn.addEventListener('click', function() {
             document.getElementById('sidebar').classList.toggle('collapsed');
         });
     </script>

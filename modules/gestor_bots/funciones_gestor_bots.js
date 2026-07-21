@@ -317,6 +317,22 @@ function deleteBotRule(id) {
 }
 
 
+function showToast(title, message, type) {
+    if (typeof Swal !== 'undefined') {
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: type === 'danger' ? 'error' : type,
+            title: title,
+            text: message,
+            showConfirmButton: false,
+            timer: 3000
+        });
+    } else {
+        alert(title + ": " + message);
+    }
+}
+
 // ==========================================
 // GESTION DE VENDEDORES (CONTACTOS)
 // ==========================================
