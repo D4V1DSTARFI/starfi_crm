@@ -242,19 +242,19 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
 
         <!-- Módulos Grid -->
         <div class="row g-4 justify-content-center">
-            <!-- 1. Bandeja Omnicanal -->
+            <!-- 1. Centro de Mensajes -->
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/bandeja/bandeja.php" class="module-card">
-                    <div>
+                    <div class="module-content">
                         <div class="icon-container icon-bandeja">
-                            <i class="bi bi-chat-left-text-fill"></i>
+                            <i class="fa-solid fa-comments"></i>
                         </div>
-                        <h4 class="module-title">Bandeja Omnicanal</h4>
+                        <h4 class="module-title">Centro de Mensajes</h4>
                         <p class="module-desc">Bandeja de entrada unificada para gestionar y responder a todos los chats
-                            de tus clientes y bots en tiempo real.</p>
+                            de WhatsApp de tus sedes.</p>
                     </div>
-                    <div class="action-link">
-                        Ingresar a Bandeja <i class="bi bi-arrow-right"></i>
+                    <div class="module-footer text-primary action-link">
+                        Ingresar al Centro <i class="bi bi-arrow-right"></i>
                     </div>
                 </a>
             </div>

@@ -198,17 +198,36 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="table-toolbar d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-3">
                         <h4 class="config-card-title m-0" style="border: none; padding: 0;"><i class="fa-solid fa-robot text-starfi-primary"></i> Respuestas Automáticas</h4>
-                        <div class="search-bar-modern" style="margin-left: 20px;">
+                        <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px;" onchange="loadBotRules()">
+                            <option value="0">Seleccionar Sede...</option>
+                            <?php
+                            $con = getDbConnection();
+                            $s_res = $con->query("SELECT id, nombre_sede, bot_activo FROM sedes WHERE id_empresa = 1");
+                            if($s_res) {
+                                while($s_row = $s_res->fetch_assoc()) {
+                                    echo '<option value="'.$s_row['id'].'" data-bot-activo="'.$s_row['bot_activo'].'">'.$s_row['nombre_sede'].'</option>';
+                                }
+                            }
+                            ?>
+                        </select>
+                        <div id="botToggleContainer" class="form-check form-switch ms-3" style="display: none; align-items: center;">
+                            <input class="form-check-input" type="checkbox" id="botStatusToggle" style="cursor: pointer; transform: scale(1.2);" onchange="toggleBotStatus()">
+                            <label class="form-check-label fw-bold text-muted ms-2" for="botStatusToggle" style="font-size: 0.85rem; cursor: pointer;">Robot Activado</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="botContentContainer" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
+                        <div class="search-bar-modern">
                             <i class="fa-solid fa-search"></i>
                             <input type="text" id="searchRule" placeholder="Buscar por disparador o mensaje...">
                         </div>
+                        <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
+                            <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
+                        </button>
                     </div>
-                    <button class="btn btn-starfi-primary" onclick="openBotModal()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
-                        <i class="fa-solid fa-plus me-1"></i> Nueva Respuesta
-                    </button>
-                </div>
-                
-                <div class="table-responsive">
+                    <div class="table-responsive">
                     <table class="table table-hover align-middle table-borderless mb-0">
                         <thead style="background-color: #F8FAFC; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">
                             <tr>
@@ -233,6 +252,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <button class="page-btn" id="btnNextPage" disabled>Siguiente <i class="fa-solid fa-chevron-right ms-1"></i></button>
                     </div>
                 </div>
+                </div> <!-- End botContentContainer -->
             </div>
         </div>
     </main>
@@ -255,6 +275,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 <select class="form-select bg-light" id="ruleType" style="border: 1px solid #E2E8F0; border-radius: 10px; padding: 12px; transition: all 0.2s;" required>
                                     <option value="EVENTO_SISTEMA">Evento General (Ej: Bienvenida)</option>
                                     <option value="PALABRA_CLAVE">Palabra Clave (Ej: "Precio")</option>
+                                    <option value="CIERRE_CSAT">Cerrar Chat + Enviar CSAT</option>
                                 </select>
                             </div>
                             <div class="col-md-6 mb-4">

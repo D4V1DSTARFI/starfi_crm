@@ -31,7 +31,7 @@ switch ($action) {
                 up.nombre as nombre_asesor,
                 IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad
             FROM clientes_contactos cl
-            LEFT JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
+            JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
             LEFT JOIN sedes s ON l.id_sede = s.id
             LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
@@ -53,7 +53,7 @@ switch ($action) {
             $query .= " AND l.id_sede = $id_sede";
         }
 
-        $query .= " ORDER BY no_leidos DESC, IFNULL(ultimo_mensaje_ts, IFNULL(c.fecha_inicio, cl.fecha_registro)) DESC";
+        $query .= " ORDER BY IFNULL(ultimo_mensaje_ts, c.fecha_inicio) DESC";
         $res = $con->query($query);
         
         $chats = [];

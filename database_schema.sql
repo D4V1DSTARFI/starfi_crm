@@ -133,3 +133,16 @@ CREATE TABLE IF NOT EXISTS empresa_expediente (
     ruta VARCHAR(255) NOT NULL,
     FOREIGN KEY (id_empresa) REFERENCES empresa_perfil(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS bot_respuestas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_empresa INT NOT NULL DEFAULT 1,
+    id_sede INT NOT NULL,
+    tipo VARCHAR(50) NOT NULL DEFAULT 'TEXTO',
+    disparador VARCHAR(255) NOT NULL,
+    mensaje TEXT NOT NULL,
+    estado ENUM('ACTIVO', 'INACTIVO') DEFAULT 'ACTIVO',
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_sede) REFERENCES sedes(id) ON DELETE CASCADE
+);
+

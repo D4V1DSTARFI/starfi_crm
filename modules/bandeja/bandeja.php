@@ -9,7 +9,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bandeja Omnicanal | CRM STARFI</title>
+    <title>Centro de Mensajes | CRM STARFI</title>
     <link rel="icon" href="../../docs/identidad_visual/logos/isologo.ico" type="image/x-icon">
     <!-- CSS Local de Bootstrap -->
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
@@ -250,7 +250,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     </style>
 </head>
 <body>
-    <?php renderHeader('Bandeja Omnicanal'); ?>
+    <?php renderHeader('Centro de Mensajes'); ?>
     <div class="app-container">
 
     <!-- Sidebar Navigation -->
@@ -313,7 +313,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             <!-- Empty State -->
             <div id="emptyState" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%;" class="text-muted">
                 <i class="fa-solid fa-comments fs-1 mb-3 opacity-50"></i>
-                <h5>Bienvenido a tu Bandeja</h5>
+                <h5>Bienvenido al Centro de Mensajes</h5>
                 <p>Selecciona una conversación de la lista para comenzar a chatear.</p>
             </div>
 
