@@ -373,21 +373,37 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
           </div>
           <div class="modal-body p-4 text-center" style="background-color: #F8FAFC; border-radius: 0 0 20px 20px;">
                 <div class="profile-card bg-white p-4 mb-3" style="border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                    <img id="profPrevImg" src="https://ui-avatars.com/api/?name=Empresa+X&background=F3F4F6&size=128" alt="Avatar" style="border-radius: 50%; margin-bottom: 15px; width: 100px; height: 100px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); object-fit: cover;">
-                    <h4 id="profPrevName" class="fw-bold mb-1">Empresa Corp. S.A.</h4>
-                    <p class="text-muted small mb-0">Cliente</p>
+                    <img id="profPrevImg" src="https://ui-avatars.com/api/?name=Cliente&background=F3F4F6&size=128" alt="Avatar" style="border-radius: 50%; margin-bottom: 15px; width: 100px; height: 100px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); object-fit: cover;">
+                    <div class="input-group mb-2">
+                        <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-user text-muted"></i></span>
+                        <input type="text" id="profPrevNameInput" class="form-control border-start-0 fw-bold text-center" placeholder="Nombre del Cliente">
+                    </div>
+                    <p class="text-muted small mb-0">Cliente CRM</p>
                 </div>
                 <div class="profile-details text-start">
                     <div class="detail-group bg-white p-3 mb-2" style="border-radius: 12px; border: 1px solid #E2E8F0;">
                         <label class="text-muted small fw-bold mb-1 d-block"><i class="fa-solid fa-phone me-1"></i> Teléfono</label>
                         <p id="profPrevPhone" class="mb-0 fw-semibold text-dark fs-5">+58 412 9876543</p>
                     </div>
-                    <div class="detail-group bg-white p-3" style="border-radius: 12px; border: 1px solid #E2E8F0;">
-                        <label class="text-muted small fw-bold mb-2 d-block"><i class="fa-solid fa-tags me-1"></i> Etiquetas</label>
-                        <div class="tags">
-                            <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill px-3 py-2 border border-primary">VIP</span>
+                    
+                    <div class="detail-group bg-white p-3 mb-2" style="border-radius: 12px; border: 1px solid #E2E8F0;">
+                        <label class="text-muted small fw-bold mb-1 d-block"><i class="fa-solid fa-envelope me-1"></i> Correo Electrónico</label>
+                        <input type="email" id="profPrevEmailInput" class="form-control form-control-sm" placeholder="cliente@correo.com">
+                    </div>
+
+                    <div class="detail-group bg-white p-3 mb-3" style="border-radius: 12px; border: 1px solid #E2E8F0;">
+                        <label class="text-muted small fw-bold mb-2 d-block"><i class="fa-solid fa-tags me-1"></i> CENTRO DE ETIQUETAS</label>
+                        <div class="input-group input-group-sm mb-2">
+                            <input type="text" id="newTagInput" class="form-control" placeholder="Añadir o seleccionar etiqueta..." list="existingTagsList">
+                            <datalist id="existingTagsList"></datalist>
+                            <button class="btn btn-outline-primary" type="button" id="btnAddTag"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                        <div class="tags" id="profTagsContainer">
+                            <!-- Tags injected via JS -->
                         </div>
                     </div>
+                    
+                    <button class="btn btn-primary w-100 fw-bold shadow-sm" id="btnSaveProfile" style="border-radius: 10px; padding: 10px;"><i class="fa-solid fa-save me-2"></i> Guardar Cambios</button>
                 </div>
           </div>
         </div>
@@ -400,28 +416,18 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <div class="modal fade" id="modalTemplates" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 15px 40px rgba(0,0,0,0.15);">
-          <div class="modal-header border-0" style="background-color: #F8FAFC; border-radius: 20px 20px 0 0; padding: 20px 25px;">
-            <h5 class="modal-title fw-bold text-starfi-dark"><i class="fa-solid fa-bolt text-warning me-2"></i>Respuestas Rápidas</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          <div class="modal-header border-0" style="background-color: #F8FAFC; border-radius: 20px 20px 0 0; padding: 20px 25px; display: flex; justify-content: space-between; align-items: center;">
+            <h5 class="modal-title fw-bold text-starfi-dark m-0"><i class="fa-solid fa-bolt text-warning me-2"></i>Respuestas Rápidas</h5>
+            <div>
+                <button type="button" class="btn btn-sm btn-outline-primary fw-bold rounded-pill px-3 me-2" onclick="createNewQuickReply()"><i class="fa-solid fa-plus me-1"></i> Nueva</button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
           </div>
           <div class="modal-body p-3" style="background-color: #F8FAFC; border-radius: 0 0 20px 20px;">
             <div class="list-group list-group-flush gap-2" id="templatesList">
-                <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('Hola, soy el asesor asignado. ¿En qué puedo ayudarte?')">
-                    <strong class="text-primary"><i class="fa-solid fa-hand-wave me-1"></i> Saludo inicial</strong><br>
-                    <small class="text-muted mt-1 d-block">Hola, soy el asesor asignado. ¿En qué puedo ayudarte?</small>
-                </button>
-                <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('Por favor envíame tu número de identificación para verificar en el sistema.')">
-                    <strong class="text-primary"><i class="fa-solid fa-id-card me-1"></i> Solicitar ID</strong><br>
-                    <small class="text-muted mt-1 d-block">Por favor envíame tu número de identificación...</small>
-                </button>
-                <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('Dame un momento mientras verifico la información. No te retires por favor.')">
-                    <strong class="text-primary"><i class="fa-solid fa-clock me-1"></i> Espera un momento</strong><br>
-                    <small class="text-muted mt-1 d-block">Dame un momento mientras verifico la información...</small>
-                </button>
-                <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('Tu solicitud ha sido procesada con éxito. ¡Gracias por contactarnos!')">
-                    <strong class="text-primary"><i class="fa-solid fa-check-circle me-1"></i> Despedida / Éxito</strong><br>
-                    <small class="text-muted mt-1 d-block">Tu solicitud ha sido procesada con éxito...</small>
-                </button>
+                <div class="text-center p-3 text-muted">
+                    <i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando respuestas...
+                </div>
             </div>
           </div>
         </div>

@@ -3,6 +3,7 @@ $(document).ready(function() {
     loadSedes();
     loadAPIs();
     loadUsers();
+    loadRespuestasRapidas();
 
     // 1. Añadir Sede
     $('#btnAddSede').on('click', function() {
@@ -1100,3 +1101,152 @@ function registerMetaPhone() {
     });
 }
 
+// --- GESTIÓN DE RESPUESTAS RÁPIDAS ---
+function loadRespuestasRapidas() {
+    $.ajax({
+        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        data: { action: 'load_respuestas_rapidas' },
+        success: function(res) {
+            if(res.status === 'success') {
+                let container = $('#respuestasContainer');
+                container.empty();
+                if(res.data.length === 0){
+                    container.append('<div class="col-12 text-center text-muted p-4">No hay respuestas rápidas registradas.</div>');
+                    return;
+                }
+                res.data.forEach(r => {
+                    let card = `
+                    <div class="col-md-4">
+                        <div class="card h-100 shadow-sm border-0" style="border-radius: 10px;">
+                            <div class="card-header bg-white border-0 pt-3 pb-0">
+                                <h6 class="mb-0 fw-bold text-dark"><i class="fa-solid fa-bolt text-warning me-2"></i>${r.titulo}</h6>
+                                <small class="text-muted"><i class="fa-solid fa-building me-1"></i>${r.nombre_sede || 'Sede no asignada'}</small>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted mb-0" style="font-size: 0.9rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">${r.mensaje}</p>
+                            </div>
+                            <div class="card-footer bg-white border-top-0 p-0">
+                                <div class="d-flex border-top">
+                                    <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarRespuestaRapida(${r.id})"><i class="fa-solid fa-pen"></i></button>
+                                    <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarRespuestaRapida(${r.id})"><i class="fa-solid fa-trash"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+                    container.append(card);
+                });
+            }
+        }
+    });
+}
+
+function addRespuestaRapida() {
+    $('#formRespuesta')[0].reset();
+    $('#id_respuesta').val('');
+    
+    $.ajax({
+        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        data: { action: 'get_sedes_list' },
+        success: function(res) {
+            if(res.status === 'success'){
+                let select = $('#resp_id_sede');
+                select.html('<option value="">Seleccione una sede...</option>');
+                res.data.forEach(s => {
+                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                });
+                
+                $('#modalRespuestaRapida .modal-title').html('<i class="fa-solid fa-bolt text-warning me-2"></i>Nueva Respuesta Rápida');
+                var myModal = new bootstrap.Modal(document.getElementById('modalRespuestaRapida'));
+                myModal.show();
+            }
+        }
+    });
+}
+
+function editarRespuestaRapida(id) {
+    $.ajax({
+        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        data: { action: 'get_sedes_list' },
+        success: function(resSedes) {
+            if(resSedes.status === 'success'){
+                let select = $('#resp_id_sede');
+                select.html('<option value="">Seleccione una sede...</option>');
+                resSedes.data.forEach(s => {
+                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                });
+                
+                $.ajax({
+                    url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                    data: { action: 'get_respuesta_rapida', id: id },
+                    success: function(res) {
+                        if(res.status === 'success' && res.data) {
+                            const r = res.data;
+                            $('#id_respuesta').val(r.id);
+                            $('#resp_id_sede').val(r.id_sede);
+                            $('#resp_titulo').val(r.titulo);
+                            $('#resp_mensaje').val(r.mensaje);
+                            
+                            $('#modalRespuestaRapida .modal-title').html('<i class="fa-solid fa-bolt text-warning me-2"></i>Editar Respuesta Rápida');
+                            var myModal = new bootstrap.Modal(document.getElementById('modalRespuestaRapida'));
+                            myModal.show();
+                        }
+                    }
+                });
+            }
+        }
+    });
+}
+
+$('#btnSaveRespuesta').on('click', function() {
+    if (!$('#resp_id_sede').val() || !$('#resp_titulo').val() || !$('#resp_mensaje').val()) {
+        Swal.fire('Error', 'Complete todos los campos obligatorios (*)', 'warning'); return;
+    }
+
+    const data = {
+        action: 'save_respuesta_rapida',
+        id_respuesta: $('#id_respuesta').val(),
+        id_sede: $('#resp_id_sede').val(),
+        titulo: $('#resp_titulo').val().trim(),
+        mensaje: $('#resp_mensaje').val().trim()
+    };
+
+    $.ajax({
+        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        data: data,
+        success: function(res) {
+            if(res.status === 'success'){
+                bootstrap.Modal.getInstance(document.getElementById('modalRespuestaRapida')).hide();
+                Swal.fire('Éxito', res.message, 'success');
+                loadRespuestasRapidas();
+            } else { Swal.fire('Error', res.message, 'error'); }
+        }
+    });
+});
+
+function borrarRespuestaRapida(id) {
+    Swal.fire({
+        title: '¿Estás seguro?',
+        text: "Esta respuesta rápida se eliminará permanentemente.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, borrar',
+        cancelButtonText: 'Cancelar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            $.ajax({
+                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                data: { action: 'delete_respuesta_rapida', id: id },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        Swal.fire('Eliminado', res.message, 'success');
+                        loadRespuestasRapidas();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                }
+            });
+        }
+    });
+}
