@@ -725,6 +725,78 @@ switch ($action) {
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
+    // --- GESTIÓN DE RESPUESTAS RÁPIDAS ---
+    case 'load_respuestas_rapidas':
+        $query = "
+            SELECT r.*, s.nombre_sede 
+            FROM respuestas_rapidas r 
+            LEFT JOIN sedes s ON r.id_sede = s.id 
+            WHERE s.id_empresa = $id_empresa
+            ORDER BY r.id DESC
+        ";
+        $res = $con->query($query);
+        $data = [];
+        if($res){
+            while ($row = $res->fetch_assoc()) {
+                $data[] = $row;
+            }
+        }
+        echo json_encode(['status' => 'success', 'data' => $data]);
+        break;
+
+    case 'save_respuesta_rapida':
+        $id_respuesta = $_POST['id_respuesta'] ?? '';
+        $id_sede = $_POST['id_sede'] ?? '';
+        $titulo = $_POST['titulo'] ?? '';
+        $mensaje = $_POST['mensaje'] ?? '';
+
+        if (empty($id_sede) || empty($titulo) || empty($mensaje)) {
+            echo json_encode(['status' => 'error', 'message' => 'Sede, título y mensaje son obligatorios.']);
+            exit;
+        }
+
+        if (empty($id_respuesta)) {
+            $stmt = $con->prepare("INSERT INTO respuestas_rapidas (id_sede, titulo, mensaje) VALUES (?, ?, ?)");
+            $stmt->bind_param("iss", $id_sede, $titulo, $mensaje);
+            
+            if ($stmt->execute()) {
+                echo json_encode(['status' => 'success', 'message' => 'Respuesta rápida registrada.']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al registrar la respuesta.']);
+            }
+        } else {
+            $stmt = $con->prepare("UPDATE respuestas_rapidas SET id_sede=?, titulo=?, mensaje=? WHERE id=?");
+            $stmt->bind_param("issi", $id_sede, $titulo, $mensaje, $id_respuesta);
+            
+            if ($stmt->execute()) {
+                echo json_encode(['status' => 'success', 'message' => 'Respuesta rápida actualizada.']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al actualizar la respuesta.']);
+            }
+        }
+        break;
+
+    case 'get_respuesta_rapida':
+        $id_respuesta = intval($_POST['id'] ?? 0);
+        $res = $con->query("SELECT * FROM respuestas_rapidas WHERE id = $id_respuesta LIMIT 1");
+        if($res && $row = $res->fetch_assoc()) {
+            echo json_encode(['status' => 'success', 'data' => $row]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Respuesta no encontrada.']);
+        }
+        break;
+
+    case 'delete_respuesta_rapida':
+        $id_respuesta = intval($_POST['id'] ?? 0);
+        $stmt = $con->prepare("DELETE FROM respuestas_rapidas WHERE id = ?");
+        $stmt->bind_param("i", $id_respuesta);
+        if($stmt->execute()) {
+            echo json_encode(['status' => 'success', 'message' => 'Respuesta rápida eliminada exitosamente.']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Error al eliminar la respuesta.']);
+        }
+        break;
+
     // --- CONFIGURACIÓN GEMA AI ---
     case 'save_gema':
         $prompt = $_POST['prompt'] ?? '';
