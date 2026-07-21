@@ -9,6 +9,7 @@
  */
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('perfil_empresa');
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 ?>
@@ -143,23 +144,14 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <p class="text-muted mb-0" style="font-size: 0.95rem;">Administración corporativa: Registro de empresas, firmantes legales, registro mercantil y expediente digital.</p>
                     </div>
                     <div class="d-flex align-items-center gap-2">
-                        <div class="d-flex align-items-center gap-2 me-2">
-                            <label class="fw-semibold small text-muted text-nowrap mb-0">Sede:</label>
-                            <select id="selectSede" class="form-select form-select-sm py-1.5" style="border-radius: 8px; min-width: 160px;" onchange="loadPerfiles()">
-                                <option value="0">Cargando...</option>
-                            </select>
-                        </div>
                         <button class="btn btn-outline-info rounded-circle p-0 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;" onclick="openManualModal()" title="Guía / Manual de Usuario">
                             <i class="fa-solid fa-circle-question fs-5"></i>
-                        </button>
-                        <button class="btn btn-starfi-primary d-flex align-items-center gap-2" onclick="openPerfilModal()">
-                            <i class="fa-solid fa-plus"></i> Registrar Empresa
                         </button>
                     </div>
                 </div>
 
-                <!-- VISTA 1: TABLA PRINCIPAL DE EMPRESAS REGISTRADAS -->
-                <div id="vistaPrincipalListado">
+                <!-- VISTA 1: TABLA PRINCIPAL DE EMPRESAS REGISTRADAS (Oculto) -->
+                <div id="vistaPrincipalListado" style="display: none;">
                     <div class="empresa-card">
                         <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-4 gap-3">
                             <div>
@@ -198,14 +190,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     </div>
                 </div>
 
-                <!-- VISTA 2: DETALLES Y GESTIÓN DE LAS 4 TABLAS (Oculto por defecto) -->
-                <div id="vistaGestionTablas" style="display: none;">
-
-                    <div class="mb-3">
-                        <button class="btn btn-outline-secondary btn-sm px-3 fw-semibold rounded-2" onclick="volverAEstaLista()">
-                            <i class="fa-solid fa-arrow-left me-1.5"></i> Volver a la Lista de Empresas
-                        </button>
-                    </div>
+                <!-- VISTA 2: DETALLES Y GESTIÓN DE LAS 4 TABLAS (Activo por defecto) -->
+                <div id="vistaGestionTablas" style="display: block;">
 
                     <!-- Ficha resumen de empresa seleccionada -->
                     <div class="empresa-card mb-4" id="cardEmpresaHeader">
@@ -225,11 +211,6 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                         <i class="fa-solid fa-phone ms-2 me-1"></i><span id="headerTelefono">+58 000 0000000</span>
                                     </div>
                                 </div>
-                            </div>
-                            <div>
-                                <button class="btn btn-outline-primary btn-sm px-3 py-2 fw-semibold rounded-2" onclick="editPerfilActual()">
-                                    <i class="fa-solid fa-pen me-1"></i> Editar Perfil Principal
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -263,6 +244,12 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                             <!-- TAB 1: DATOS GENERALES (empresa_perfil) -->
                             <div class="tab-pane fade show active" id="tab-datos" role="tabpanel">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-circle-info text-primary me-2"></i>Ficha de Datos Corporativos</h6>
+                                    <button class="btn btn-starfi-primary btn-sm px-3 fw-semibold" onclick="editPerfilActual()">
+                                        <i class="fa-solid fa-pen-to-square me-1"></i> Editar Datos
+                                    </button>
+                                </div>
                                 <div class="row g-4">
                                     <div class="col-12 col-md-6">
                                         <table class="table table-bordered align-middle">
@@ -659,30 +646,11 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         let selectedEmpresaData = null;
 
         document.addEventListener('DOMContentLoaded', () => {
-            loadSedes();
+            verGestionTablas(1);
         });
 
-        function loadSedes() {
-            fetch('back_empresa.php?action=get_sedes')
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success && data.data.length > 0) {
-                        const sel = document.getElementById('selectSede');
-                        sel.innerHTML = '';
-                        data.data.forEach(s => {
-                            sel.innerHTML += `<option value="${s.id}">${escapeHtml(s.razon_social)}</option>`;
-                        });
-                        currentSede = data.data[0].id;
-                    }
-                    loadPerfiles();
-                });
-        }
-
         function loadPerfiles() {
-            const sedeId = document.getElementById('selectSede').value || 1;
-            currentSede = sedeId;
-
-            fetch(`back_empresa.php?action=get_perfiles&id_sede=${sedeId}`)
+            fetch(`back_empresa.php?action=get_perfiles`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -940,6 +908,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     if (data.success) {
                         bootstrap.Modal.getInstance(document.getElementById('modalPerfilEmpresa')).hide();
                         loadPerfiles();
+                        const pId = document.getElementById('perfilId').value;
+                        if (pId > 0 && document.getElementById('vistaGestionTablas').style.display === 'block') {
+                            verGestionTablas(pId);
+                        }
                     } else {
                         alert(data.message || 'Error al guardar perfil');
                     }

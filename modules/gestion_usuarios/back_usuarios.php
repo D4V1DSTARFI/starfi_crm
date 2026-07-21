@@ -2,7 +2,7 @@
 /**
  * Backend Controller - Gestión de Usuarios STARFI CRM
  * Procesa peticiones AJAX para listar usuarios, cambiar estatus (Activo/Inactivo),
- * asignar Roles (relacional de la tabla roles) y vincular Empresa corporativa.
+ * asignar Roles (relacional de la tabla roles) y vincular Sede corporativa.
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -24,15 +24,15 @@ if (!$con) {
 @mysqli_query($con, "INSERT IGNORE INTO roles (id, nombre) VALUES (1, 'MASTER'), (2, 'ADMINISTRADOR'), (3, 'OPERADOR')");
 
 @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN estado ENUM('ACTIVO', 'INACTIVO') DEFAULT 'INACTIVO'");
-@mysqli_query($con, "ALTER TABLE usuario ADD COLUMN id_empresa INT DEFAULT NULL");
+@mysqli_query($con, "ALTER TABLE usuario ADD COLUMN id_sede INT DEFAULT NULL");
 
 $action = $_REQUEST['action'] ?? 'list';
 
 switch ($action) {
     case 'list':
-        $query = "SELECT u.id, u.usuario, u.estado, u.rol AS id_rol, r.nombre AS rol_nombre, u.id_empresa,
+        $query = "SELECT u.id, u.usuario, u.estado, u.rol AS id_rol, r.nombre AS rol_nombre, u.id_sede,
                          up.nombre, up.cedula, up.correo, up.telefono, up.direccion,
-                         (SELECT razon_social FROM empresa_perfil WHERE id = u.id_empresa LIMIT 1) AS empresa_nombre
+                         (SELECT nombre_sede FROM sedes WHERE id = u.id_sede LIMIT 1) AS Sede_nombre
                   FROM usuario u
                   LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
                   LEFT JOIN roles r ON u.rol = r.id
@@ -53,8 +53,8 @@ switch ($action) {
                     'estado' => $row['estado'] ?? 'INACTIVO',
                     'rol' => $row['rol_nombre'] ?? 'SIN_ASIGNAR',
                     'id_rol' => $row['id_rol'] ? (int)$row['id_rol'] : null,
-                    'id_empresa' => $row['id_empresa'] ? (int)$row['id_empresa'] : null,
-                    'empresa_nombre' => $row['empresa_nombre'] ?? 'Sin Empresa'
+                    'id_sede' => $row['id_sede'] ? (int)$row['id_sede'] : null,
+                    'sede_nombre' => $row['Sede_nombre'] ?? 'Sin Sede'
                 ];
             }
         }
@@ -69,7 +69,7 @@ switch ($action) {
         }
         if (!$has_master) {
             array_unshift($usuarios, [
-                'id' => 2,
+                'id' => 1,
                 'usuario' => 'master',
                 'nombre' => 'Acceso Master',
                 'cedula' => 'V-00000000',
@@ -79,17 +79,17 @@ switch ($action) {
                 'estado' => 'ACTIVO',
                 'rol' => 'MASTER',
                 'id_rol' => 1,
-                'id_empresa' => null,
-                'empresa_nombre' => 'Todas las Empresas'
+                'id_sede' => null,
+                'sede_nombre' => 'Todas las Sedes'
             ]);
         }
 
-        // Obtener lista de empresas disponibles para asignación
-        $res_emp = mysqli_query($con, "SELECT id, razon_social, letra, rif FROM empresa_perfil ORDER BY id DESC");
-        $empresas = [];
-        if ($res_emp) {
-            while ($r_emp = mysqli_fetch_assoc($res_emp)) {
-                $empresas[] = $r_emp;
+        // Obtener lista de sedes disponibles para asignación
+        $res_sed = mysqli_query($con, "SELECT id, nombre_sede FROM sedes ORDER BY id DESC");
+        $sedes = [];
+        if ($res_sed) {
+            while ($r_sed = mysqli_fetch_assoc($res_sed)) {
+                $sedes[] = $r_sed;
             }
         }
 
@@ -105,7 +105,7 @@ switch ($action) {
         echo json_encode([
             'success' => true, 
             'data' => $usuarios,
-            'empresas' => $empresas,
+            'sedes' => $sedes,
             'roles' => $roles_list
         ]);
         break;
@@ -146,8 +146,8 @@ switch ($action) {
         $rol_in = (int)($_POST['rol'] ?? 0);
         $rol = ($rol_in > 0) ? $rol_in : null;
         
-        $id_empresa_in = (int)($_POST['id_empresa'] ?? 0);
-        $id_empresa = ($id_empresa_in > 0) ? $id_empresa_in : null;
+        $id_sede_in = (int)($_POST['id_sede'] ?? 0);
+        $id_sede = ($id_sede_in > 0) ? $id_sede_in : null;
 
         if (empty($usuario) || empty($nombre) || empty($correo)) {
             echo json_encode(['success' => false, 'message' => 'Nombre, Usuario y Correo son campos obligatorios.']);
@@ -155,9 +155,9 @@ switch ($action) {
         }
 
         if ($id > 0) {
-            // Actualizar usuario existente (usuario, estado, rol INT, id_empresa INT)
-            $stmt = $con->prepare("UPDATE usuario SET usuario = ?, estado = ?, rol = ?, id_empresa = ? WHERE id = ?");
-            $stmt->bind_param("ssiii", $usuario, $estado, $rol, $id_empresa, $id);
+            // Actualizar usuario existente (usuario, estado, rol INT, id_sede INT)
+            $stmt = $con->prepare("UPDATE usuario SET usuario = ?, estado = ?, rol = ?, id_sede = ? WHERE id = ?");
+            $stmt->bind_param("ssiii", $usuario, $estado, $rol, $id_sede, $id);
             $stmt->execute();
             $stmt->close();
 
@@ -198,8 +198,8 @@ switch ($action) {
             $check->close();
 
             $hash = password_hash($contrasena, PASSWORD_BCRYPT);
-            $stmtNew = $con->prepare("INSERT INTO usuario (usuario, contrasena, estado, rol, id_empresa) VALUES (?, ?, ?, ?, ?)");
-            $stmtNew->bind_param("ssiii", $usuario, $hash, $estado, $rol, $id_empresa);
+            $stmtNew = $con->prepare("INSERT INTO usuario (usuario, contrasena, estado, rol, id_sede) VALUES (?, ?, ?, ?, ?)");
+            $stmtNew->bind_param("ssiii", $usuario, $hash, $estado, $rol, $id_sede);
             if ($stmtNew->execute()) {
                 $new_id = mysqli_insert_id($con);
                 $stmtNew->close();

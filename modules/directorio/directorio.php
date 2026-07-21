@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('directorio');
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 ?>

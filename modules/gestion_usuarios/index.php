@@ -6,6 +6,7 @@
  */
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('gestion_usuarios');
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 ?>
@@ -199,7 +200,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-4 gap-3">
                     <div>
                         <h2 class="brand-font mb-1" style="font-weight: 700; color: var(--starfi-dark);">Gestión de Usuarios</h2>
-                        <p class="text-muted mb-0" style="font-size: 0.95rem;">Controla accesos, activa usuarios, asigna roles (Master, Administrador, Operador) y vincula empresas corporativas.</p>
+                        <p class="text-muted mb-0" style="font-size: 0.95rem;">Controla accesos, activa usuarios, asigna roles (Master, Administrador, Operador) y vincula sedes corporativas.</p>
                     </div>
                     <div>
                         <button class="btn btn-starfi-primary d-flex align-items-center gap-2" onclick="openUserModal()">
@@ -267,7 +268,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 <tr style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: #64748B;">
                                     <th>Usuario</th>
                                     <th>Rol Asignado</th>
-                                    <th>Empresa Asignada</th>
+                                    <th>Sede Asignada</th>
                                     <th>Contacto</th>
                                     <th class="text-center">Estatus</th>
                                     <th class="text-end">Acciones</th>
@@ -330,7 +331,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
 
                         <hr class="my-3 text-muted">
-                        <h6 class="fw-bold text-dark mb-3"><i class="fa-solid fa-user-shield text-primary me-2"></i>Asignación de Rol y Empresa</h6>
+                        <h6 class="fw-bold text-dark mb-3"><i class="fa-solid fa-user-shield text-primary me-2"></i>Asignación de Rol y Sede</h6>
 
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -341,9 +342,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 </select>
                             </div>
                             <div class="col-6">
-                                <label class="form-label fw-semibold small">Empresa Asignada</label>
-                                <select class="form-select py-2" id="inputEmpresa" name="id_empresa">
-                                    <option value="0">Sin Empresa (Sin Asignar)</option>
+                                <label class="form-label fw-semibold small">Sede Asignada</label>
+                                <select class="form-select py-2" id="inputSede" name="id_sede">
+                                    <option value="0">Sin Sede (Sin Asignar)</option>
                                     <!-- Opciones cargadas dinámicamente -->
                                 </select>
                             </div>
@@ -372,7 +373,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
     <script>
         let allUsers = [];
-        let allEmpresas = [];
+        let allSedes = [];
         let allRoles = [];
         let currentFilter = 'TODOS';
 
@@ -386,9 +387,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 .then(data => {
                     if (data.success) {
                         allUsers = data.data;
-                        allEmpresas = data.empresas || [];
+                        allSedes = data.sedes || [];
                         allRoles = data.roles || [];
-                        populateEmpresasSelect();
+                        populateSedesSelect();
                         populateRolesSelect();
                         updateStats();
                         renderUsersTable();
@@ -399,11 +400,11 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 .catch(err => console.error('Fetch error:', err));
         }
 
-        function populateEmpresasSelect() {
-            const sel = document.getElementById('inputEmpresa');
-            sel.innerHTML = '<option value="0">Sin Empresa (Sin Asignar)</option>';
-            allEmpresas.forEach(e => {
-                sel.innerHTML += `<option value="${e.id}">${escapeHtml(e.razon_social)} (${e.letra}-${e.rif})</option>`;
+        function populateSedesSelect() {
+            const sel = document.getElementById('inputSede');
+            sel.innerHTML = '<option value="0">Sin Sede (Sin Asignar)</option>';
+            allSedes.forEach(s => {
+                sel.innerHTML += `<option value="${s.id}">${escapeHtml(s.nombre_sede)}</option>`;
             });
         }
 
@@ -463,7 +464,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 else if (u.rol === 'ADMINISTRADOR') rolBadge = '<span class="badge-rol-admin"><i class="fa-solid fa-user-gear me-1"></i>ADMINISTRADOR</span>';
                 else if (u.rol === 'OPERADOR') rolBadge = '<span class="badge-rol-operador"><i class="fa-solid fa-headset me-1"></i>OPERADOR</span>';
 
-                const empresaText = u.empresa_nombre ? `<span class="fw-semibold text-dark"><i class="fa-solid fa-building me-1 text-secondary"></i>${escapeHtml(u.empresa_nombre)}</span>` : '<span class="text-muted small">Sin Empresa</span>';
+                const sedeText = u.sede_nombre ? `<span class="fw-semibold text-dark"><i class="fa-solid fa-location-dot me-1 text-secondary"></i>${escapeHtml(u.sede_nombre)}</span>` : '<span class="text-muted small">Sin Sede</span>';
 
                 html += `
                     <tr>
@@ -477,7 +478,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             </div>
                         </td>
                         <td>${rolBadge}</td>
-                        <td>${empresaText}</td>
+                        <td>${sedeText}</td>
                         <td>
                             <div class="small fw-medium">${escapeHtml(u.correo)}</div>
                             <span class="text-muted small">${escapeHtml(u.telefono)}</span>
@@ -533,7 +534,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             document.getElementById('inputContrasena').required = true;
             document.getElementById('passHint').innerText = '(Requerida para nuevos)';
             document.getElementById('inputRol').value = '0';
-            document.getElementById('inputEmpresa').value = '0';
+            document.getElementById('inputSede').value = '0';
             document.getElementById('inputEstado').value = 'INACTIVO';
             document.getElementById('modalAlert').classList.add('d-none');
             
@@ -552,9 +553,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             document.getElementById('inputContrasena').required = false;
             document.getElementById('passHint').innerText = '(Dejar en blanco para mantener actual)';
             document.getElementById('inputRol').value = user.id_rol ? user.id_rol : '0';
-            document.getElementById('inputEmpresa').value = user.id_empresa ? user.id_empresa : '0';
+            document.getElementById('inputSede').value = user.id_sede ? user.id_sede : '0';
             document.getElementById('inputEstado').value = user.estado;
-            document.getElementById('userModalTitle').innerText = 'Configurar Usuario, Rol y Empresa';
+            document.getElementById('userModalTitle').innerText = 'Configurar Usuario, Rol y Sede';
             document.getElementById('modalAlert').classList.add('d-none');
 
             const modal = new bootstrap.Modal(document.getElementById('userModal'));

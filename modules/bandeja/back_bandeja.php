@@ -592,12 +592,16 @@ switch ($action) {
         break;
 
     case 'get_agents':
+<<<<<<< HEAD
+        $res = $con->query("SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre_completo FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.estado = 'ACTIVO' OR u.estado = 1");
+=======
         $res = $con->query("
             SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre_completo 
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
             WHERE u.estado = 'ACTIVO' OR u.estado = 1
         ");
+>>>>>>> 0166d9d44653bfa10ed3a1bb213b551ce37e1d2b
         $agents = [];
         if ($res) {
             while($row = $res->fetch_assoc()) {
