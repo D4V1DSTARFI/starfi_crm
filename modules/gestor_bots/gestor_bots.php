@@ -361,6 +361,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                     <option value="DOCUMENTO">Documento (PDF)</option>
                                     <option value="UBICACION">Ubicación GPS</option>
                                     <option value="CONTACTOS">Tarjeta de Contacto</option>
+                                    <option value="CONTACTOS_SEDE">Contactos de Asesores (Sede)</option>
                                 </select>
                             </div>
                             <div class="col-md-4 mb-4">
