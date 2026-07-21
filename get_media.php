@@ -15,9 +15,13 @@ $res = $con->query("SELECT url_archivo FROM mensajes_y_eventos WHERE url_archivo
 if ($res && $res->num_rows > 0) {
     $row = $res->fetch_assoc();
     $url = $row['url_archivo'];
-    if (strpos($url, '/assets/uploads/') !== false && file_exists(__DIR__ . str_replace('/starfi_crm', '', $url))) {
-        header("Location: " . $url);
-        exit;
+    if (strpos($url, '/assets/uploads/') !== false) {
+        // Fallback relative path calculation to check if file exists
+        $local_path = __DIR__ . substr($url, strpos($url, '/assets/uploads/'));
+        if (file_exists($local_path) && filesize($local_path) > 200) {
+            header("Location: " . $url);
+            exit;
+        }
     }
 }
 
@@ -64,6 +68,8 @@ $save_path = $upload_dir . "/$filename";
 $ch2 = curl_init($meta_media_url);
 curl_setopt($ch2, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
 curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
+curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 $binary = curl_exec($ch2);
 curl_close($ch2);
 
