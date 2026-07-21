@@ -895,6 +895,7 @@ body {
     .chats-panel {
         width: 100% !important;
         flex: 1;
+        overflow: hidden !important;
     }
     .conversation-panel {
         display: none !important; /* Hidden by default on mobile */
