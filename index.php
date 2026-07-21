@@ -8,6 +8,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
 ?>
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -28,6 +29,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             --bg-light: #F8FAFC;
             --border-light: #E2E8F0;
         }
+
         body {
             background-color: var(--bg-light);
             font-family: 'Inter', sans-serif;
@@ -36,6 +38,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             display: flex;
             flex-direction: column;
         }
+
         /* Navbar Glassmorphism */
         .navbar-custom {
             background: rgba(255, 255, 255, 0.85);
@@ -43,14 +46,17 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             border-bottom: 1px solid var(--border-light);
             padding: 15px 30px;
         }
+
         .navbar-brand img {
             height: 40px;
         }
+
         .user-profile {
             display: flex;
             align-items: center;
             gap: 12px;
         }
+
         .avatar-circle {
             width: 40px;
             height: 40px;
@@ -64,19 +70,23 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             font-size: 1.1rem;
             box-shadow: 0 4px 10px rgba(232, 91, 20, 0.2);
         }
+
         /* Welcome Banner */
         .welcome-section {
             padding: 50px 0 30px 0;
         }
+
         .welcome-title {
             font-size: 2.2rem;
             font-weight: 800;
             color: var(--primary-dark);
         }
+
         .welcome-subtitle {
             font-size: 1.1rem;
             color: #64748B;
         }
+
         /* Grid and Module Cards */
         .module-card {
             background: #ffffff;
@@ -93,6 +103,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             text-decoration: none;
             color: inherit;
         }
+
         .module-card::before {
             content: '';
             position: absolute;
@@ -104,14 +115,17 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             opacity: 0;
             transition: opacity 0.3s;
         }
+
         .module-card:hover {
             transform: translateY(-8px);
             box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08);
             border-color: rgba(232, 91, 20, 0.2);
         }
+
         .module-card:hover::before {
             opacity: 1;
         }
+
         .icon-container {
             width: 60px;
             height: 60px;
@@ -123,39 +137,47 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             margin-bottom: 25px;
             transition: all 0.3s;
         }
+
         /* Module specific colors */
         .icon-bandeja {
             background-color: rgba(232, 91, 20, 0.1);
             color: var(--primary-orange);
         }
+
         .icon-bots {
             background-color: rgba(13, 148, 136, 0.1);
             color: #0d9488;
         }
+
         .icon-directorio {
             background-color: rgba(59, 130, 246, 0.1);
             color: #3b82f6;
         }
+
         .icon-dashboard {
             background-color: rgba(147, 51, 234, 0.1);
             color: #9333ea;
         }
+
         .icon-config {
             background-color: rgba(100, 116, 139, 0.1);
             color: #64748b;
         }
+
         .module-title {
             font-size: 1.3rem;
             font-weight: 700;
             color: var(--primary-dark);
             margin-bottom: 12px;
         }
+
         .module-desc {
             font-size: 0.95rem;
             color: #64748B;
             line-height: 1.5;
             margin-bottom: 25px;
         }
+
         .action-link {
             display: flex;
             align-items: center;
@@ -165,9 +187,11 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             color: var(--primary-orange);
             transition: gap 0.2s;
         }
+
         .module-card:hover .action-link {
             gap: 12px;
         }
+
         .footer {
             margin-top: auto;
             border-top: 1px solid var(--border-light);
@@ -178,6 +202,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
         }
     </style>
 </head>
+
 <body>
 
     <!-- Cabecera / Navbar -->
@@ -192,11 +217,16 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                         <?= strtoupper(substr($nombre_agente, 0, 1)) ?>
                     </div>
                     <div class="d-none d-md-block">
-                        <div class="fw-bold mb-0 lh-1" style="font-size: 0.95rem;"><?= htmlspecialchars($nombre_agente) ?></div>
-                        <span class="badge bg-secondary mt-1" style="font-size: 0.75rem;"><?= htmlspecialchars($rol_agente) ?></span>
+                        <div class="fw-bold mb-0 lh-1" style="font-size: 0.95rem;">
+                            <?= htmlspecialchars($nombre_agente) ?></div>
+                        <span class="badge bg-secondary mt-1"
+                            style="font-size: 0.75rem;"><?= htmlspecialchars($rol_agente) ?></span>
                     </div>
                 </div>
-                <a href="logout.php" class="btn btn-outline-danger btn-sm px-3 py-2 fw-semibold d-flex align-items-center gap-2" style="border-radius: 8px;">
+
+                <a href="logout.php"
+                    class="btn btn-outline-danger btn-sm px-3 py-2 fw-semibold d-flex align-items-center gap-2"
+                    style="border-radius: 8px;">
                     <i class="bi bi-box-arrow-right"></i> Salir
                 </a>
             </div>
@@ -220,7 +250,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-chat-left-text-fill"></i>
                         </div>
                         <h4 class="module-title">Bandeja Omnicanal</h4>
-                        <p class="module-desc">Bandeja de entrada unificada para gestionar y responder a todos los chats de tus clientes y bots en tiempo real.</p>
+                        <p class="module-desc">Bandeja de entrada unificada para gestionar y responder a todos los chats
+                            de tus clientes y bots en tiempo real.</p>
                     </div>
                     <div class="action-link">
                         Ingresar a Bandeja <i class="bi bi-arrow-right"></i>
@@ -236,7 +267,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-robot"></i>
                         </div>
                         <h4 class="module-title">Gestor de Bots</h4>
-                        <p class="module-desc">Configura flujos de conversación inteligentes, respuestas automáticas y comportamiento general del asistente virtual.</p>
+                        <p class="module-desc">Configura flujos de conversación inteligentes, respuestas automáticas y
+                            comportamiento general del asistente virtual.</p>
                     </div>
                     <div class="action-link">
                         Configurar Bots <i class="bi bi-arrow-right"></i>
@@ -252,7 +284,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-person-lines-fill"></i>
                         </div>
                         <h4 class="module-title">Directorio de Clientes</h4>
-                        <p class="module-desc">Visualiza y administra contactos de clientes, asigna etiquetas personalizadas y añade notas de seguimiento.</p>
+                        <p class="module-desc">Visualiza y administra contactos de clientes, asigna etiquetas
+                            personalizadas y añade notas de seguimiento.</p>
                     </div>
                     <div class="action-link">
                         Ver Directorio <i class="bi bi-arrow-right"></i>
@@ -268,7 +301,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-bar-chart-line-fill"></i>
                         </div>
                         <h4 class="module-title">Dashboard y Reportes</h4>
-                        <p class="module-desc">Analiza estadísticas de rendimiento de agentes, reportes de volumen de chats y tiempos de respuesta (SLA).</p>
+                        <p class="module-desc">Analiza estadísticas de rendimiento de agentes, reportes de volumen de
+                            chats y tiempos de respuesta (SLA).</p>
                     </div>
                     <div class="action-link">
                         Ver Reportes <i class="bi bi-arrow-right"></i>
@@ -284,7 +318,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                             <i class="bi bi-gear-fill"></i>
                         </div>
                         <h4 class="module-title">Configuración del Sistema</h4>
-                        <p class="module-desc">Administra sucursales (sedes), asigna líneas y tokens oficiales de WhatsApp y ajusta parámetros del CRM.</p>
+                        <p class="module-desc">Administra sucursales (sedes), asigna líneas y tokens oficiales de
+                            WhatsApp y ajusta parámetros del CRM.</p>
                     </div>
                     <div class="action-link">
                         Ir a Ajustes <i class="bi bi-arrow-right"></i>
@@ -296,14 +331,49 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/whatsapp_analytics.php" class="module-card">
                     <div>
-                        <div class="icon-container" style="background-color: rgba(16, 185, 129, 0.1); color: var(--sla-green);">
+                        <div class="icon-container"
+                            style="background-color: rgba(16, 185, 129, 0.1); color: var(--sla-green);">
                             <i class="bi bi-whatsapp"></i>
                         </div>
                         <h4 class="module-title">Facturación WhatsApp</h4>
-                        <p class="module-desc">Audita el consumo financiero de la API de Meta, consulta el volumen de mensajes de marketing, utilidad y costos estimados.</p>
+                        <p class="module-desc">Audita el consumo financiero de la API de Meta, consulta el volumen de
+                            mensajes de marketing, utilidad y costos estimados.</p>
                     </div>
                     <div class="action-link" style="color: var(--sla-green);">
                         Ver Métricas <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+
+            <!-- 7. Gestión de Usuarios -->
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/gestion_usuarios/index.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(79, 70, 229, 0.1); color: #4F46E5;">
+                            <i class="bi bi-people-fill"></i>
+                        </div>
+                        <h4 class="module-title">Gestión de Usuarios</h4>
+                        <p class="module-desc">Administra cuentas de operadores y supervisores, controla el estado
+                            activo/inactivo y habilita permisos de acceso al CRM.</p>
+                    </div>
+                    <div class="action-link" style="color: #4F46E5;">
+                        Gestionar Usuarios <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+
+            <!-- 8. Perfil de Empresa -->
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/perfil_empresa/index.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(234, 88, 12, 0.1); color: #EA580C;">
+                            <i class="bi bi-building"></i>
+                        </div>
+                        <h4 class="module-title">Perfil de Empresa</h4>
+                        <p class="module-desc">Información corporativa, datos fiscales RIF, representantes legales/firmantes, registro mercantil y expedientes digitales.</p>
+                    </div>
+                    <div class="action-link" style="color: #EA580C;">
+                        Ver Perfil Empresa <i class="bi bi-arrow-right"></i>
                     </div>
                 </a>
             </div>
@@ -356,4 +426,5 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
     <!-- Bootstrap Bundle JS -->
     <script src="assets/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>
