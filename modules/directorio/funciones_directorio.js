@@ -3,12 +3,14 @@
 let currentClientId = null;
 let allClients = [];
 let filteredClients = [];
+let allSedes = [];
 let currentPage = 1;
 const pageSize = 10;
 let currentSortCol = 'fecha';
 let currentSortAsc = false;
 
 $(document).ready(function() {
+    loadSedes();
     loadClients();
 
     // Botón Nuevo Cliente
@@ -21,6 +23,7 @@ $(document).ready(function() {
         $('#profAvatarImg').attr('src', 'https://ui-avatars.com/api/?name=Nuevo&background=E85B14&color=fff');
         
         $('#profName').val('');
+        $('#profSede').val('');
         $('#profPrefix').prop('disabled', false).val('58414');
         $('#profPhone').prop('disabled', false).val('');
         $('#profAddress').val('');
@@ -84,6 +87,25 @@ $(document).ready(function() {
     });
 });
 
+function loadSedes() {
+    $.ajax({
+        url: 'back_directorio.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'get_sedes' },
+        success: function(res) {
+            if (res.status === 'success') {
+                allSedes = res.data;
+                let select = $('#profSede');
+                select.find('option:not(:first)').remove(); // Keep "General / Central"
+                allSedes.forEach(s => {
+                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                });
+            }
+        }
+    });
+}
+
 function loadClients() {
     $.ajax({
         url: 'back_directorio.php',
@@ -106,7 +128,8 @@ function applyFiltersAndRender() {
     filteredClients = allClients.filter(c => {
         let name = c.nombre ? c.nombre.toLowerCase() : '';
         let phone = c.numero_whatsapp ? c.numero_whatsapp.toLowerCase() : '';
-        return name.includes(query) || phone.includes(query);
+        let sede = c.nombre_sede ? c.nombre_sede.toLowerCase() : '';
+        return name.includes(query) || phone.includes(query) || sede.includes(query);
     });
 
     // 2. Ordenar
@@ -118,6 +141,9 @@ function applyFiltersAndRender() {
         } else if (currentSortCol === 'telefono') {
             valA = a.numero_whatsapp || '';
             valB = b.numero_whatsapp || '';
+        } else if (currentSortCol === 'sede') {
+            valA = a.nombre_sede ? a.nombre_sede.toLowerCase() : '';
+            valB = b.nombre_sede ? b.nombre_sede.toLowerCase() : '';
         } else if (currentSortCol === 'estado') {
             valA = a.estado || '';
             valB = b.estado || '';
@@ -150,7 +176,7 @@ function renderTablePage() {
     let paginatedItems = filteredClients.slice(startIndex, endIndex);
 
     if(paginatedItems.length === 0) {
-        tbody.append('<tr><td colspan="5" class="text-center text-muted p-5"><i class="fa-solid fa-users-slash fs-2 mb-3 d-block"></i>No se encontraron clientes.</td></tr>');
+        tbody.append('<tr><td colspan="6" class="text-center text-muted p-5"><i class="fa-solid fa-users-slash fs-2 mb-3 d-block"></i>No se encontraron clientes.</td></tr>');
     } else {
         paginatedItems.forEach(c => {
             let statusBadge = c.estado === 'ACTIVO' ? 
@@ -159,6 +185,8 @@ function renderTablePage() {
             
             let dateObj = new Date(c.fecha_registro);
             let formattedDate = dateObj.toLocaleDateString();
+            
+            let sedeName = c.nombre_sede ? `<span class="fw-bold" style="color:#4a5568;">${c.nombre_sede}</span>` : '<span class="text-muted fst-italic">General</span>';
 
             let tr = `
                 <tr onclick="loadProfile(${c.id}, this)">
@@ -172,6 +200,7 @@ function renderTablePage() {
                         </div>
                     </td>
                     <td>+${c.numero_whatsapp}</td>
+                    <td>${sedeName}</td>
                     <td>${statusBadge}</td>
                     <td><span class="tag text-muted">Sin tags</span></td>
                     <td class="text-muted">${formattedDate}</td>
@@ -213,6 +242,7 @@ function loadProfile(id, rowElement) {
 
                 // Update Form Fields
                 $('#profName').val(client.nombre);
+                $('#profSede').val(client.id_sede || '');
                 $('#profAddress').val(client.direccion || '');
                 $('#profNotes').val(client.notas_internas || '');
                 
@@ -268,9 +298,10 @@ function saveProfile() {
     const nombre = $('#profName').val().trim();
     const direccion = $('#profAddress').val().trim();
     const notas = $('#profNotes').val().trim();
+    const id_sede = $('#profSede').val();
     
     let action = currentClientId ? 'save_profile' : 'create_profile';
-    let data = { action: action, nombre: nombre, direccion: direccion, notas: notas };
+    let data = { action: action, nombre: nombre, direccion: direccion, notas: notas, id_sede: id_sede };
     
     if (currentClientId) {
         data.id = currentClientId;
@@ -290,7 +321,7 @@ function saveProfile() {
             url: 'back_directorio.php',
             type: 'POST',
             dataType: 'json',
-            data: { action: 'check_duplicate', numero_whatsapp: data.numero_whatsapp },
+            data: { action: 'check_duplicate', numero_whatsapp: data.numero_whatsapp, id_sede: data.id_sede },
             success: function(res) {
                 if (res.status === 'exists') {
                     Swal.fire({

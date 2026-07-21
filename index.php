@@ -378,6 +378,42 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                 </a>
             </div>
         </div>
+        
+        <?php if ($rol_agente === 'MASTER'): ?>
+        <div class="row g-4 mt-1">
+            <!-- 7. Panel de Órdenes de Cobro (Solo MASTER) -->
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/dashboard/waba_ordenes.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(220, 53, 69, 0.1); color: var(--danger-color, #dc3545);">
+                            <i class="bi bi-receipt"></i>
+                        </div>
+                        <h4 class="module-title">Panel de Órdenes WABA</h4>
+                        <p class="module-desc">Gestión administrativa de los estados de cuenta, facturas generadas a las sedes y reenvío de notificaciones.</p>
+                    </div>
+                    <div class="action-link" style="color: var(--danger-color, #dc3545);">
+                        Ir al Panel <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            
+            <!-- 8. Buzón de Salida SMTP (Solo MASTER) -->
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/dashboard/buzon_correos.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(13, 110, 253, 0.1); color: var(--primary-color);">
+                            <i class="bi bi-envelope-paper"></i>
+                        </div>
+                        <h4 class="module-title">Buzón de Salida SMTP</h4>
+                        <p class="module-desc">Registro histórico de notificaciones por correo electrónico y estado de entrega (Logs de Envíos).</p>
+                    </div>
+                    <div class="action-link" style="color: var(--primary-color);">
+                        Ver Buzón <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 
     <!-- Footer -->

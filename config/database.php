@@ -27,23 +27,23 @@ function getDbConnection($tipo = 'core')
 
     // Configuración dura según el entorno (Ignorando DB_HOST del .env)
     switch (APP_ENV) {
-            case 'SANDBOX':
-                $servidor = "192.168.0.71";
-                $usuario = "starfi_v2_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'PRODUCCION':
-                $servidor = "192.168.0.80";
-                $usuario = "starfi_v2_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-            case 'LOCAL':
-            default:
-                $servidor = "localhost";
-                $usuario = "starfi_user";
-                $contrasenha = md5("PARALELEPIPEDO3312");
-                break;
-        }
+        case 'SANDBOX':
+            $servidor = "192.168.0.71";
+            $usuario = "starfi_v2_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+        case 'PRODUCCION':
+            $servidor = "192.168.0.80";
+            $usuario = "starfi_v2_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+        case 'LOCAL':
+        default:
+            $servidor = "localhost";
+            $usuario = "starfi_user";
+            $contrasenha = md5("PARALELEPIPEDO3312");
+            break;
+    }
 
     // Usar la base de datos core (starfi_crm) para todo
     $bd = "starfi_crm";
@@ -58,6 +58,10 @@ function getDbConnection($tipo = 'core')
     }
 
     mysqli_set_charset($con, "utf8mb4");
+    
+    // Forzar zona horaria de MySQL para que NOW() coincida con PHP
+    mysqli_query($con, "SET time_zone = '-04:00'");
+    
     return $con;
 }
 

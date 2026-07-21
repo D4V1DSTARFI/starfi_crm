@@ -72,11 +72,8 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
 
     $value = $respuesta_array['entry'][0]['changes'][0]['value'];
 
-    // NUEVO: Extraer el número de teléfono que recibió el mensaje (telefono_meta)
     $telefonoReceptorID = $value['metadata']['phone_number_id'] ?? null;
     $displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
-    
-    file_put_contents(__DIR__ . "/logs/debug_phone_id.txt", "Received phone_number_id: " . $telefonoReceptorID . "\n", FILE_APPEND);
 
     // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído)
     if (isset($value['statuses'][0])) {
@@ -126,7 +123,7 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         $url_archivo = $msg['document']['id']; 
         $mime_type = $msg['document']['mime_type'] ?? 'application/pdf';
     } else if ($tipo_mensaje === 'audio') {
-        $tipo_bd = 'EVENTO_SISTEMA'; 
+        $tipo_bd = 'AUDIO'; 
         $mensaje_texto = 'Audio recibido';
         $url_archivo = $msg['audio']['id']; 
         $mime_type = $msg['audio']['mime_type'] ?? 'audio/ogg';
@@ -137,15 +134,18 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         } else if ($tipo_interactivo === 'list_reply') {
             $mensaje_texto = $msg['interactive']['list_reply']['title'] ?? '';
         }
-    } else if (in_array($tipo_mensaje, ['sticker', 'location', 'reaction'])) {
+    } else if ($tipo_mensaje === 'sticker') {
+        $tipo_bd = 'IMAGEN';
+        $mensaje_texto = 'Sticker recibido';
+        $url_archivo = $msg['sticker']['id']; 
+        $mime_type = $msg['sticker']['mime_type'] ?? 'image/webp';
+    } else if (in_array($tipo_mensaje, ['location', 'reaction'])) {
         $tipo_bd = 'EVENTO_SISTEMA';
         if ($tipo_mensaje === 'reaction') {
             $emoji = $msg['reaction']['emoji'] ?? '';
             $mensaje_texto = "El usuario reaccionó con: $emoji";
         } else if ($tipo_mensaje === 'location') {
             $mensaje_texto = "El usuario envió una ubicación.";
-        } else {
-            $mensaje_texto = "El usuario envió un sticker.";
         }
     } else {
         $tipo_bd = 'EVENTO_SISTEMA';

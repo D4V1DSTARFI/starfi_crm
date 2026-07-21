@@ -224,7 +224,7 @@ if ($res_sedes) {
                 </div>
                 <div class="filter-group">
                     <label>Fecha Desde</label>
-                    <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d') ?>">
+                    <input type="date" id="filterFechaDesde" class="filter-control" value="<?= date('Y-m-d', strtotime('-7 days')) ?>">
                 </div>
                 <div class="filter-group">
                     <label>Fecha Hasta</label>
@@ -285,17 +285,8 @@ if ($res_sedes) {
                         <h5 class="brand-font fw-bold text-starfi-dark mb-1">Volumen de Chats por Día</h5>
                         <p class="text-muted" style="font-size: 0.8rem;">Distribución de conversaciones en la semana actual</p>
                         
-                        <div class="mock-chart">
-                            <div class="bar" style="height: 40%;" data-val="120"></div>
-                            <div class="bar" style="height: 60%;" data-val="180"></div>
-                            <div class="bar" style="height: 85%; background-color: var(--starfi-dark);" data-val="250"></div>
-                            <div class="bar" style="height: 50%;" data-val="150"></div>
-                            <div class="bar" style="height: 70%;" data-val="210"></div>
-                            <div class="bar" style="height: 30%; background-color: var(--text-muted);" data-val="90"></div>
-                            <div class="bar" style="height: 20%; background-color: var(--text-muted);" data-val="60"></div>
-                        </div>
-                        <div class="d-flex justify-content-around mt-2 text-muted" style="font-size: 0.75rem;">
-                            <span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span>
+                        <div class="chart-container" style="position: relative; height:250px; width:100%; margin-top:20px;">
+                            <canvas id="chatsChart"></canvas>
                         </div>
                     </div>
                 </div>
@@ -319,6 +310,7 @@ if ($res_sedes) {
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="funciones_dashboard.js?v=<?= time() ?>"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {

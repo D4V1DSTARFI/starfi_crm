@@ -38,6 +38,63 @@ function loadDashboardData() {
 
                 // Actualizar Lista de Operadores
                 renderOperatorPerformance(data.operadores);
+                
+                // Actualizar Gráfico
+                renderChart(data.chart_data);
+            }
+        }
+    });
+}
+
+let chatsChartInstance = null;
+
+function renderChart(chartData) {
+    if (chatsChartInstance) {
+        chatsChartInstance.destroy();
+    }
+
+    const ctx = document.getElementById('chatsChart').getContext('2d');
+    
+    if (!chartData || chartData.length === 0) {
+        // Grafico vacio
+        chatsChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: ['Sin datos'], datasets: [{ label: 'Volumen', data: [0] }] }
+        });
+        return;
+    }
+
+    let labels = [];
+    let values = [];
+    
+    chartData.forEach(item => {
+        let dateParts = item.fecha.split('-');
+        let shortDate = dateParts[2] + '/' + dateParts[1];
+        labels.push(shortDate);
+        values.push(item.volumen);
+    });
+
+    chatsChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Volumen de Chats',
+                data: values,
+                backgroundColor: '#E85B14',
+                borderRadius: 4,
+                barPercentage: 0.6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true, grid: { display: true, color: '#f0f2f5' }, border: { display: false } },
+                x: { grid: { display: false }, border: { display: false } }
             }
         }
     });
