@@ -20,6 +20,7 @@ switch ($action) {
                 cl.numero_whatsapp, 
                 IFNULL(c.estado, 'SIN INICIAR') as estado, 
                 IFNULL(c.fecha_inicio, cl.fecha_registro) as fecha_inicio,
+                (SELECT MAX(timestamp) FROM mensajes_y_eventos WHERE id_conversacion = c.id) as ultimo_mensaje_ts,
                 IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
                 IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede
             FROM clientes_contactos cl
@@ -44,7 +45,7 @@ switch ($action) {
             $query .= " AND l.id_sede = $id_sede";
         }
 
-        $query .= " ORDER BY no_leidos DESC, fecha_inicio DESC";
+        $query .= " ORDER BY no_leidos DESC, IFNULL(ultimo_mensaje_ts, IFNULL(c.fecha_inicio, cl.fecha_registro)) DESC";
         $res = $con->query($query);
         
         $chats = [];

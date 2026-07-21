@@ -361,6 +361,7 @@ function renderChatList(chats) {
 
         let isActiveClass = (chat.id == activeChatId && chat.id_cliente == activeClientId) ? 'active' : '';
 
+        let lastTime = chat.ultimo_mensaje_ts ? chat.ultimo_mensaje_ts : chat.fecha_inicio;
         let html = `
             <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}">
                 <div class="chat-avatar">
@@ -369,7 +370,7 @@ function renderChatList(chats) {
                 <div class="chat-summary">
                     <div class="chat-top">
                         <h4>${name}</h4>
-                        <span class="time">${formatTime(chat.fecha_inicio)}</span>
+                        <span class="time">${formatTime(lastTime)}</span>
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
