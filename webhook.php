@@ -511,7 +511,8 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
                     'phones' => [
                         [
                             'phone' => $asesor['telefono'],
-                            'type' => 'CELL'
+                            'type' => 'CELL',
+                            'wa_id' => preg_replace('/[^0-9]/', '', $asesor['telefono'])
                         ]
                     ]
                 ]
