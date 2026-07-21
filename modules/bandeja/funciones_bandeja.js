@@ -576,11 +576,11 @@ function renderMessages(messages, scrollToBottom) {
             let colorStlye = msg.origen === 'API_TRANSACCIONAL' ? 'background-color: #ffffff; border: 1px solid #E5E7EB;' : 'background-color: #EFF6FF; border: 1px solid #BFDBFE;';
             let icon = msg.origen === 'API_TRANSACCIONAL' ? '<i class="fa-solid fa-robot text-muted me-1"></i> ' : '';
             
-            let displayContent = msg.contenido;
+            let displayContent = msg.contenido || '';
             let agentNameHtml = (msg.origen === 'AGENTE' && msg.nombre_agente) ? `<div style="font-size: 0.65rem; color: #6B7280; margin-bottom: 6px; border-bottom: 1px solid #BFDBFE; padding-bottom: 2px;"><i class="fa-solid fa-headset"></i> ${msg.nombre_agente}</div>` : '';
             
             // Intelligent Visual Rendering for Templates
-            if (msg.origen === 'API_TRANSACCIONAL' && msg.contenido.startsWith('Envío dinámico de plantilla:')) {
+            if (msg.origen === 'API_TRANSACCIONAL' && msg.contenido && msg.contenido.startsWith('Envío dinámico de plantilla:')) {
                 try {
                     let match = msg.contenido.match(/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*\])/);
                     if (match) {
