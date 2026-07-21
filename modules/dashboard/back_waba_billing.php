@@ -331,14 +331,40 @@ if ($action === 'generate_order') {
             }
             
             // EMAIL
-            if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
+            $email_destino = !empty($s['gerente_email']) ? $s['gerente_email'] : ($s['email'] ?? '');
+            if (!empty($email_destino)) {
                 require_once __DIR__ . '/../../core/services/MailerService.php';
                 $mailer = new MailerService($con);
                 
-                $html_msg = str_replace("\n", "<br>", $msg);
+                $html_msg = "
+            <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                <div style='background-color: #2b6cb0; color: white; padding: 20px; text-align: center;'>
+                    <h2 style='margin: 0;'>Notificación de Cobro</h2>
+                    <p style='margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;'>Infraestructura API WhatsApp</p>
+                </div>
+                <div style='padding: 30px; background-color: #ffffff;'>
+                    <p style='font-size: 16px; color: #333;'>Hola <strong>".($s['gerente_nombre'] ?? 'Administración')."</strong>,</p>
+                    <p style='color: #4a5568; line-height: 1.6;'>Se ha generado una nueva orden de cobro para la sede <strong>{$s['nombre_sede']}</strong> correspondiente a los servicios de mensajería consolidada y costos operativos.</p>
+                    
+                    <div style='background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 15px; margin: 20px 0;'>
+                        <p style='margin: 0 0 10px 0;'><strong>Orden #:</strong> NC-".date('Y')."-".str_pad($new_order_id, 4, '0', STR_PAD_LEFT)."</p>
+                        <p style='margin: 0 0 10px 0;'><strong>Periodo:</strong> $fecha_desde al $fecha_hasta</p>
+                        <p style='margin: 0; font-size: 18px;'><strong>Monto a Pagar: <span style='color: #c53030;'>$" . number_format($costo_final, 2) . " USD</span></strong></p>
+                    </div>
+                    
+                    <p style='color: #4a5568; font-size: 14px; line-height: 1.5;'>Por favor coordine el pago correspondiente e informe por este medio adjuntando el comprobante.</p>
+                    
+                    <div style='text-align: center; margin-top: 30px;'>
+                        <a href='#' style='display: inline-block; background-color: #3182ce; color: white; text-decoration: none; padding: 12px 24px; border-radius: 4px; font-weight: bold;'>Gestionar Pago</a>
+                    </div>
+                </div>
+                <div style='background-color: #f1f5f9; padding: 15px; text-align: center; color: #718096; font-size: 12px;'>
+                    Este es un mensaje automático de STARFI CRM. No es necesario responder a este correo si ya realizó el pago.
+                </div>
+            </div>";
                 $asunto = "Estado de Cuenta WhatsApp API - {$s['nombre_sede']}";
                 
-                $mail_res = $mailer->sendDirectEmail($s['gerente_email'], $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
+                $mail_res = $mailer->sendDirectEmail($email_destino, $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
                 if ($mail_res['status'] === 'success') {
                     $notificado = 1;
                 }
@@ -462,15 +488,41 @@ if ($action === 'resend_notification') {
         }
         
         // EMAIL
-        if (in_array($s['pref_not_cobro'], ['EMAIL', 'AMBOS']) && !empty($s['gerente_email'])) {
+        $email_destino = !empty($s['gerente_email']) ? $s['gerente_email'] : ($s['email'] ?? '');
+        if (!empty($email_destino)) {
             require_once __DIR__ . '/../../core/services/MailerService.php';
             $mailer = new MailerService($con);
             
-            // Format HTML email for better appearance
-            $html_msg = str_replace("\n", "<br>", $msg);
+            // HTML Elaborado para Correo
+            $html_msg = "
+            <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                <div style='background-color: #2b6cb0; color: white; padding: 20px; text-align: center;'>
+                    <h2 style='margin: 0;'>Recordatorio de Cobro</h2>
+                    <p style='margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;'>Infraestructura API WhatsApp</p>
+                </div>
+                <div style='padding: 30px; background-color: #ffffff;'>
+                    <p style='font-size: 16px; color: #333;'>Hola <strong>".($s['gerente_nombre'] ?? 'Administración')."</strong>,</p>
+                    <p style='color: #4a5568; line-height: 1.6;'>Le recordamos que existe una orden de cobro pendiente para la sede <strong>{$s['nombre_sede']}</strong> correspondiente a los servicios de mensajería consolidada y costos operativos de WhatsApp API.</p>
+                    
+                    <div style='background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 15px; margin: 20px 0;'>
+                        <p style='margin: 0 0 10px 0;'><strong>Orden #:</strong> NC-".date('Y')."-".str_pad($id_orden, 4, '0', STR_PAD_LEFT)."</p>
+                        <p style='margin: 0 0 10px 0;'><strong>Periodo:</strong> $fecha_desde al $fecha_hasta</p>
+                        <p style='margin: 0; font-size: 18px;'><strong>Monto a Pagar: <span style='color: #c53030;'>$" . number_format($costo_final, 2) . " USD</span></strong></p>
+                    </div>
+                    
+                    <p style='color: #4a5568; font-size: 14px; line-height: 1.5;'>Por favor coordine el pago correspondiente a la brevedad posible para evitar interrupciones en el servicio. Informe por este medio adjuntando el comprobante.</p>
+                    
+                    <div style='text-align: center; margin-top: 30px;'>
+                        <a href='#' style='display: inline-block; background-color: #3182ce; color: white; text-decoration: none; padding: 12px 24px; border-radius: 4px; font-weight: bold;'>Gestionar Pago</a>
+                    </div>
+                </div>
+                <div style='background-color: #f1f5f9; padding: 15px; text-align: center; color: #718096; font-size: 12px;'>
+                    Este es un mensaje automático de STARFI CRM. No es necesario responder a este correo si ya realizó el pago.
+                </div>
+            </div>";
             $asunto = "Recordatorio de Estado de Cuenta WhatsApp API - {$s['nombre_sede']}";
             
-            $mail_res = $mailer->sendDirectEmail($s['gerente_email'], $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
+            $mail_res = $mailer->sendDirectEmail($email_destino, $s['gerente_nombre'] ?? $s['nombre_sede'], $asunto, $html_msg);
             if ($mail_res['status'] === 'success') {
                 $notificado = 1;
             }

@@ -38,8 +38,8 @@ $subtotal = $o['costo_meta'] + $o['margen_ganancia'];
 $impuesto = 0; // Aquí puedes ajustar lógica fiscal si en el futuro se aplica IVA
 $total = $o['monto_total'];
 
-$fecha_emision = date('Y-m-d', strtotime($o['fecha_creacion']));
-$fecha_vencimiento = date('Y-m-d', strtotime($o['fecha_creacion'] . ' + 5 days')); // 5 días de crédito por ejemplo
+$fecha_emision = date('Y-m-d', strtotime($o['created_at']));
+$fecha_vencimiento = date('Y-m-d', strtotime($o['created_at'] . ' + 5 days')); // 5 días de crédito por ejemplo
 
 ?>
 <!DOCTYPE html>
@@ -185,8 +185,8 @@ $fecha_vencimiento = date('Y-m-d', strtotime($o['fecha_creacion'] . ' + 5 days')
                     <strong>DATOS DEL CLIENTE:</strong><br>
                     <strong>Sede / Cliente:</strong> <?= htmlspecialchars($o['nombre_sede']) ?><br>
                     <strong>Identificación (RIF/ID):</strong> <?= htmlspecialchars($o['rif'] ?? 'N/A') ?><br>
-                    <strong>Atención a:</strong> <?= htmlspecialchars($o['gerente_nombre']) ?><br>
-                    <strong>Correo:</strong> <?= htmlspecialchars($o['gerente_email'] ?? $o['email']) ?>
+                    <strong>Atención a:</strong> <?= htmlspecialchars($o['gerente_nombre'] ?? 'Administración') ?><br>
+                    <strong>Correo:</strong> <?= htmlspecialchars($o['email'] ?? 'No registrado') ?>
                 </div>
             </td>
             <td style="padding-left: 15px;">
@@ -211,16 +211,15 @@ $fecha_vencimiento = date('Y-m-d', strtotime($o['fecha_creacion'] . ' + 5 days')
             </tr>
         </thead>
         <tbody>
-            <?php foreach($detalles as $d): ?>
             <tr>
                 <td>
-                    <strong><?= htmlspecialchars($d['nombre_plantilla']) ?></strong><br>
+                    <strong>Servicios de Mensajería Consolidada Meta (API)</strong><br>
+                    <small style="color: #718096;">Incluye consumo Meta, infraestructura y costos operativos.</small>
                 </td>
-                <td style="text-align: center;"><?= $d['volumen'] ?></td>
-                <td style="text-align: right;">$<?= number_format( ($d['volumen'] > 0 ? $d['costo_base'] / $d['volumen'] : $d['costo_base']), 4) ?></td>
-                <td style="text-align: right;">$<?= number_format($d['costo_base'], 2) ?></td>
+                <td style="text-align: center;"><?= $o['mensajes_totales'] ?></td>
+                <td style="text-align: right;">$<?= number_format( ($o['mensajes_totales'] > 0 ? $subtotal / $o['mensajes_totales'] : $subtotal), 4) ?></td>
+                <td style="text-align: right;">$<?= number_format($subtotal, 2) ?></td>
             </tr>
-            <?php endforeach; ?>
         </tbody>
     </table>
 
