@@ -574,6 +574,7 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor) {
 
     $('#emptyState').hide();
     $('#activeChatView').css('display', 'flex');
+    $('.main-content').addClass('mobile-chat-active');
 
     $('#chatHeaderName').text(name);
     $('#chatHeaderPhone').text(`+${phone}`);
@@ -1101,3 +1102,20 @@ function formatTime(datetimeStr) {
     const d = new Date(datetimeStr);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
+// Back to chats list on mobile
+\.on('click', '#btnBackToChats', function() {
+    \.main-content.removeClass('mobile-chat-active');
+    activeChatId = null;
+    activeClientId = null;
+    \.chat-item.removeClass('active');
+});
+
+
+// Back to chats list on mobile
+$(document).on('click', '#btnBackToChats', function() {
+    $('.main-content').removeClass('mobile-chat-active');
+    activeChatId = null;
+    activeClientId = null;
+    $('.chat-item').removeClass('active');
+});

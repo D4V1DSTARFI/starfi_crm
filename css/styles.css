@@ -879,3 +879,50 @@ body {
     height: calc(100vh - 60px);
     overflow: hidden;
 }
+
+/* Mobile Responsiveness for Bandeja */
+@media (max-width: 991px) {
+    .main-content {
+        flex-direction: column;
+    }
+    .chats-panel {
+        width: 100% !important;
+        flex: 1;
+    }
+    .conversation-panel {
+        display: none !important; /* Hidden by default on mobile */
+        width: 100% !important;
+        flex: 1;
+    }
+    .profile-preview {
+        display: none !important;
+        width: 100% !important;
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        z-index: 1050;
+    }
+    
+    /* When a chat is active on mobile */
+    .mobile-chat-active .chats-panel {
+        display: none !important;
+    }
+    .mobile-chat-active .conversation-panel {
+        display: flex !important;
+    }
+    
+    .mobile-back-btn {
+        display: block !important;
+        background: transparent;
+        border: none;
+        font-size: 1.2rem;
+        color: var(--primary);
+        margin-right: 15px;
+        cursor: pointer;
+    }
+}
+.mobile-back-btn {
+    display: none; /* Hidden on desktop */
+}
+

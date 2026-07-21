@@ -323,6 +323,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <!-- Header -->
                 <header class="conv-header">
                     <div class="client-info">
+                        <button class="mobile-back-btn" id="btnBackToChats"><i class="fa-solid fa-arrow-left"></i></button>
                         <img id="chatHeaderImg" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="Avatar" style="background-color: #F3F4F6;">
                         <div>
                             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
