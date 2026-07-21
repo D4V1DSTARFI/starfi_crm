@@ -315,3 +315,118 @@ function deleteBotRule(id) {
         }
     });
 }
+
+
+// ==========================================
+// GESTION DE VENDEDORES (CONTACTOS)
+// ==========================================
+let modalContactos, modalContactoForm;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('modalContactos')) {
+        modalContactos = new bootstrap.Modal(document.getElementById('modalContactos'));
+        modalContactoForm = new bootstrap.Modal(document.getElementById('modalContactoForm'));
+        
+        document.getElementById('contactoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append('action', 'save_contacto');
+            formData.append('id_sede', document.getElementById('sedeFilter').value);
+            
+            fetch('back_gestor_bots.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.status === 'success') {
+                    showToast('Éxito', res.message, 'success');
+                    modalContactoForm.hide();
+                    loadContactos();
+                } else {
+                    showToast('Error', res.message, 'danger');
+                }
+            })
+            .catch(err => {
+                showToast('Error', 'Error de red', 'danger');
+            });
+        });
+    }
+});
+
+function openContactosModal() {
+    loadContactos();
+    modalContactos.show();
+}
+
+function loadContactos() {
+    const sedeId = document.getElementById('sedeFilter').value;
+    const fd = new FormData();
+    fd.append('action', 'load_contactos');
+    fd.append('id_sede', sedeId);
+
+    fetch('back_gestor_bots.php', {
+        method: 'POST',
+        body: fd
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'success') {
+            const tbody = document.getElementById('contactosTableBody');
+            tbody.innerHTML = '';
+            if (res.data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-4">No hay vendedores registrados.</td></tr>`;
+                return;
+            }
+            res.data.forEach(c => {
+                const badgeClass = c.estado === 'ACTIVO' ? 'bg-success' : 'bg-danger';
+                tbody.innerHTML += `
+                    <tr>
+                        <td class="fw-bold text-dark">${c.nombre}</td>
+                        <td>${c.telefono}</td>
+                        <td><span class="badge ${badgeClass}">${c.estado}</span></td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-light text-primary me-2" onclick='editContacto(${JSON.stringify(c)})'><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn btn-sm btn-light text-danger" onclick="deleteContacto(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+    });
+}
+
+function newContacto() {
+    document.getElementById('contactoForm').reset();
+    document.getElementById('contacto_id').value = '';
+    modalContactoForm.show();
+}
+
+function editContacto(c) {
+    document.getElementById('contacto_id').value = c.id;
+    document.getElementById('contacto_nombre').value = c.nombre;
+    document.getElementById('contacto_telefono').value = c.telefono;
+    document.getElementById('contacto_estado').value = c.estado;
+    modalContactoForm.show();
+}
+
+function deleteContacto(id) {
+    if (!confirm('¿Estás seguro de eliminar este vendedor?')) return;
+    const fd = new FormData();
+    fd.append('action', 'delete_contacto');
+    fd.append('id', id);
+
+    fetch('back_gestor_bots.php', {
+        method: 'POST',
+        body: fd
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'success') {
+            showToast('Eliminado', res.message, 'success');
+            loadContactos();
+        } else {
+            showToast('Error', res.message, 'danger');
+        }
+    });
+}

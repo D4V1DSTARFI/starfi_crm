@@ -472,16 +472,27 @@ function enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje
  */
 function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente, $id_sede, $con, $id_conversacion) {
     
-    // Usar la lista por defecto del API_STARFI_WSAP
-    $asesores = [
-        ['nombre' => 'Ceny Landaeta', 'telefono' => '+584126127873'],
-        ['nombre' => 'Gabriel Benitez', 'telefono' => '+584242907452'],
-        ['nombre' => 'Junior Sosa', 'telefono' => '+584123695820'],
-        ['nombre' => 'Luis Albarran', 'telefono' => '+584242988805'],
-        ['nombre' => 'Yorman Cardozo', 'telefono' => '+584127029710'],
-        ['nombre' => 'Marcos Santo Domingo', 'telefono' => '+584122949976'],
-        ['nombre' => 'Miguel Strocchia', 'telefono' => '+584126862683']
-    ];
+    // Buscar en la base de datos
+    $sede_filter = ($id_sede > 0) ? "AND (id_sede = $id_sede OR id_sede IS NULL)" : "";
+    $q_asesores = mysqli_query($con, "SELECT nombre, telefono FROM bot_vendedores WHERE estado = 'ACTIVO' $sede_filter");
+    
+    $asesores = [];
+    if ($q_asesores && mysqli_num_rows($q_asesores) > 0) {
+        while ($row = mysqli_fetch_assoc($q_asesores)) {
+            $asesores[] = $row;
+        }
+    } else {
+        // Fallback en caso de que la tabla estÃ© vacÃ­a
+        $asesores = [
+            ['nombre' => 'Ceny Landaeta', 'telefono' => '+584126127873'],
+            ['nombre' => 'Gabriel Benitez', 'telefono' => '+584242907452'],
+            ['nombre' => 'Junior Sosa', 'telefono' => '+584123695820'],
+            ['nombre' => 'Luis Albarran', 'telefono' => '+584242988805'],
+            ['nombre' => 'Yorman Cardozo', 'telefono' => '+584127029710'],
+            ['nombre' => 'Marcos Santo Domingo', 'telefono' => '+584122949976'],
+            ['nombre' => 'Miguel Strocchia', 'telefono' => '+584126862683']
+        ];
+    }
     
     $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
     

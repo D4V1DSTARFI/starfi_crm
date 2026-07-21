@@ -255,6 +255,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             $query_s .= " AND id = $user_sede";
                         }
                         ?>
+                                                <button class="btn btn-outline-secondary btn-sm" onclick="openContactosModal()" title="Gestionar Vendedores">
+                            <i class="fa-solid fa-address-book"></i> Vendedores
+                        </button>
                         <select id="sedeFilter" class="form-select bg-light" style="width: auto; border: 1px solid #E2E8F0; border-radius: 10px; margin-left: 20px;" <?= ($rol !== 'MASTER' && $user_sede > 0) ? 'disabled' : '' ?> onchange="loadBotRules()">
                             <?php
                             $s_res = $con->query($query_s);

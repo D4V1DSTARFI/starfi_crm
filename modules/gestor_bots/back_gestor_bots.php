@@ -105,6 +105,64 @@ switch ($action) {
         }
         break;
 
+    case 'load_contactos':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $where = "1=1";
+        if ($id_sede > 0) {
+            $where .= " AND (id_sede = $id_sede OR id_sede IS NULL OR id_sede = 0)";
+        }
+        $query = "SELECT * FROM bot_vendedores WHERE $where ORDER BY id ASC";
+        $res = $con->query($query);
+        $contactos = [];
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $contactos[] = $row;
+            }
+        }
+        echo json_encode(['status' => 'success', 'data' => $contactos]);
+        break;
+
+    case 'save_contacto':
+        $id = intval($_POST['id'] ?? 0);
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $nombre = $_POST['nombre'] ?? '';
+        $telefono = $_POST['telefono'] ?? '';
+        $estado = $_POST['estado'] ?? 'ACTIVO';
+        
+        if (empty($nombre) || empty($telefono)) {
+            echo json_encode(['status' => 'error', 'message' => 'Faltan datos obligatorios.']);
+            exit;
+        }
+
+        if ($id > 0) {
+            $stmt = $con->prepare("UPDATE bot_vendedores SET id_sede = ?, nombre = ?, telefono = ?, estado = ? WHERE id = ?");
+            $stmt->bind_param("isssi", $id_sede, $nombre, $telefono, $estado, $id);
+            if ($stmt->execute()) {
+                echo json_encode(['status' => 'success', 'message' => 'Contacto actualizado.']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Fallo al actualizar.']);
+            }
+        } else {
+            $stmt = $con->prepare("INSERT INTO bot_vendedores (id_sede, nombre, telefono, estado) VALUES (?, ?, ?, ?)");
+            $stmt->bind_param("isss", $id_sede, $nombre, $telefono, $estado);
+            if ($stmt->execute()) {
+                echo json_encode(['status' => 'success', 'message' => 'Contacto creado.']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Fallo al crear contacto.']);
+            }
+        }
+        break;
+
+    case 'delete_contacto':
+        $id = intval($_POST['id'] ?? 0);
+        if ($id > 0) {
+            $con->query("DELETE FROM bot_vendedores WHERE id = $id");
+            echo json_encode(['status' => 'success', 'message' => 'Eliminado correctamente.']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'ID invÃ¡lido.']);
+        }
+        break;
+
     case 'toggle_bot':
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $status = intval($_POST['status'] ?? 0);
