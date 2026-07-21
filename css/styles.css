@@ -240,6 +240,7 @@ body {
     flex-direction: column;
     z-index: 5;
     box-shadow: 2px 0 10px rgba(0,0,0,0.02);
+    overflow: hidden;
 }
 
 .chats-header {
