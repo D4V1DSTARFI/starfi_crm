@@ -912,6 +912,25 @@ body {
         display: flex !important;
     }
     
+    .app-container {
+        height: calc(100dvh - 60px) !important;
+    }
+    
+    .conv-header {
+        padding: 10px 15px !important;
+        height: auto !important;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .client-info {
+        gap: 8px !important;
+    }
+    
+    #chatHeaderName {
+        font-size: 1rem !important;
+    }
+    
     .mobile-back-btn {
         display: block !important;
         background: transparent;
