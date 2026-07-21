@@ -38,6 +38,11 @@ switch ($action) {
         } elseif ($filter === 'todos') {
             // Todos los chats (ya sean nuevos o en proceso, ya manejados por el LEFT JOIN)
         }
+        
+        $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
+        if ($id_sede > 0) {
+            $query .= " AND l.id_sede = $id_sede";
+        }
 
         $query .= " ORDER BY no_leidos DESC, fecha_inicio DESC";
         $res = $con->query($query);

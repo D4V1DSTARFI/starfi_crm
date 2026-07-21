@@ -58,6 +58,36 @@ if ($stmt) {
     $stmt->close();
 }
 
+// Verificar si la cédula ya existe
+$stmt = $con->prepare("SELECT id FROM usuario_perfil WHERE cedula = ?");
+if ($stmt) {
+    $stmt->bind_param("s", $cedula);
+    $stmt->execute();
+    $stmt->store_result();
+    if ($stmt->num_rows > 0) {
+        echo json_encode(['success' => false, 'message' => 'La cédula ya está registrada.']);
+        $stmt->close();
+        mysqli_close($con);
+        exit();
+    }
+    $stmt->close();
+}
+
+// Verificar si el correo ya existe
+$stmt = $con->prepare("SELECT id FROM usuario_perfil WHERE correo = ?");
+if ($stmt) {
+    $stmt->bind_param("s", $correo);
+    $stmt->execute();
+    $stmt->store_result();
+    if ($stmt->num_rows > 0) {
+        echo json_encode(['success' => false, 'message' => 'El correo electrónico ya está registrado.']);
+        $stmt->close();
+        mysqli_close($con);
+        exit();
+    }
+    $stmt->close();
+}
+
 // Iniciar transacción
 mysqli_begin_transaction($con);
 
