@@ -177,9 +177,10 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     // 1. BUSCAR LA LINEA CORRESPONDIENTE AL NÚMERO RECEPTOR
     $id_linea = null;
     $id_empresa = 1; // Default
+    $id_sede = null;
     
     if ($telefono_receptor_id) {
-        $query_api = "SELECT l.id, s.id_empresa FROM lineas_whatsapp l 
+        $query_api = "SELECT l.id, s.id_empresa, l.id_sede FROM lineas_whatsapp l 
                       LEFT JOIN sedes s ON l.id_sede = s.id 
                       WHERE l.meta_app_id = '$telefono_receptor_id' AND l.estado_conexion = 'CONECTADO' LIMIT 1";
         $result_api = mysqli_query($con, $query_api);
@@ -187,12 +188,13 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             $row = mysqli_fetch_assoc($result_api);
             $id_linea = $row['id'];
             if ($row['id_empresa']) $id_empresa = $row['id_empresa'];
+            if ($row['id_sede']) $id_sede = $row['id_sede'];
         }
     }
     
     // Fallback a cualquier línea activa si no se encuentra
     if (!$id_linea) {
-        $query_api = "SELECT l.id, s.id_empresa FROM lineas_whatsapp l 
+        $query_api = "SELECT l.id, s.id_empresa, l.id_sede FROM lineas_whatsapp l 
                       LEFT JOIN sedes s ON l.id_sede = s.id 
                       WHERE l.estado_conexion = 'CONECTADO' LIMIT 1";
         $result_api = mysqli_query($con, $query_api);
@@ -200,6 +202,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             $row = mysqli_fetch_assoc($result_api);
             $id_linea = $row['id'];
             if ($row['id_empresa']) $id_empresa = $row['id_empresa'];
+            if ($row['id_sede']) $id_sede = $row['id_sede'];
         } else {
             $id_linea = 1; // Fallback definitivo
         }
@@ -215,7 +218,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         $id_cliente = $row_cliente['id'];
         $nombre_db = $row_cliente['nombre'];
     } else {
-        $insert_cliente = "INSERT INTO clientes_contactos (id_empresa, numero_whatsapp, nombre) VALUES ($id_empresa, '$telefono_cliente', NULL)";
+        $sede_val = $id_sede ? $id_sede : 'NULL';
+        $insert_cliente = "INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre) VALUES ($id_empresa, $sede_val, '$telefono_cliente', NULL)";
         if (mysqli_query($con, $insert_cliente)) {
             $id_cliente = mysqli_insert_id($con);
         }
