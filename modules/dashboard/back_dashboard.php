@@ -64,8 +64,9 @@ switch ($action) {
         $op_where_sql = " WHERE " . implode(" AND ", $op_where_clauses);
 
         $query4 = "
-            SELECT u.nombre_completo, COUNT(c.id) as chats_atendidos 
-            FROM usuarios_agentes u 
+            SELECT up.nombre AS nombre_completo, COUNT(c.id) as chats_atendidos 
+            FROM usuario u 
+            JOIN usuario_perfil up ON u.id = up.id_usuario
             LEFT JOIN conversaciones c ON u.id = c.id_agente 
             LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
             $op_where_sql
@@ -80,6 +81,30 @@ switch ($action) {
                 $operadores[] = $row;
             }
         }
+        
+        // 5. Volumen de Chats por Día (Gráfico)
+        $chart_where_sql = $where_sql;
+        if (empty($chart_where_sql)) {
+            $chart_where_sql = " WHERE c.fecha_inicio IS NOT NULL";
+        } else {
+            $chart_where_sql .= " AND c.fecha_inicio IS NOT NULL";
+        }
+        
+        $query5 = "
+            SELECT DATE(c.fecha_inicio) as fecha, COUNT(c.id) as volumen 
+            FROM conversaciones c 
+            LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
+            $chart_where_sql
+            GROUP BY DATE(c.fecha_inicio)
+            ORDER BY fecha ASC
+        ";
+        $res5 = $con->query($query5);
+        $chart_data = [];
+        if ($res5) {
+            while ($row = $res5->fetch_assoc()) {
+                $chart_data[] = $row;
+            }
+        }
 
         echo json_encode([
             'status' => 'success',
@@ -87,7 +112,8 @@ switch ($action) {
                 'total_chats' => $total_chats,
                 'avg_frt' => $avg_frt . " min",
                 'avg_res' => $avg_res . " min",
-                'operadores' => $operadores
+                'operadores' => $operadores,
+                'chart_data' => $chart_data
             ]
         ]);
         break;
