@@ -471,5 +471,12 @@ if ($action === 'resend_notification') {
         echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada']);
     }
     exit;
+if ($action === 'delete_order') {
+    $id_orden = intval($_POST['id_orden'] ?? 0);
+    $con->query("DELETE FROM waba_ordenes_detalles WHERE id_orden = $id_orden");
+    $con->query("DELETE FROM waba_ordenes_cobro WHERE id = $id_orden");
+    echo json_encode(['status' => 'success', 'message' => 'Orden eliminada correctamente.']);
+    exit;
 }
+
 ?>

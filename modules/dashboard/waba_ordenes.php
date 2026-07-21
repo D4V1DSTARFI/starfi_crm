@@ -136,6 +136,7 @@ $(document).ready(function() {
                                 <button class="btn btn-outline-info btn-detalle" data-id="${o.id}" data-monto="${o.monto_total}" title="Ver Detalles"><i class="fas fa-list"></i></button>
                                 ${o.estado === 'PENDIENTE' ? `<button class="btn btn-outline-primary btn-notificar" data-id="${o.id}" title="Reenviar Notificación"><i class="fas fa-paper-plane"></i></button>` : ''}
                                 <button class="btn btn-outline-success btn-pagar" data-id="${o.id}" ${o.estado !== 'PENDIENTE' ? 'disabled' : ''} title="Marcar Pagado"><i class="fas fa-check"></i></button>
+                                <button class="btn btn-outline-danger btn-eliminar" data-id="${o.id}" title="Eliminar Orden"><i class="fas fa-trash"></i></button>
                             </div>
                         </td>
                     </tr>`;
@@ -205,6 +206,32 @@ $(document).ready(function() {
             title: 'Marcar como Pagado',
             text: "Esta acción marcará la orden #" + id_orden + " como PAGADA. (Funcionalidad en desarrollo).",
             icon: 'info'
+        });
+    });
+
+    $(document).on('click', '.btn-eliminar', function() {
+        let id_orden = $(this).data('id');
+        Swal.fire({
+            title: '¿Eliminar Orden?',
+            text: "Esta acción anulará y eliminará esta orden de cobro permanentemente. ¿Estás seguro?",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                Swal.fire({ title: 'Eliminando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                $.post('back_waba_billing.php', { action: 'delete_order', id_orden: id_orden }, function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire('¡Eliminado!', res.message, 'success');
+                        cargarOrdenes();
+                    } else {
+                        Swal.fire('Error', res.message || 'Error desconocido', 'error');
+                    }
+                }, 'json');
+            }
         });
     });
 });
