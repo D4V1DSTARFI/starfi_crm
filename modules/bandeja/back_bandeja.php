@@ -60,7 +60,7 @@ switch ($action) {
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         
         $query = "
-            SELECT id, tipo, origen, contenido, timestamp, estado_envio, url_archivo 
+            SELECT id, tipo, origen, contenido, timestamp, estado_envio, url_archivo, reply_to_text, id_mensaje_meta 
             FROM mensajes_y_eventos 
             WHERE id_conversacion = ? 
             ORDER BY timestamp ASC
@@ -184,10 +184,15 @@ switch ($action) {
             // -------------------------------------------------------------
         }
         
-        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido, id_mensaje_meta) VALUES (?, ?, ?, ?, ?)";
+        $reply_to_meta_id = $_POST['reply_to_meta_id'] ?? null;
+        $reply_to_text = $_POST['reply_to_text'] ?? null;
+        if(empty($reply_to_meta_id)) $reply_to_meta_id = null;
+        if(empty($reply_to_text)) $reply_to_text = null;
+        
+        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido, id_mensaje_meta, reply_to_meta_id, reply_to_text) VALUES (?, ?, ?, ?, ?, ?, ?)";
         $stmt = $con->prepare($query);
         if ($stmt) {
-            $stmt->bind_param("issss", $conversacion_id, $tipo, $origen, $contenido, $id_mensaje_meta);
+            $stmt->bind_param("issssss", $conversacion_id, $tipo, $origen, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text);
             if ($stmt->execute()) {
                 echo json_encode(['status' => 'success', 'message_id' => $stmt->insert_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
@@ -319,9 +324,17 @@ switch ($action) {
             // FIN BLOQUE ENVÍO A WHATSAPP
             // -------------------------------------------------------------
             // Guardar en BD
-            $stmt = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido, url_archivo, mime_type, id_mensaje_meta, estado_envio) VALUES (?, ?, 'AGENTE', ?, ?, ?, ?, 'ENVIADO')");
-            $stmt->bind_param("isssss", $conversacion_id, $tipo_bd, $contenido, $url_archivo, $mime, $id_mensaje_meta);
-            if ($stmt->execute()) {
+            $reply_to_meta_id = $_POST['reply_to_meta_id'] ?? null;
+            $reply_to_text = $_POST['reply_to_text'] ?? null;
+            
+            $stmt_msg = $con->prepare("
+                INSERT INTO mensajes_y_eventos (
+                    id_conversacion, id_mensaje_meta, tipo, origen, 
+                    contenido, url_archivo, mime_type, estado_envio, reply_to_meta_id, reply_to_text
+                ) VALUES (?, ?, ?, 'AGENTE', ?, ?, ?, 'ENVIADO', ?, ?)
+            ");
+            $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
+            if ($stmt_msg->execute()) {
                 echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar en BD.']);

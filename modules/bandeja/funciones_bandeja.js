@@ -602,6 +602,16 @@ function renderMessages(messages, scrollToBottom) {
                 } catch(e) {}
             }
 
+            let replyHtml = '';
+            if (msg.reply_to_text) {
+                replyHtml = `
+                    <div style="background-color: #DBEAFE; border-left: 3px solid #3B82F6; padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #1E3A8A;">
+                        <div style="font-weight: bold; margin-bottom: 2px;"><i class="fa-solid fa-reply"></i> Respondiste a:</div>
+                        <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${msg.reply_to_text}</div>
+                    </div>
+                `;
+            }
+
             // Icono de Doble Check
             let estadoIcon = '<i class="fa-solid fa-clock ms-1" style="color: #9CA3AF;"></i>'; // default
             if (msg.estado_envio === 'ENVIADO') estadoIcon = '<i class="fa-solid fa-check ms-1" style="color: #9CA3AF;"></i>';
@@ -621,6 +631,7 @@ function renderMessages(messages, scrollToBottom) {
             msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; ${colorStlye}">
                     <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
+                        ${replyHtml}
                         ${mediaHtml}
                         <div style="margin-bottom:0;">${icon}${displayContent}</div>
                         <div style="text-align:right; margin-top:2px;">
@@ -707,6 +718,7 @@ function sendMessage() {
     
     const isInternal = $('#btnInternalNote').hasClass('note-mode') ? 1 : 0;
     const replyMetaId = window.currentReplyMetaId;
+    const replyText = $('#replyTextPreview').text() || '';
 
     const area = $('#messagesArea');
     
@@ -740,9 +752,16 @@ function sendMessage() {
             </div>
         `);
     } else {
+        let replyHtml = replyText ? `
+            <div style="background-color: #DBEAFE; border-left: 3px solid #3B82F6; padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #1E3A8A;">
+                <div style="font-weight: bold; margin-bottom: 2px;"><i class="fa-solid fa-reply"></i> Respondiste a:</div>
+                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${replyText}</div>
+            </div>
+        ` : '';
         area.append(`
             <div class="message bot-message" style="align-self: flex-end; background-color: #EFF6FF; border: 1px solid #BFDBFE;">
                 <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
+                    ${replyHtml}
                     <p style="margin-bottom:0;">${text}</p>
                     <span class="msg-time"><i class="fa-regular fa-clock"></i> Enviando...</span>
                 </div>
@@ -760,7 +779,7 @@ function sendMessage() {
 
     $.ajax({
         url: 'back_bandeja.php', type: 'POST', dataType: 'json',
-        data: { action: 'send_message', conversacion_id: activeChatId, cliente_id: activeClientId, contenido: text, is_internal: isInternal, reply_to_meta_id: replyMetaId || '' },
+        data: { action: 'send_message', conversacion_id: activeChatId, cliente_id: activeClientId, contenido: text, is_internal: isInternal, reply_to_meta_id: replyMetaId || '', reply_to_text: replyText },
         success: function (response) {
             if (response.status === 'success') {
                 if (activeChatId == 0 && response.new_chat_id) {
