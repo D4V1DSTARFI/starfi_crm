@@ -497,6 +497,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             <tr>
                                 <th class="sortable" data-sort="nombre">Cliente <i class="fa-solid fa-sort"></i></th>
                                 <th class="sortable" data-sort="telefono">Teléfono <i class="fa-solid fa-sort"></i></th>
+                                <th class="sortable" data-sort="sede">Sede <i class="fa-solid fa-sort"></i></th>
                                 <th class="sortable" data-sort="estado">Estado <i class="fa-solid fa-sort"></i></th>
                                 <th>Etiquetas</th>
                                 <th class="sortable" data-sort="fecha">Último Contacto <i class="fa-solid fa-sort"></i></th>
@@ -542,6 +543,13 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <div class="form-group">
                             <label>Nombre Comercial / Razón Social</label>
                             <input type="text" id="profName" class="form-control-custom" placeholder="Ej. Empresa S.A.">
+                        </div>
+                        <div class="form-group">
+                            <label>Sede Asociada</label>
+                            <select id="profSede" class="form-control-custom">
+                                <option value="">General / Central</option>
+                                <!-- JS Inject Sedes -->
+                            </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Número de WhatsApp</label>

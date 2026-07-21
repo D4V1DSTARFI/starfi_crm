@@ -71,26 +71,40 @@ $(document).ready(function () {
         });
     });
 
-    // 1. Emoji Picker
-    try {
-        const picker = new EmojiButton({
-            position: 'top-start'
-        });
-        const trigger = document.querySelector('#btnEmoji');
-        if (trigger) {
-            picker.on('emoji', selection => {
-                const input = document.querySelector('#chatInput');
-                input.value += selection.emoji;
-                input.focus();
-            });
-            trigger.addEventListener('click', () => picker.togglePicker(trigger));
+    // 1. Emoji Picker (Nativo Ligero sin dependencias)
+    const emojis = ["😀","😂","🤣","😊","😍","🥰","😘","😜","🤪","😎","🤩","🥳","😏","😒","😞","😔","😢","😭","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😓","🤗","🤔","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😿","😾","👍","👎","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👁️","👅","👄","💋","🩸","❤️","💔","💯","🔥","✨","🎉","🎊","🎈"];
+    
+    const emojiPicker = $('#emojiPicker');
+    const input = $('#chatInput');
+    
+    // Poblar el picker
+    emojis.forEach(e => {
+        emojiPicker.append(`<button class="emoji-btn">${e}</button>`);
+    });
+    
+    // Toggle picker
+    $('#btnEmoji').on('click', function (e) {
+        e.stopPropagation();
+        emojiPicker.toggleClass('show');
+    });
+    
+    // Click emoji
+    emojiPicker.on('click', '.emoji-btn', function(e) {
+        e.stopPropagation();
+        const cursor = input[0].selectionStart;
+        const text = input.val();
+        const selected = $(this).text();
+        input.val(text.slice(0, cursor) + selected + text.slice(cursor));
+        input[0].selectionStart = input[0].selectionEnd = cursor + selected.length;
+        input.focus();
+    });
+    
+    // Cerrar al hacer clic afuera
+    $(document).on('click', function(e) {
+        if (!$(e.target).closest('#emojiPicker, #btnEmoji').length) {
+            emojiPicker.removeClass('show');
         }
-    } catch (error) {
-        console.warn("EmojiButton no disponible:", error);
-        $('#btnEmoji').on('click', function () {
-            Swal.fire({ icon: 'info', title: 'Próximamente', text: 'El panel de emojis requiere conexión externa.' });
-        });
-    }
+    });
 
     // 2. Templates
     $('#btnTemplates').on('click', function () {
@@ -165,6 +179,20 @@ $(document).ready(function () {
         $(this).val(''); // reset
     });
 
+    // 4. Internal Note Toggle
+    $('#btnInternalNote').on('click', function() {
+        $(this).toggleClass('note-mode');
+        if ($(this).hasClass('note-mode')) {
+            $(this).css({ 'color': '#E85B14', 'background-color': 'rgba(232, 91, 20, 0.1)' });
+            $('#inputBoxContainer').css({ 'background-color': '#FEF3C7', 'border-color': '#FDE68A' });
+            $('#chatInput').attr('placeholder', 'Escribiendo nota interna (oculta al cliente)...');
+        } else {
+            $(this).css({ 'color': '', 'background-color': '' });
+            $('#inputBoxContainer').css({ 'background-color': '', 'border-color': '' });
+            $('#chatInput').attr('placeholder', 'Escribe un mensaje...');
+        }
+    });
+
     // Delegación de eventos para la lista de chats dinámica (Respaldo)
     $('#chatList').on('click', '.chat-item', function () {
         const id = $(this).data('id');
@@ -190,9 +218,6 @@ $(document).ready(function () {
         $('.tabs .tab').removeClass('active');
         $(this).addClass('active');
         currentFilter = $(this).data('target');
-
-        // No reseteamos el chat activo (a petición del usuario)
-        // Solo recargamos la lista de chats de la izquierda
         loadChats();
     });
 
@@ -245,7 +270,6 @@ $(document).ready(function () {
     $('#btnReasign').on('click', function () {
         if (!activeChatId || activeChatId === 0) return;
 
-        // Fetch agents first
         $.ajax({
             url: 'back_bandeja.php', type: 'POST', dataType: 'json',
             data: { action: 'get_agents' },
@@ -329,9 +353,6 @@ function renderChatList(chats) {
     chats.forEach(chat => {
         let name = chat.cliente_nombre ? chat.cliente_nombre : chat.numero_whatsapp;
         let badge = '';
-        // Eliminamos las etiquetas "En Espera" y "Nuevo" para no confundir,
-        // ya que ahora nos guiamos por el punto naranja de No Leídos.
-
         let unreadDot = '';
         if (chat.no_leidos > 0) {
             totalUnread++;
@@ -375,18 +396,15 @@ function selectChat(id, cliente_id, name, phone, nombre_sede) {
     activeClientId = cliente_id;
     $('.chat-item').removeClass('active');
 
-    // Si el chat es nuevo (id = 0), seleccionamos por ID de cliente para evitar seleccionar varios
     if (id === 0) {
         $(`.chat-item[data-cliente-id="${cliente_id}"]`).addClass('active');
     } else {
         $(`.chat-item[data-id="${id}"]`).addClass('active');
     }
 
-    // Switch views
     $('#emptyState').hide();
     $('#activeChatView').css('display', 'flex');
 
-    // Update Header
     $('#chatHeaderName').text(name);
     $('#chatHeaderPhone').text(`+${phone}`);
     $('#chatHeaderImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A`);
@@ -398,7 +416,6 @@ function selectChat(id, cliente_id, name, phone, nombre_sede) {
         $('#chatHeaderSede').hide();
     }
 
-    // If profile is open, update it
     if ($('#modalProfile360').hasClass('show')) {
         loadProfile360();
     }
@@ -433,7 +450,6 @@ function loadMessages(id, scrollToBottom = true) {
         success: function (response) {
             if (response.status === 'success') {
                 renderMessages(response.data, scrollToBottom);
-                // Si el chat tenía un punto naranja (no leído), recargamos la lista para limpiarlo
                 if (currentFilter === 'no-leido' || $('#chatList').find('.chat-item[data-id="' + id + '"] div[style*="background:#e85b14"]').length > 0) {
                     loadChats();
                 }
@@ -456,18 +472,70 @@ function renderMessages(messages, scrollToBottom) {
         let msgHtml = '';
         let timeLabel = formatTime(msg.timestamp);
 
+        let mediaHtml = '';
+        if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let imgStyle = realUrl.endsWith('.webp') 
+                ? 'max-width: 150px; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1));' 
+                : 'max-width: 100%; height: auto; border-radius: 8px; display: block;';
+            let containerStyle = realUrl.endsWith('.webp')
+                ? 'margin-bottom:8px; padding: 10px; text-align: center;'
+                : 'margin-bottom:8px; border-radius:8px; overflow:hidden; background:#E5E7EB; display:flex; align-items:center; justify-content:center;';
+            
+            mediaHtml = `<div style="${containerStyle}"><img src="${realUrl}" style="${imgStyle}" alt="Archivo adjunto" loading="lazy"></div>`;
+        } else if (msg.tipo === 'DOCUMENTO' && msg.url_archivo) {
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${realUrl}" target="_blank" style="text-decoration:none; font-weight:bold; color:#111827;">Documento Adjunto</a></div>`;
+        } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
+            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            mediaHtml = `<div style="margin-bottom:8px;"><audio controls src="${realUrl}" style="max-width: 250px;"></audio></div>`;
+        }
+
         if (msg.origen === 'CLIENTE') {
             msgHtml = `
-                <div class="message client-message">
-                    <div class="msg-bubble">
-                        <p>${msg.contenido}</p>
-                        <span class="msg-time">${timeLabel}</span>
+                <div class="message client-message" style="align-self: flex-start; background-color: white; border: 1px solid #E5E7EB; border-radius: 18px 18px 18px 2px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); max-width: 80%;">
+                    ${mediaHtml}
+                    ${msg.contenido && msg.contenido !== 'Imagen recibida' && msg.contenido !== 'Documento recibido' && msg.contenido !== 'Audio recibido' ? `<p style="margin-bottom:0; color: #111827;">${msg.contenido}</p>` : ''}
+                    <div style="text-align:right;"><span class="msg-time">${timeLabel}</span></div>
+                </div>
+            `;
+        } else if (msg.origen === 'NOTA_INTERNA') {
+            msgHtml = `
+                <div class="message bot-message" style="align-self: flex-end; margin-bottom: 15px; padding-right: 10px;">
+                    <div class="msg-bubble" style="
+                        background-color: #FDFBAA; 
+                        border: none; 
+                        box-shadow: 3px 5px 12px rgba(0,0,0,0.15); 
+                        border-radius: 2px 2px 18px 2px; 
+                        padding: 12px 16px; 
+                        font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive, sans-serif;
+                        color: #333333;
+                        max-width: 320px;
+                        transform: rotate(-1.5deg);
+                        position: relative;
+                    ">
+                        <!-- Sombra interna superior para dar volumen -->
+                        <div style="position:absolute; top:0; left:0; width:100%; height:15px; background: linear-gradient(rgba(0,0,0,0.06), transparent); border-radius: 2px 2px 0 0;"></div>
+                        
+                        <!-- Chincheta (Pushpin) -->
+                        <div style="position:absolute; top:-8px; left:50%; transform:translateX(-50%); text-align:center;">
+                            <i class="fa-solid fa-thumbtack" style="color:#EF4444; font-size: 1.2rem; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></i>
+                        </div>
+                        
+                        <div style="font-size:0.7rem; color:#D97706; margin-bottom:6px; margin-top:8px; font-family: 'Inter', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                            <i class="fa-solid fa-user-secret"></i> Nota Privada
+                        </div>
+                        
+                        <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${msg.contenido}</p>
+                        
+                        <div style="text-align: right; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 4px;">
+                            <span class="msg-time" style="color:#92400E; font-family: 'Inter', sans-serif; font-size: 0.7rem;">${timeLabel}</span>
+                        </div>
                     </div>
                 </div>
             `;
         } else if (msg.origen === 'BOT' || msg.origen === 'EVENTO_SISTEMA') {
             if (msg.tipo === 'CONTACTO') {
-                // Parse contact
                 let contactName = msg.contenido.substring(18, msg.contenido.indexOf('(')).trim();
                 let contactPhone = msg.contenido.substring(msg.contenido.indexOf('(') + 1, msg.contenido.indexOf(')'));
 
@@ -478,7 +546,7 @@ function renderMessages(messages, scrollToBottom) {
                             <div style="width:40px;height:40px;border-radius:50%;background:#F3F4F6;display:flex;align-items:center;justify-content:center;color:#374151;font-weight:bold;margin-right:10px;"><i class="fa-solid fa-user"></i></div>
                             <div>
                                 <h6 style="margin:0;font-size:0.9rem;color:#111827;">${contactName}</h6>
-                                <small style="color:#6B7280;">SuperFormica</small>
+                                <small style="color:#6B7280;">Sede</small>
                             </div>
                         </div>
                         <p style="margin-bottom:0;text-align:center;"><a href="tel:${contactPhone}" style="color:#25D366;text-decoration:none;font-weight:600;"><i class="fa-brands fa-whatsapp"></i> ${contactPhone}</a></p>
@@ -495,30 +563,69 @@ function renderMessages(messages, scrollToBottom) {
                 `;
             }
         } else {
-            let colorStlye = msg.origen === 'API_TRANSACCIONAL' ? 'background-color: #fff3cd;' : 'background-color: #EFF6FF; border: 1px solid #BFDBFE;';
-            let icon = msg.origen === 'API_TRANSACCIONAL' ? '<i class="fa-solid fa-bolt text-warning"></i> ' : '';
+            // AGENTE or API_TRANSACCIONAL
+            let colorStlye = msg.origen === 'API_TRANSACCIONAL' ? 'background-color: #ffffff; border: 1px solid #E5E7EB;' : 'background-color: #EFF6FF; border: 1px solid #BFDBFE;';
+            let icon = msg.origen === 'API_TRANSACCIONAL' ? '<i class="fa-solid fa-robot text-muted me-1"></i> ' : '';
+            
+            let displayContent = msg.contenido;
+            
+            // Intelligent Visual Rendering for Templates
+            if (msg.origen === 'API_TRANSACCIONAL' && msg.contenido.startsWith('Envío dinámico de plantilla:')) {
+                try {
+                    let match = msg.contenido.match(/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*\])/);
+                    if (match) {
+                        let tplName = match[1];
+                        let params = JSON.parse(match[2]);
+                        let paramsHtml = params.map((p, i) => `
+                            <div style="display:flex; align-items:baseline; margin-bottom:2px;">
+                                <span style="color:#9CA3AF; font-size:0.75rem; width:15px;">${i+1}.</span> 
+                                <span style="font-weight:600; color:#374151;">${p}</span>
+                            </div>
+                        `).join('');
+                        
+                        displayContent = `
+                            <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
+                                <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
+                                    <i class="fa-solid fa-bolt"></i> Plantilla: ${tplName.replace(/_/g, ' ')}
+                                </div>
+                                <div style="font-size:0.85rem; line-height:1.4;">
+                                    ${paramsHtml}
+                                </div>
+                            </div>
+                            <div style="font-size:0.7rem; color:#9CA3AF; margin-top:8px; display:flex; align-items:center; gap:4px; border-top:1px solid #F3F4F6; padding-top:6px;">
+                                <i class="fa-solid fa-shield-check text-success"></i> Mensaje de Sistema
+                            </div>
+                        `;
+                        icon = ''; 
+                    }
+                } catch(e) {}
+            }
 
             // Icono de Doble Check
             let estadoIcon = '<i class="fa-solid fa-clock ms-1" style="color: #9CA3AF;"></i>'; // default
             if (msg.estado_envio === 'ENVIADO') estadoIcon = '<i class="fa-solid fa-check ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'ENTREGADO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'LEIDO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i>';
-            if (msg.estado_envio === 'FALLIDO') estadoIcon = '<i class="fa-solid fa-circle-exclamation ms-1" style="color: #EF4444;"></i>';
+            if (msg.estado_envio === 'FALLIDO') {
+                estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1" style="color: #EF4444;"></i>
+                              <i class="fa-solid fa-rotate-right retry-btn ms-1" data-id="${msg.id}" style="cursor:pointer; color:#EF4444;" title="Reintentar Envío"></i>`;
+            }
 
-            // Soporte Multimedia
-            let mediaHtml = '';
-            if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
-                mediaHtml = `<div style="margin-bottom:8px; border-radius:8px; overflow:hidden; background:#E5E7EB; display:flex; align-items:center; justify-content:center; height:150px;"><i class="fa-solid fa-image fs-1 text-muted"></i></div>`;
-            } else if (msg.tipo === 'DOCUMENTO' && msg.url_archivo) {
-                mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <b>Documento Adjunto</b></div>`;
+            let replyBtn = '';
+            if (msg.id_mensaje_meta && msg.tipo === 'TEXTO') {
+                let safeText = (msg.contenido || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                replyBtn = `<i class="fa-solid fa-reply reply-btn" data-meta-id="${msg.id_mensaje_meta}" data-text="${safeText}" style="cursor:pointer; color:#9CA3AF; margin-right:8px;" title="Responder"></i>`;
             }
 
             msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; ${colorStlye}">
                     <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
                         ${mediaHtml}
-                        <p style="margin-bottom:0;">${icon}${msg.contenido}</p>
-                        <span class="msg-time">${timeLabel} ${estadoIcon}</span>
+                        <div style="margin-bottom:0;">${icon}${displayContent}</div>
+                        <div style="text-align:right; margin-top:2px;">
+                            ${replyBtn}
+                            <span class="msg-time">${timeLabel} ${estadoIcon}</span>
+                        </div>
                     </div>
                 </div>
             `;
@@ -528,6 +635,66 @@ function renderMessages(messages, scrollToBottom) {
     if (scrollToBottom) area.scrollTop(area[0].scrollHeight);
 }
 
+// Global variable para la respuesta
+window.currentReplyMetaId = null;
+
+$(document).on('click', '.reply-btn', function(e) {
+    e.stopPropagation();
+    window.currentReplyMetaId = $(this).data('meta-id');
+    let text = $(this).data('text');
+    if (text.length > 50) text = text.substring(0, 47) + '...';
+    
+    if ($('#replyContextUI').length === 0) {
+        $('.input-area').prepend(`
+            <div id="replyContextUI" style="background-color: #F3F4F6; padding: 8px 12px; border-left: 4px solid #3B82F6; border-radius: 4px 4px 0 0; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: #4B5563;">
+                <div><i class="fa-solid fa-reply me-2 text-primary"></i> Respondiendo a: <b><span id="replyTextPreview"></span></b></div>
+                <i class="fa-solid fa-times" id="cancelReplyBtn" style="cursor: pointer; color: #9CA3AF;"></i>
+            </div>
+        `);
+    }
+    $('#replyTextPreview').text(text);
+    $('#chatInput').focus();
+});
+
+$(document).on('click', '#cancelReplyBtn', function() {
+    window.currentReplyMetaId = null;
+    $('#replyContextUI').remove();
+});
+// Reintentar Envío de Mensajes Fallidos
+$(document).on('click', '.retry-btn', function(e) {
+    e.stopPropagation();
+    const msgId = $(this).data('id');
+    
+    Swal.fire({
+        title: '¿Reintentar envío?',
+        text: 'Se intentará enviar este mensaje de nuevo a WhatsApp. (Nota: Si es un sticker inválido, volverá a fallar).',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, reintentar',
+        cancelButtonText: 'Cancelar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            $.ajax({
+                url: 'back_bandeja.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'retry_message', msg_id: msgId },
+                success: function (response) {
+                    if (response.status === 'success') {
+                        loadMessages(activeChatId, true);
+                        Swal.fire('Reenviado', 'El mensaje se ha enviado a la cola.', 'success');
+                    } else {
+                        Swal.fire('Aviso', response.message || 'Error al reintentar.', 'warning');
+                    }
+                },
+                error: function() {
+                    Swal.fire('Error', 'Fallo al comunicarse con el servidor.', 'error');
+                }
+            });
+        }
+    });
+});
+
 function sendMessage() {
     if (activeChatId === null) {
         Swal.fire({ icon: 'warning', text: 'Debes seleccionar una conversación primero.' });
@@ -536,22 +703,63 @@ function sendMessage() {
     const input = $('#chatInput');
     const text = input.val().trim();
     if (text === '') return;
+    
+    const isInternal = $('#btnInternalNote').hasClass('note-mode') ? 1 : 0;
+    const replyMetaId = window.currentReplyMetaId;
 
     const area = $('#messagesArea');
-    area.append(`
-        <div class="message bot-message" style="align-self: flex-end; background-color: #EFF6FF; border: 1px solid #BFDBFE;">
-            <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
-                <p style="margin-bottom:0;">${text}</p>
-                <span class="msg-time"><i class="fa-regular fa-clock"></i> Enviando...</span>
+    
+    if (isInternal) {
+        area.append(`
+            <div class="message bot-message" style="align-self: flex-end; margin-bottom: 15px; padding-right: 10px;">
+                <div class="msg-bubble" style="
+                    background-color: #FDFBAA; 
+                    border: none; 
+                    box-shadow: 3px 5px 12px rgba(0,0,0,0.15); 
+                    border-radius: 2px 2px 18px 2px; 
+                    padding: 12px 16px; 
+                    font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive, sans-serif;
+                    color: #333333;
+                    max-width: 320px;
+                    transform: rotate(-1.5deg);
+                    position: relative;
+                ">
+                    <div style="position:absolute; top:0; left:0; width:100%; height:15px; background: linear-gradient(rgba(0,0,0,0.06), transparent); border-radius: 2px 2px 0 0;"></div>
+                    <div style="position:absolute; top:-8px; left:50%; transform:translateX(-50%); text-align:center;">
+                        <i class="fa-solid fa-thumbtack" style="color:#EF4444; font-size: 1.2rem; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></i>
+                    </div>
+                    <div style="font-size:0.7rem; color:#D97706; margin-bottom:6px; margin-top:8px; font-family: 'Inter', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <i class="fa-solid fa-user-secret"></i> Nota Privada
+                    </div>
+                    <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${text}</p>
+                    <div style="text-align: right; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 4px;">
+                        <span class="msg-time" style="color:#92400E; font-family: 'Inter', sans-serif; font-size: 0.7rem;"><i class="fa-regular fa-clock"></i> Guardando...</span>
+                    </div>
+                </div>
             </div>
-        </div>
-    `);
+        `);
+    } else {
+        area.append(`
+            <div class="message bot-message" style="align-self: flex-end; background-color: #EFF6FF; border: 1px solid #BFDBFE;">
+                <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
+                    <p style="margin-bottom:0;">${text}</p>
+                    <span class="msg-time"><i class="fa-regular fa-clock"></i> Enviando...</span>
+                </div>
+            </div>
+        `);
+    }
     area.scrollTop(area[0].scrollHeight);
     input.val('');
+    
+    // Clear reply UI immediately
+    if (replyMetaId) {
+        window.currentReplyMetaId = null;
+        $('#replyContextUI').remove();
+    }
 
     $.ajax({
         url: 'back_bandeja.php', type: 'POST', dataType: 'json',
-        data: { action: 'send_message', conversacion_id: activeChatId, cliente_id: activeClientId, contenido: text },
+        data: { action: 'send_message', conversacion_id: activeChatId, cliente_id: activeClientId, contenido: text, is_internal: isInternal, reply_to_meta_id: replyMetaId || '' },
         success: function (response) {
             if (response.status === 'success') {
                 if (activeChatId == 0 && response.new_chat_id) {

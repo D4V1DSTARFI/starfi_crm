@@ -58,6 +58,10 @@ function getDbConnection($tipo = 'core')
     }
 
     mysqli_set_charset($con, "utf8mb4");
+    
+    // Forzar zona horaria de MySQL para que NOW() coincida con PHP
+    mysqli_query($con, "SET time_zone = '-04:00'");
+    
     return $con;
 }
 

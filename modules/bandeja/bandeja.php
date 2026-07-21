@@ -18,13 +18,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
-    <!-- Emoji Picker -->
-    <script src="https://cdn.jsdelivr.net/npm/@joeattardi/emoji-button@4.6.0/dist/index.min.js"></script>
+    <!-- Emojis Nativos (Sin dependencias externas) -->
     <style>
         /* Modernización Premium Bandeja Omnicanal */
         .chats-panel {
@@ -217,6 +214,39 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             border: 1px solid #E2E8F0;
             margin-bottom: 10px;
         }
+        .emoji-picker {
+            display: none;
+            position: absolute;
+            bottom: 80px;
+            left: 20px;
+            background: #ffffff;
+            border: 1px solid #E2E8F0;
+            border-radius: 12px;
+            width: 280px;
+            max-height: 200px;
+            overflow-y: auto;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            z-index: 1000;
+            padding: 10px;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .emoji-picker.show {
+            display: flex;
+        }
+        .emoji-btn {
+            background: transparent;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            border-radius: 8px;
+            padding: 5px;
+            transition: transform 0.2s;
+        }
+        .emoji-btn:hover {
+            transform: scale(1.2);
+            background: #F1F5F9;
+        }
     </style>
 </head>
 <body>
@@ -312,14 +342,18 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 </div>
 
                 <!-- Input Area -->
-                <footer class="input-area">
+                <footer class="input-area" style="position:relative;">
+                    <div id="emojiPicker" class="emoji-picker">
+                        <!-- Populated by JS -->
+                    </div>
                     <div class="tools">
-                        <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,video/mp4">
+                        <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,video/mp4,image/webp">
                         <button class="tool-btn" id="btnAttach" title="Adjuntar"><i class="fa-solid fa-paperclip"></i></button>
                         <button class="tool-btn" id="btnTemplates" title="Plantillas"><i class="fa-solid fa-bolt"></i></button>
                         <button class="tool-btn" id="btnEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
+                        <button class="tool-btn" id="btnInternalNote" title="Nota Interna (Sólo Agentes)" style="margin-left: 10px; color: #9CA3AF;"><i class="fa-solid fa-user-secret"></i></button>
                     </div>
-                    <div class="input-box">
+                    <div class="input-box" id="inputBoxContainer">
                         <textarea placeholder="Escribe un mensaje..." rows="1" id="chatInput"></textarea>
                         <button class="send-btn" id="sendBtn"><i class="fa-solid fa-paper-plane"></i></button>
                     </div>
