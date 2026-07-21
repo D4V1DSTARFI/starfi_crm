@@ -507,6 +507,7 @@ function renderMessages(messages, scrollToBottom) {
                 </div>
             `;
         } else if (msg.origen === 'NOTA_INTERNA') {
+            let noteAgent = msg.nombre_agente ? `<div style="font-size: 0.7rem; color: #92400E; font-weight: bold; margin-bottom: 4px;">Por: ${msg.nombre_agente}</div>` : '';
             msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; margin-bottom: 15px; padding-right: 10px;">
                     <div class="msg-bubble" style="
@@ -529,9 +530,10 @@ function renderMessages(messages, scrollToBottom) {
                             <i class="fa-solid fa-thumbtack" style="color:#EF4444; font-size: 1.2rem; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></i>
                         </div>
                         
-                        <div style="font-size:0.7rem; color:#D97706; margin-bottom:6px; margin-top:8px; font-family: 'Inter', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <div style="font-size:0.7rem; color:#D97706; margin-bottom:2px; margin-top:8px; font-family: 'Inter', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
                             <i class="fa-solid fa-user-secret"></i> Nota Privada
                         </div>
+                        ${noteAgent}
                         
                         <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${msg.contenido}</p>
                         
@@ -575,6 +577,7 @@ function renderMessages(messages, scrollToBottom) {
             let icon = msg.origen === 'API_TRANSACCIONAL' ? '<i class="fa-solid fa-robot text-muted me-1"></i> ' : '';
             
             let displayContent = msg.contenido;
+            let agentNameHtml = (msg.origen === 'AGENTE' && msg.nombre_agente) ? `<div style="font-size: 0.65rem; color: #6B7280; margin-bottom: 6px; border-bottom: 1px solid #BFDBFE; padding-bottom: 2px;"><i class="fa-solid fa-headset"></i> ${msg.nombre_agente}</div>` : '';
             
             // Intelligent Visual Rendering for Templates
             if (msg.origen === 'API_TRANSACCIONAL' && msg.contenido.startsWith('Envío dinámico de plantilla:')) {
@@ -631,6 +634,7 @@ function renderMessages(messages, scrollToBottom) {
             msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; ${colorStlye}">
                     <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
+                        ${agentNameHtml}
                         ${replyHtml}
                         ${mediaHtml}
                         <div style="margin-bottom:0;">${icon}${displayContent}</div>
