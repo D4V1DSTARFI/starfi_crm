@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('whatsapp_analytics');
 $agente = getAgenteInfo();
 
 // Cargar sedes activas para el filtro

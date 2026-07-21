@@ -173,13 +173,16 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         let activeRoleId = null;
 
         const modulosMeta = {
-            'bandeja': { icon: 'fa-inbox', color: '#0EA5E9', bg: 'rgba(14, 165, 233, 0.1)', desc: 'Bandeja de chats multicanal de WhatsApp y eventos en tiempo real.' },
+            'bandeja': { icon: 'fa-comments', color: '#0EA5E9', bg: 'rgba(14, 165, 233, 0.1)', desc: 'Centro de Mensajes: Bandeja de entrada unificada para chats de WhatsApp.' },
             'perfil_empresa': { icon: 'fa-building', color: '#EA580C', bg: 'rgba(234, 88, 12, 0.1)', desc: 'Gestión corporativa, firmantes, registro mercantil e información digital de la empresa.' },
             'directorio': { icon: 'fa-address-book', color: '#10B981', bg: 'rgba(16, 185, 129, 0.1)', desc: 'Directorio unificado de contactos y clientes del CRM.' },
             'gestion_usuarios': { icon: 'fa-users', color: '#4F46E5', bg: 'rgba(79, 70, 229, 0.1)', desc: 'Creación, activación y asignación de empresas y roles a los operadores.' },
             'gestion_roles': { icon: 'fa-user-shield', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.1)', desc: 'Matriz de permisos por módulo y niveles de acceso a operadores.' },
             'dashboard': { icon: 'fa-chart-line', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.1)', desc: 'Visualización de reportes, KPIs, volumen de chats y tiempos de primera respuesta.' },
             'gestor_bots': { icon: 'fa-robot', color: '#6366F1', bg: 'rgba(99, 102, 241, 0.1)', desc: 'Configuración y flujos de automatización para los chatbots de soporte.' },
+            'waba_ordenes': { icon: 'fa-receipt', color: '#DC3545', bg: 'rgba(220, 53, 69, 0.1)', desc: 'Panel de Órdenes WABA: Estados de cuenta, facturas y cobros.' },
+            'buzon_correos': { icon: 'fa-envelope-open-text', color: '#0D6EFD', bg: 'rgba(13, 110, 253, 0.1)', desc: 'Buzón de Salida SMTP: Historial de notificaciones y logs de envíos por correo.' },
+            'whatsapp_analytics': { icon: 'fa-file-invoice-dollar', color: '#10B981', bg: 'rgba(16, 185, 129, 0.1)', desc: 'Facturación WhatsApp: Costo estimado WABA y analíticas financieras.' },
             'configuracion': { icon: 'fa-gear', color: '#64748B', bg: 'rgba(100, 116, 139, 0.1)', desc: 'Ajustes globales del sistema, líneas de WhatsApp, sedes y diagnósticos.' }
         };
 

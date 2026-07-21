@@ -9,7 +9,15 @@ $action = $_POST['action'] ?? '';
 
 switch ($action) {
     case 'get_sedes':
-        $res = $con->query("SELECT id, nombre_sede FROM sedes ORDER BY nombre_sede ASC");
+        $agente = getAgenteInfo();
+        $rol = $agente['rol'] ?? 'AGENTE';
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        
+        $where = "";
+        if ($rol !== 'MASTER' && $user_sede > 0) {
+            $where = "WHERE id = $user_sede";
+        }
+        $res = $con->query("SELECT id, nombre_sede FROM sedes $where ORDER BY nombre_sede ASC");
         $sedes = [];
         if ($res) {
             while ($row = $res->fetch_assoc()) $sedes[] = $row;
@@ -18,9 +26,19 @@ switch ($action) {
         break;
 
     case 'load_clients':
+        $agente = getAgenteInfo();
+        $rol = $agente['rol'] ?? 'AGENTE';
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        
+        $where = "";
+        if ($rol !== 'MASTER' && $user_sede > 0) {
+            $where = "WHERE c.id_sede = $user_sede";
+        }
+        
         $query = "SELECT c.id, c.nombre, c.numero_whatsapp, c.estado, c.fecha_registro, s.nombre_sede 
                   FROM clientes_contactos c 
                   LEFT JOIN sedes s ON c.id_sede = s.id 
+                  $where
                   ORDER BY c.fecha_registro DESC";
         $res = $con->query($query);
         

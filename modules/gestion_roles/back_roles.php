@@ -23,13 +23,16 @@ if (!$con) {
 $action = $_REQUEST['action'] ?? 'list';
 
 $modulos_definidos = [
-    'bandeja' => 'Bandeja Omnicanal',
+    'bandeja' => 'Centro de Mensajes',
     'perfil_empresa' => 'Perfil de Empresa',
     'directorio' => 'Directorio 360',
     'gestion_usuarios' => 'Gestión de Usuarios',
     'gestion_roles' => 'Roles y Permisos',
     'dashboard' => 'Métricas y KPIs',
     'gestor_bots' => 'Gestor de Bots',
+    'waba_ordenes' => 'Panel de Órdenes WABA',
+    'buzon_correos' => 'Buzón de Salida SMTP',
+    'whatsapp_analytics' => 'Facturación WhatsApp',
     'configuracion' => 'Configuración del Sistema'
 ];
 

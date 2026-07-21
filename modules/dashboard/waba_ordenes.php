@@ -1,12 +1,8 @@
 <?php
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('waba_ordenes');
 $agente = getAgenteInfo();
-
-if ($agente['rol'] !== 'MASTER') {
-    die("Acceso Denegado. Solo MASTER puede ver este panel.");
-}
-
 ?>
 <!DOCTYPE html>
 <html lang="es">

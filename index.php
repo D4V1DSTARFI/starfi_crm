@@ -338,7 +338,7 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             <?php endif; ?>
 
             <!-- 6. Métricas y Facturación WhatsApp -->
-            <?php if (hasPermission('dashboard')): ?>
+            <?php if (hasPermission('whatsapp_analytics')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/whatsapp_analytics.php" class="module-card">
                     <div>
@@ -357,8 +357,8 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             </div>
             <?php endif; ?>
 
-            <?php if ($rol_agente === 'MASTER'): ?>
-            <!-- 7. Panel de Órdenes de Cobro (Solo MASTER) -->
+            <!-- 7. Panel de Órdenes de Cobro -->
+            <?php if (hasPermission('waba_ordenes')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/waba_ordenes.php" class="module-card">
                     <div>
@@ -373,8 +373,10 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
                     </div>
                 </a>
             </div>
+            <?php endif; ?>
             
-            <!-- 8. Buzón de Salida SMTP (Solo MASTER) -->
+            <!-- 8. Buzón de Salida SMTP -->
+            <?php if (hasPermission('buzon_correos')): ?>
             <div class="col-12 col-md-6 col-lg-4">
                 <a href="modules/dashboard/buzon_correos.php" class="module-card">
                     <div>
