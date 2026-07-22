@@ -141,14 +141,21 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             <div class="config-container container-fluid">
 
                 <!-- Header de Sección -->
-                <div class="mb-4">
-                    <h2 class="brand-font mb-1" style="font-weight: 700; color: var(--starfi-dark);">Roles y Permisos</h2>
-                    <p class="text-muted mb-0" style="font-size: 0.95rem;">Configure la visibilidad y accesibilidad a los distintos módulos del CRM según el Rol de Usuario.</p>
+                <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-4 gap-3">
+                    <div>
+                        <h2 class="brand-font mb-1" style="font-weight: 700; color: var(--starfi-dark);">Roles y Permisos</h2>
+                        <p class="text-muted mb-0" style="font-size: 0.95rem;">Configure la visibilidad y accesibilidad a los distintos módulos del CRM según el Rol de Usuario.</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-primary d-flex align-items-center gap-2 fw-semibold px-4 py-2" style="border-radius: 30px; background-color: var(--primary); border-color: var(--primary);" onclick="createNewRole()">
+                            <i class="fa-solid fa-plus"></i> Crear Nuevo Rol
+                        </button>
+                    </div>
                 </div>
 
                 <div class="roles-card">
                     <!-- Selector de Roles (Pestañas) -->
-                    <div class="d-flex border-bottom mb-4" id="roleTabs">
+                    <div class="d-flex border-bottom mb-4 overflow-auto" id="roleTabs">
                         <!-- Cargados dinámicamente -->
                     </div>
 
@@ -293,6 +300,55 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             });
         }
 
+        function createNewRole() {
+            Swal.fire({
+                title: 'Crear Nuevo Rol',
+                input: 'text',
+                inputLabel: 'Nombre del Rol',
+                inputPlaceholder: 'Ej: JEFE DE VENTAS, SUPERVISOR...',
+                showCancelButton: true,
+                confirmButtonText: 'Crear Rol',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#E85B14',
+                inputValidator: (value) => {
+                    if (!value || !value.trim()) {
+                        return 'Por favor ingresa un nombre para el rol';
+                    }
+                }
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    const formData = new FormData();
+                    formData.append('action', 'create_role');
+                    formData.append('nombre', result.value.trim().toUpperCase());
+
+                    fetch('back_roles.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'Rol Creado',
+                                text: 'El nuevo rol ha sido registrado correctamente.',
+                                timer: 2000,
+                                showConfirmButton: false
+                            });
+                            activeRoleId = data.id;
+                            loadRolesAndPermissions();
+                        } else {
+                            Swal.fire('Error', data.message || 'No se pudo crear el rol', 'error');
+                        }
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        Swal.fire('Error', 'Fallo de conexión con el servidor', 'error');
+                    });
+                }
+            });
+        }
+
         function escapeHtml(str) {
             if (!str) return '';
             return str.replace(/[&<>"']/g, function(m) {
@@ -306,5 +362,6 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             });
         }
     </script>
+    <script src="../../assets/js/sweetalert2.all.min.js"></script>
 </body>
 </html>

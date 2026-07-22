@@ -78,6 +78,43 @@ switch ($action) {
         ]);
         break;
 
+    case 'create_role':
+        $nombre_rol = trim($_POST['nombre'] ?? '');
+        if (empty($nombre_rol)) {
+            echo json_encode(['success' => false, 'message' => 'El nombre del rol no puede estar vacío.']);
+            exit();
+        }
+        
+        $stmt_check = $con->prepare("SELECT id FROM roles WHERE nombre = ?");
+        $stmt_check->bind_param("s", $nombre_rol);
+        $stmt_check->execute();
+        $res_check = $stmt_check->get_result();
+        if ($res_check && $res_check->num_rows > 0) {
+            echo json_encode(['success' => false, 'message' => 'Ya existe un rol con ese nombre.']);
+            exit();
+        }
+        $stmt_check->close();
+        
+        $stmt_ins = $con->prepare("INSERT INTO roles (nombre) VALUES (?)");
+        $stmt_ins->bind_param("s", $nombre_rol);
+        if ($stmt_ins->execute()) {
+            $nuevo_id_rol = $stmt_ins->insert_id;
+            
+            // Asignar permisos predeterminados (todos 1 excepto whatsapp_analytics)
+            foreach ($modulos_definidos as $mod_key => $mod_name) {
+                $permitido = ($mod_key === 'whatsapp_analytics') ? 0 : 1;
+                $stmt_p = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, ?)");
+                $stmt_p->bind_param("isi", $nuevo_id_rol, $mod_key, $permitido);
+                $stmt_p->execute();
+                $stmt_p->close();
+            }
+            
+            echo json_encode(['success' => true, 'id' => $nuevo_id_rol, 'message' => 'Rol creado con éxito.']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Error al crear el rol en base de datos.']);
+        }
+        break;
+
     case 'toggle_permission':
         $role_id = (int)($_POST['role_id'] ?? 0);
         $modulo = trim($_POST['modulo'] ?? '');

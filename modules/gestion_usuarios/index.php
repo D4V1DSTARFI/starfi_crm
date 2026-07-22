@@ -461,8 +461,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                 let rolBadge = '<span class="badge-rol-sin">Sin Rol</span>';
                 if (u.rol === 'MASTER') rolBadge = '<span class="badge-rol-master"><i class="fa-solid fa-crown me-1"></i>MASTER</span>';
+                else if (u.rol === 'MASTER CI') rolBadge = '<span class="badge-rol-master" style="background-color: rgba(234, 88, 12, 0.15); color: #EA580C;"><i class="fa-solid fa-user-shield me-1"></i>MASTER CI</span>';
                 else if (u.rol === 'ADMINISTRADOR') rolBadge = '<span class="badge-rol-admin"><i class="fa-solid fa-user-gear me-1"></i>ADMINISTRADOR</span>';
                 else if (u.rol === 'OPERADOR') rolBadge = '<span class="badge-rol-operador"><i class="fa-solid fa-headset me-1"></i>OPERADOR</span>';
+                else if (u.rol) rolBadge = `<span class="badge-rol-admin" style="background-color: rgba(16, 185, 129, 0.15); color: #10B981;"><i class="fa-solid fa-user-check me-1"></i>${escapeHtml(u.rol)}</span>`;
 
                 const sedeText = u.sede_nombre ? `<span class="fw-semibold text-dark"><i class="fa-solid fa-location-dot me-1 text-secondary"></i>${escapeHtml(u.sede_nombre)}</span>` : '<span class="text-muted small">Sin Sede</span>';
 

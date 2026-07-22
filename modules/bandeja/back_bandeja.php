@@ -88,7 +88,8 @@ switch ($action) {
                 IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
                 IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
                 up.nombre as nombre_asesor,
-                IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad
+                IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad,
+                EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') as es_venta
             FROM clientes_contactos cl
             JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
@@ -99,6 +100,12 @@ switch ($action) {
         
         if ($filter === 'mis-chats') {
             $query .= " AND c.id_agente = $agente_id";
+        } elseif ($filter === 'clientes') {
+            // Conversaciones iniciadas por clientes/personas reales (mensaje originado por CLIENTE o atendidas por agente humano sin ser evento transaccional exclusivo)
+            $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
+        } elseif ($filter === 'ventas') {
+            // Conversaciones de Ventas / Notificaciones transaccionales (notificaciones enviadas por API transaccional, bot de pedidos, o cierres por venta)
+            $query .= " AND (EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') OR c.motivo_cierre = 'VENTA_CERRADA')";
         } elseif ($filter === 'no-leido') {
             $query .= " AND c.mensajes_no_leidos > 0";
         } elseif ($filter === 'cerrados') {

@@ -119,11 +119,6 @@ function hasPermission($modulo) {
     
     $id = intval($_SESSION['agente_id']);
     
-    // Failsafe: ID 1 siempre es MASTER/Propietario del sistema
-    if ($id === 1) {
-        return true;
-    }
-    
     // Obtener rol del usuario
     $stmt = $con->prepare("SELECT u.rol, r.nombre AS rol_nombre 
                            FROM usuario u 
@@ -136,7 +131,7 @@ function hasPermission($modulo) {
         if ($row = $res->fetch_assoc()) {
             $stmt->close();
             
-            // MASTER tiene bypass global
+            // MASTER tiene bypass global (únicamente la palabra exacta 'MASTER')
             if ($row['rol_nombre'] === 'MASTER') {
                 return true;
             }

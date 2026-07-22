@@ -560,6 +560,10 @@ function renderChatList(chats) {
         else if (estadoLabel === 'CERRADO' || estadoLabel === 'RESUELTO') estadoColor = 'bg-success';
         
         let estadoBadge = `<span class="badge ${estadoColor} rounded-pill px-2 py-0.5" style="font-size: 0.6rem; margin-left: 4px;">${estadoLabel.replace('_', ' ')}</span>`;
+        
+        let tipoBadge = (chat.es_venta == 1 || chat.es_venta === '1') 
+            ? `<span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-shopping-bag me-1"></i> VENTA</span>`
+            : `<span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-user me-1"></i> CLIENTE</span>`;
 
         let html = `
             <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}">
@@ -573,6 +577,7 @@ function renderChatList(chats) {
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
+                        ${tipoBadge}
                         ${estadoBadge}
                         ${asesorBadge}
                         ${starsHtml}

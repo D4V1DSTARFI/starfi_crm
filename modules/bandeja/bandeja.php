@@ -39,14 +39,31 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             font-weight: 700 !important;
             color: var(--starfi-dark) !important;
         }
+        .tabs {
+            display: flex !important;
+            gap: 4px !important;
+            overflow-x: auto !important;
+            white-space: nowrap !important;
+            padding-bottom: 4px !important;
+            scrollbar-width: thin;
+        }
+        .tabs::-webkit-scrollbar {
+            height: 3px;
+        }
+        .tabs::-webkit-scrollbar-thumb {
+            background-color: #CBD5E1;
+            border-radius: 4px;
+        }
         .tabs .tab {
             font-weight: 600 !important;
             color: #64748B !important;
             border-radius: 20px !important;
-            padding: 8px 16px !important;
-            transition: all 0.3s ease !important;
+            padding: 5px 12px !important;
+            font-size: 0.8rem !important;
+            transition: all 0.2s ease !important;
             border: none !important;
             background: transparent !important;
+            flex-shrink: 0 !important;
         }
         .tabs .tab.active {
             background-color: rgba(232, 91, 20, 0.1) !important;
@@ -294,6 +311,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <!-- Tabs -->
                 <div class="tabs">
                     <button class="tab active" data-target="todos">Todos</button>
+                    <button class="tab" data-target="clientes"><i class="fa-solid fa-user me-1"></i> Clientes</button>
+                    <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>

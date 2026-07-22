@@ -21,7 +21,18 @@ if (!$con) {
 
 // Asegurar existencia de la tabla roles y columnas relacionales
 @mysqli_query($con, "CREATE TABLE IF NOT EXISTS roles (id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(100) NOT NULL UNIQUE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-@mysqli_query($con, "INSERT IGNORE INTO roles (id, nombre) VALUES (1, 'MASTER'), (2, 'ADMINISTRADOR'), (3, 'OPERADOR')");
+@mysqli_query($con, "INSERT IGNORE INTO roles (id, nombre) VALUES (1, 'MASTER'), (2, 'ADMINISTRADOR'), (3, 'OPERADOR'), (4, 'MASTER CI')");
+
+// Asegurar permisos predeterminados para MASTER CI
+$res_mci = mysqli_query($con, "SELECT id FROM roles WHERE nombre = 'MASTER CI' LIMIT 1");
+if ($res_mci && $row_mci = mysqli_fetch_assoc($res_mci)) {
+    $mci_id = (int)$row_mci['id'];
+    $modulos_all = ['bandeja', 'perfil_empresa', 'directorio', 'gestion_usuarios', 'gestion_roles', 'dashboard', 'gestor_bots', 'waba_ordenes', 'buzon_correos', 'whatsapp_analytics', 'configuracion'];
+    foreach ($modulos_all as $m_key) {
+        $perm = ($m_key === 'whatsapp_analytics') ? 0 : 1;
+        @mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($mci_id, '$m_key', $perm) ON DUPLICATE KEY UPDATE permitido = VALUES(permitido)");
+    }
+}
 
 @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN estado ENUM('ACTIVO', 'INACTIVO') DEFAULT 'INACTIVO'");
 @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN id_sede INT DEFAULT NULL");
