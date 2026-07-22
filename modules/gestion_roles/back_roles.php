@@ -38,8 +38,8 @@ $modulos_definidos = [
 
 switch ($action) {
     case 'list':
-        // Cargar los roles (excluyendo a MASTER que tiene bypass)
-        $res_roles = mysqli_query($con, "SELECT id, nombre FROM roles WHERE nombre != 'MASTER' ORDER BY id ASC");
+        // Cargar todos los roles de la base de datos
+        $res_roles = mysqli_query($con, "SELECT id, nombre FROM roles ORDER BY id ASC");
         $roles = [];
         
         if ($res_roles) {
