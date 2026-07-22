@@ -29,7 +29,7 @@ if ($res_mci && $row_mci = mysqli_fetch_assoc($res_mci)) {
     $mci_id = (int)$row_mci['id'];
     $modulos_all = ['bandeja', 'perfil_empresa', 'directorio', 'gestion_usuarios', 'gestion_roles', 'dashboard', 'gestor_bots', 'waba_ordenes', 'buzon_correos', 'whatsapp_analytics', 'configuracion'];
     foreach ($modulos_all as $m_key) {
-        $perm = ($m_key === 'whatsapp_analytics') ? 0 : 1;
+        $perm = ($m_key === 'whatsapp_analytics' || $m_key === 'waba_ordenes') ? 0 : 1;
         @mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($mci_id, '$m_key', $perm) ON DUPLICATE KEY UPDATE permitido = VALUES(permitido)");
     }
 }
@@ -70,29 +70,39 @@ switch ($action) {
             }
         }
 
-        // Garantizar que el usuario Master siempre esté en el listado
-        $has_master = false;
-        foreach ($usuarios as $u) {
-            if ($u['usuario'] === 'master' || $u['rol'] === 'MASTER') {
-                $has_master = true;
-                break;
+        $agente_info = getAgenteInfo();
+        $es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) === 'MASTER');
+
+        if ($es_master_puro) {
+            // Garantizar que el usuario Master siempre esté en el listado para MASTER puro
+            $has_master = false;
+            foreach ($usuarios as $u) {
+                if ($u['usuario'] === 'master' || $u['rol'] === 'MASTER') {
+                    $has_master = true;
+                    break;
+                }
             }
-        }
-        if (!$has_master) {
-            array_unshift($usuarios, [
-                'id' => 1,
-                'usuario' => 'master',
-                'nombre' => 'Acceso Master',
-                'cedula' => 'V-00000000',
-                'correo' => 'master@starfi.com',
-                'telefono' => '+58 000 0000000',
-                'direccion' => 'Sede Central',
-                'estado' => 'ACTIVO',
-                'rol' => 'MASTER',
-                'id_rol' => 1,
-                'id_sede' => null,
-                'sede_nombre' => 'Todas las Sedes'
-            ]);
+            if (!$has_master) {
+                array_unshift($usuarios, [
+                    'id' => 1,
+                    'usuario' => 'master',
+                    'nombre' => 'Acceso Master',
+                    'cedula' => 'V-00000000',
+                    'correo' => 'master@starfi.com',
+                    'telefono' => '+58 000 0000000',
+                    'direccion' => 'Sede Central',
+                    'estado' => 'ACTIVO',
+                    'rol' => 'MASTER',
+                    'id_rol' => 1,
+                    'id_sede' => null,
+                    'sede_nombre' => 'Todas las Sedes'
+                ]);
+            }
+        } else {
+            // Filtrar usuario MASTER si el usuario actual no es MASTER puro
+            $usuarios = array_values(array_filter($usuarios, function($u) {
+                return ($u['usuario'] !== 'master' && strtoupper($u['rol'] ?? '') !== 'MASTER' && (int)$u['id'] !== 1);
+            }));
         }
 
         // Obtener lista de sedes disponibles para asignación
@@ -104,8 +114,9 @@ switch ($action) {
             }
         }
 
-        // Obtener lista de roles relacionales
-        $res_roles = mysqli_query($con, "SELECT id, nombre FROM roles ORDER BY id ASC");
+        // Obtener lista de roles relacionales (filtrando MASTER para no-MASTER)
+        $sql_r = $es_master_puro ? "SELECT id, nombre FROM roles ORDER BY id ASC" : "SELECT id, nombre FROM roles WHERE nombre != 'MASTER' ORDER BY id ASC";
+        $res_roles = mysqli_query($con, $sql_r);
         $roles_list = [];
         if ($res_roles) {
             while ($r_rol = mysqli_fetch_assoc($res_roles)) {
@@ -162,6 +173,12 @@ switch ($action) {
 
         if (empty($usuario) || empty($nombre) || empty($correo)) {
             echo json_encode(['success' => false, 'message' => 'Nombre, Usuario y Correo son campos obligatorios.']);
+            exit();
+        }
+
+        // Bloquear asignación del rol MASTER si quien realiza la acción no es MASTER puro
+        if (!$es_master_puro && $rol === 1) {
+            echo json_encode(['success' => false, 'message' => 'Acceso denegado. No tienes permisos para asignar el rol MASTER.']);
             exit();
         }
 

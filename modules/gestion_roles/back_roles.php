@@ -22,6 +22,9 @@ if (!$con) {
 
 $action = $_REQUEST['action'] ?? 'list';
 
+$agente_info = getAgenteInfo();
+$es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) === 'MASTER');
+
 $modulos_definidos = [
     'bandeja' => 'Centro de Mensajes',
     'perfil_empresa' => 'Perfil de Empresa',
@@ -36,11 +39,18 @@ $modulos_definidos = [
     'configuracion' => 'Configuración del Sistema'
 ];
 
+// Ocultar 'Facturación WhatsApp' de la matriz de permisos si el usuario no es MASTER puro
+if (!$es_master_puro) {
+    unset($modulos_definidos['whatsapp_analytics']);
+}
+
 switch ($action) {
     case 'list':
-        // Cargar todos los roles de la base de datos
-        $res_roles = mysqli_query($con, "SELECT id, nombre FROM roles ORDER BY id ASC");
+        // Si no es el usuario MASTER puro, ocultar el rol MASTER de la pestaña de roles
+        $sql_roles = $es_master_puro ? "SELECT id, nombre FROM roles ORDER BY id ASC" : "SELECT id, nombre FROM roles WHERE nombre != 'MASTER' ORDER BY id ASC";
+        $res_roles = mysqli_query($con, $sql_roles);
         $roles = [];
+
         
         if ($res_roles) {
             while ($row = mysqli_fetch_assoc($res_roles)) {
@@ -102,7 +112,7 @@ switch ($action) {
             
             // Asignar permisos predeterminados (todos 1 excepto whatsapp_analytics)
             foreach ($modulos_definidos as $mod_key => $mod_name) {
-                $permitido = ($mod_key === 'whatsapp_analytics') ? 0 : 1;
+                $permitido = ($mod_key === 'whatsapp_analytics' || $mod_key === 'waba_ordenes') ? 0 : 1;
                 $stmt_p = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, ?)");
                 $stmt_p->bind_param("isi", $nuevo_id_rol, $mod_key, $permitido);
                 $stmt_p->execute();
