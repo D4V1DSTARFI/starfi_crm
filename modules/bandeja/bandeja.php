@@ -298,14 +298,32 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         }
                     }
                 }
+                $agente_actual = getAgenteInfo();
+                $user_assigned_sede = isset($agente_actual['id_sede']) ? intval($agente_actual['id_sede']) : 0;
                 ?>
                 <div class="mb-2">
-                    <select id="filterSede" class="form-select form-select-sm" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
-                        <option value="">Todas las Sedes</option>
-                        <?php foreach ($sedes as $s): ?>
-                            <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php 
+                    $rol_agente = strtoupper(trim($agente_actual['rol'] ?? ''));
+                    $is_master_puro = ($rol_agente === 'MASTER');
+                    
+                    if (!$is_master_puro && $user_assigned_sede > 0): 
+                        // Tanto Administradores como Operadores y otros roles quedan fijos en su sede asignada
+                    ?>
+                        <select id="filterSede" class="form-select form-select-sm" disabled style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F1F5F9; cursor: not-allowed;">
+                            <?php foreach ($sedes as $s): ?>
+                                <?php if ($user_assigned_sede == $s['id']): ?>
+                                    <option value="<?= $s['id'] ?>" selected><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </select>
+                    <?php else: ?>
+                        <select id="filterSede" class="form-select form-select-sm" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
+                            <option value="">Todas las Sedes</option>
+                            <?php foreach ($sedes as $s): ?>
+                                <option value="<?= $s['id'] ?>" <?= ($user_assigned_sede == $s['id']) ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Tabs -->

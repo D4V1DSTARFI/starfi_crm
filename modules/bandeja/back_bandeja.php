@@ -115,7 +115,7 @@ switch ($action) {
         }
         
         $agente = getAgenteInfo();
-        $rol = $agente['rol'] ?? 'AGENTE';
+        $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         if ($rol !== 'MASTER' && $user_sede > 0) {

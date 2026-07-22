@@ -97,10 +97,23 @@ function loadSedes() {
             if (res.status === 'success') {
                 allSedes = res.data;
                 let select = $('#profSede');
-                select.find('option:not(:first)').remove(); // Keep "General / Central"
+                select.empty();
+                
+                if (res.is_master) {
+                    select.append('<option value="">General / Central</option>');
+                    select.prop('disabled', false).css({'background-color': '', 'cursor': ''});
+                } else {
+                    // Si no es MASTER, deshabilitar selector de sede y fijar su única sede asignada
+                    select.prop('disabled', true).css({'background-color': '#F1F5F9', 'cursor': 'not-allowed'});
+                }
+
                 allSedes.forEach(s => {
                     select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
                 });
+
+                if (!res.is_master && allSedes.length > 0) {
+                    select.val(allSedes[0].id);
+                }
             }
         }
     });

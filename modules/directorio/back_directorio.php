@@ -10,11 +10,12 @@ $action = $_POST['action'] ?? '';
 switch ($action) {
     case 'get_sedes':
         $agente = getAgenteInfo();
-        $rol = $agente['rol'] ?? 'AGENTE';
+        $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        $is_master = ($rol === 'MASTER');
         
         $where = "";
-        if ($rol !== 'MASTER' && $user_sede > 0) {
+        if (!$is_master && $user_sede > 0) {
             $where = "WHERE id = $user_sede";
         }
         $res = $con->query("SELECT id, nombre_sede FROM sedes $where ORDER BY nombre_sede ASC");
@@ -22,12 +23,12 @@ switch ($action) {
         if ($res) {
             while ($row = $res->fetch_assoc()) $sedes[] = $row;
         }
-        echo json_encode(['status' => 'success', 'data' => $sedes]);
+        echo json_encode(['status' => 'success', 'is_master' => $is_master, 'data' => $sedes]);
         break;
 
     case 'load_clients':
         $agente = getAgenteInfo();
-        $rol = $agente['rol'] ?? 'AGENTE';
+        $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         $where = "";
