@@ -5,6 +5,9 @@ requireAuth();
 header('Content-Type: application/json');
 
 $con = getDbConnection();
+@mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
+@mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
+
 $action = $_POST['action'] ?? '';
 $agente_id = intval($_SESSION['agente_id']);
 
@@ -74,6 +77,8 @@ switch ($action) {
         $join_condition = "AND c.estado != 'CERRADO'";
         if ($filter === 'cerrados') {
             $join_condition = "AND c.estado = 'CERRADO'";
+        } elseif ($filter === 'ventas' || $filter === 'todos') {
+            $join_condition = ""; // Permite listar conversaciones tanto abiertas como cerradas
         }
 
         $query = "
@@ -89,7 +94,7 @@ switch ($action) {
                 IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
                 up.nombre as nombre_asesor,
                 IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad,
-                EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') as es_venta
+                (EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') OR c.resultado_comercial = 'VENTA_CERRADA' OR c.fecha_cierre_venta IS NOT NULL) as es_venta
             FROM clientes_contactos cl
             JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
@@ -101,11 +106,17 @@ switch ($action) {
         if ($filter === 'mis-chats') {
             $query .= " AND c.id_agente = $agente_id";
         } elseif ($filter === 'clientes') {
-            // Conversaciones iniciadas por clientes/personas reales (mensaje originado por CLIENTE o atendidas por agente humano sin ser evento transaccional exclusivo)
+            // Conversaciones iniciadas por clientes/personas reales
             $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
         } elseif ($filter === 'ventas') {
-            // Conversaciones de Ventas / Notificaciones transaccionales (notificaciones enviadas por API transaccional, bot de pedidos, o cierres por venta)
-            $query .= " AND (EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') OR c.motivo_cierre = 'VENTA_CERRADA')";
+            // Conversaciones de Ventas / Notificaciones transaccionales o cierres comerciales por venta (abiertas o cerradas)
+            $query .= " AND (
+                EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND (me.origen = 'API_TRANSACCIONAL' OR me.tipo = 'VENTA')) 
+                OR c.resultado_comercial = 'VENTA_CERRADA' 
+                OR c.resultado_comercial LIKE '%VENTA%'
+                OR c.fecha_cierre_venta IS NOT NULL
+                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me2 WHERE me2.id_conversacion = c.id AND (me2.contenido LIKE '%venta%' OR me2.contenido LIKE '%pedido%' OR me2.contenido LIKE '%orden%' OR me2.contenido LIKE '%factura%' OR me2.contenido LIKE '%confirmacion_de_compr%'))
+            )";
         } elseif ($filter === 'no-leido') {
             $query .= " AND c.mensajes_no_leidos > 0";
         } elseif ($filter === 'cerrados') {
@@ -115,12 +126,16 @@ switch ($action) {
         }
         
         $agente = getAgenteInfo();
-        $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
+        $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
+        $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
+        $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
-        if ($rol !== 'MASTER' && $user_sede > 0) {
+        if (!$is_master && $user_sede > 0) {
+            // Operadores y Administradores filtran por su sede asignada
             $query .= " AND l.id_sede = $user_sede";
         } else {
+            // Master ve todas las sedes (a menos que aplique un filtro manual de sede)
             $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
             if ($id_sede > 0) {
                 $query .= " AND l.id_sede = $id_sede";
