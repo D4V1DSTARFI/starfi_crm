@@ -473,7 +473,7 @@ function enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje
 function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente, $id_sede, $con, $id_conversacion) {
     
     // Buscar en la base de datos
-    $sede_filter = ($id_sede > 0) ? "AND (id_sede = $id_sede OR id_sede IS NULL)" : "";
+    $sede_filter = ($id_sede > 0) ? "AND id_sede = $id_sede" : "AND (id_sede = 0 OR id_sede IS NULL)";
     $q_asesores = mysqli_query($con, "SELECT nombre, telefono FROM bot_vendedores WHERE estado = 'ACTIVO' $sede_filter");
     
     $asesores = [];

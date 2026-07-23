@@ -109,7 +109,9 @@ switch ($action) {
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $where = "1=1";
         if ($id_sede > 0) {
-            $where .= " AND (id_sede = $id_sede OR id_sede IS NULL OR id_sede = 0)";
+            $where .= " AND id_sede = $id_sede";
+        } else {
+            $where .= " AND (id_sede = 0 OR id_sede IS NULL)";
         }
         $query = "SELECT * FROM bot_vendedores WHERE $where ORDER BY id ASC";
         $res = $con->query($query);
