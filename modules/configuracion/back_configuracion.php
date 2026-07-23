@@ -210,6 +210,59 @@ switch ($action) {
         }
         break;
 
+    case 'create_internal_notification_template':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $name = 'starfi_notificacion_interna';
+        $category = 'UTILITY';
+        $language = 'es';
+        $body = 'STARFI CRM: 💬 {{1}} ¡Ingresa para atenderla!';
+        
+        $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
+        if ($res && $row = $res->fetch_assoc()) {
+            if (empty($row['id_negocio'])) {
+                echo json_encode(['status' => 'error', 'message' => 'WABA ID no configurado.']);
+                exit;
+            }
+            $waba_id = $row['id_negocio'];
+            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $payload = [
+                "name" => $name,
+                "language" => $language,
+                "category" => $category,
+                "components" => [
+                    [
+                        "type" => "BODY",
+                        "text" => $body,
+                        "example" => [
+                            "body_text" => [
+                                ["Hola Operador, se te ha asignado una nueva conversacion."]
+                            ]
+                        ]
+                    ]
+                ]
+            ];
+            
+            $curl = curl_init();
+            curl_setopt($curl, CURLOPT_URL, $url);
+            curl_setopt($curl, CURLOPT_POST, true);
+            curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            $raw_exec = curl_exec($curl);
+            $resp = json_decode($raw_exec, true);
+            curl_close($curl);
+            
+            if (isset($resp['id'])) {
+                echo json_encode(['status' => 'success', 'id' => $resp['id']]);
+            } else {
+                $errMsg = $resp['error']['error_user_msg'] ?? $resp['error']['message'] ?? json_encode($resp['error']);
+                echo json_encode(['status' => 'error', 'message' => 'Error al crear en Meta: ' . $errMsg]);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Línea de WhatsApp no configurada.']);
+        }
+        break;
+
     case 'delete_meta_template':
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $name = $_POST['name'] ?? '';

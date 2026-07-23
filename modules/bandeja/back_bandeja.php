@@ -687,10 +687,67 @@ switch ($action) {
         if($conversacion_id > 0 && $nuevo_agente_id > 0) {
             $con->query("UPDATE conversaciones SET id_agente = $nuevo_agente_id, estado = 'ESPERA_ASIGNACION' WHERE id = $conversacion_id");
             
-            $res = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_completo FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $nuevo_agente_id");
-            $nombre_agente = $res->fetch_assoc()['nombre_completo'];
+            $res = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_completo, up.telefono FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $nuevo_agente_id");
+            $rowAgente = $res ? $res->fetch_assoc() : null;
+            $nombre_agente = $rowAgente['nombre_completo'] ?? 'Agente';
+            $telefono_agente = trim($rowAgente['telefono'] ?? '');
 
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
+
+            // Enviar notificación por WhatsApp al operador si tiene teléfono
+            if (!empty($telefono_agente) && $telefono_agente !== '-') {
+                $telefono_clean = preg_replace('/[^0-9]/', '', $telefono_agente);
+                if (!empty($telefono_clean)) {
+                    // Obtener nombre del asignador
+                    $resAsignador = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_asignador FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $agente_id");
+                    $nombre_asignador = ($resAsignador && $rowAsig = $resAsignador->fetch_assoc()) ? $rowAsig['nombre_asignador'] : 'Administrador';
+
+                    // Obtener línea de WhatsApp activa
+                    $qLinea = $con->query("SELECT l.meta_token, l.meta_app_id FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
+                    if (!$qLinea || $qLinea->num_rows == 0) {
+                        $qLinea = $con->query("SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
+                    }
+                    if ($qLinea && $rowLinea = $qLinea->fetch_assoc()) {
+                        $meta_token = $rowLinea['meta_token'];
+                        $phone_number_id = $rowLinea['meta_app_id'];
+                        
+                        $texto_notif = "Hola {$nombre_agente}, tienes una nueva conversación asignada por {$nombre_asignador}.";
+                        
+                        $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                        $post_payload = [
+                            'messaging_product' => 'whatsapp',
+                            'to' => $telefono_clean,
+                            'type' => 'template',
+                            'template' => [
+                                'name' => 'starfi_notificacion_interna',
+                                'language' => ['code' => 'es'],
+                                'components' => [
+                                    [
+                                        'type' => 'body',
+                                        'parameters' => [
+                                            ['type' => 'text', 'text' => $texto_notif]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ];
+                        
+                        $ch_notif = curl_init($msg_url);
+                        curl_setopt($ch_notif, CURLOPT_POST, 1);
+                        curl_setopt($ch_notif, CURLOPT_POSTFIELDS, json_encode($post_payload));
+                        curl_setopt($ch_notif, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
+                        curl_setopt($ch_notif, CURLOPT_RETURNTRANSFER, true);
+                        $res_notif = curl_exec($ch_notif);
+                        $http_code = curl_getinfo($ch_notif, CURLINFO_HTTP_CODE);
+                        curl_close($ch_notif);
+
+                        if ($http_code !== 200) {
+                            error_log("Error enviando notificacion por WhatsApp a operador ($telefono_clean): " . $res_notif);
+                        }
+                    }
+                }
+            }
+
             echo json_encode(['status' => 'success']);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Datos inválidos']);

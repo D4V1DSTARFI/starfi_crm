@@ -572,6 +572,42 @@ function crearPlantillaCSAT() {
     });
 }
 
+function crearPlantillaNotificacionInterna() {
+    let id_sede = $('#plantillas_id_sede').val();
+    
+    Swal.fire({
+        title: '¿Crear Plantilla Notificación Interna?',
+        text: "Se enviará automáticamente a Meta una plantilla estandarizada de tipo UTILITY llamada 'starfi_notificacion_interna' con una variable genérica {{1}} para enviar cualquier aviso interno a operadores.",
+        icon: 'info',
+        showCancelButton: true,
+        confirmButtonColor: '#0dcaf0',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Sí, crear'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+            
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'create_internal_notification_template', id_sede: id_sede },
+                success: function(res) {
+                    if(res.status === 'success') {
+                        Swal.fire('Plantilla Creada', 'La plantilla starfi_notificacion_interna ha sido enviada a revisión a Meta. En breve estará disponible para su uso.', 'success');
+                        sincronizarPlantillasMeta();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                },
+                error: function() {
+                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+                }
+            });
+        }
+    });
+}
+
 function eliminarPlantilla(name) {
     Swal.fire({
         title: '¿Eliminar Plantilla?',

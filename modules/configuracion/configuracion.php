@@ -765,6 +765,9 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                             <button type="button" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
                                 <i class="fa-solid fa-star me-1"></i> Auto-Crear Plantilla CSAT
                             </button>
+                            <button type="button" class="btn btn-info text-white shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaNotificacionInterna()">
+                                <i class="fa-solid fa-bell me-1"></i> Auto-Crear Plantilla Notificación Interna
+                            </button>
                             <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
                                 <i class="fa-solid fa-plus me-1"></i> Nueva Plantilla
                             </button>
