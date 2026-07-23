@@ -761,15 +761,55 @@ switch ($action) {
         break;
 
     case 'get_agents':
-        $res = $con->query("
+        $conversacion_id = intval($_POST['conversacion_id'] ?? $_GET['conversacion_id'] ?? 0);
+        $agente = getAgenteInfo();
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        
+        $target_sede = 0;
+        if ($conversacion_id > 0) {
+            $stmt_s = $con->prepare("
+                SELECT l.id_sede 
+                FROM conversaciones c 
+                JOIN lineas_whatsapp l ON c.id_linea = l.id 
+                WHERE c.id = ? 
+                LIMIT 1
+            ");
+            if ($stmt_s) {
+                $stmt_s->bind_param("i", $conversacion_id);
+                $stmt_s->execute();
+                $res_s = $stmt_s->get_result();
+                if ($row_s = $res_s->fetch_assoc()) {
+                    $target_sede = intval($row_s['id_sede'] ?? 0);
+                }
+                $stmt_s->close();
+            }
+        }
+
+        if ($target_sede <= 0 && $user_sede > 0) {
+            $target_sede = $user_sede;
+        }
+
+        $query = "
             SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre_completo 
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
-            WHERE u.estado = 'ACTIVO' OR u.estado = 1
-        ");
+            LEFT JOIN roles r ON (u.rol = r.id OR u.rol = r.nombre)
+            WHERE (u.estado = 'ACTIVO' OR u.estado = 1)
+              AND u.id != 1
+              AND u.usuario != 'master'
+              AND (UPPER(COALESCE(r.nombre, u.rol)) = 'OPERADOR' OR u.rol = '3' OR u.rol = 3)
+        ";
+
+        if ($target_sede > 0) {
+            $query .= " AND u.id_sede = " . intval($target_sede);
+        }
+
+        $query .= " ORDER BY nombre_completo ASC";
+
+        $res = $con->query($query);
         $agents = [];
         if ($res) {
-            while($row = $res->fetch_assoc()) {
+            while ($row = $res->fetch_assoc()) {
                 $agents[] = $row;
             }
         }

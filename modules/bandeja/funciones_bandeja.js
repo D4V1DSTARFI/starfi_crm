@@ -450,7 +450,7 @@ $(document).ready(function () {
 
         $.ajax({
             url: 'back_bandeja.php', type: 'POST', dataType: 'json',
-            data: { action: 'get_agents' },
+            data: { action: 'get_agents', conversacion_id: activeChatId },
             success: function (res) {
                 if (res.status === 'success') {
                     let options = {};
