@@ -129,8 +129,18 @@ switch ($action) {
         $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
         $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
         $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+        $is_operador = (!$is_master && ($rol_raw === 'OPERADOR' || $rol_raw === 'AGENTE' || $rol_raw === '3'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
+        // RESTRICCIÓN PARA OPERADOR: No puede ver Ventas ni Clientes, y sólo puede ver mensajes asignados a él
+        if ($is_operador) {
+            if ($filter === 'ventas' || $filter === 'clientes') {
+                echo json_encode(['status' => 'success', 'data' => []]);
+                break;
+            }
+            $query .= " AND c.id_agente = $agente_id_actual";
+        }
+
         if (!$is_master && $user_sede > 0) {
             // Operadores y Administradores filtran por su sede asignada
             $query .= " AND l.id_sede = $user_sede";
@@ -156,6 +166,19 @@ switch ($action) {
 
     case 'load_messages':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $agente = getAgenteInfo();
+        $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
+        $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
+        $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+        $is_operador = (!$is_master && ($rol_raw === 'OPERADOR' || $rol_raw === 'AGENTE' || $rol_raw === '3'));
+
+        if ($is_operador && $conversacion_id > 0) {
+            $chk = $con->query("SELECT id FROM conversaciones WHERE id = $conversacion_id AND id_agente = $agente_id_actual");
+            if (!$chk || $chk->num_rows === 0) {
+                echo json_encode(['status' => 'error', 'message' => 'Acceso denegado. Solo puedes acceder a conversaciones asignadas a ti.']);
+                break;
+            }
+        }
         
         $query = "
             SELECT m.id, m.tipo, m.origen, m.contenido, m.timestamp, m.estado_envio, m.url_archivo, m.reply_to_text, m.id_mensaje_meta, up.nombre as nombre_agente 

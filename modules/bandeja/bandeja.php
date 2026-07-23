@@ -304,9 +304,11 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="mb-2">
                     <?php 
                     $rol_agente = strtoupper(trim($agente_actual['rol'] ?? ''));
-                    $is_master_puro = ($rol_agente === 'MASTER');
+                    $agente_id_num = intval($agente_actual['id'] ?? 0);
+                    $is_master = ($agente_id_num === 1 || $rol_agente === 'MASTER' || $rol_agente === 'MASTER CI');
+                    $is_operador = (!$is_master && ($rol_agente === 'OPERADOR' || $rol_agente === 'AGENTE' || $rol_agente === '3'));
                     
-                    if (!$is_master_puro && $user_assigned_sede > 0): 
+                    if (!$is_master && $user_assigned_sede > 0): 
                         // Tanto Administradores como Operadores y otros roles quedan fijos en su sede asignada
                     ?>
                         <select id="filterSede" class="form-select form-select-sm" disabled style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F1F5F9; cursor: not-allowed;">
@@ -329,8 +331,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <!-- Tabs -->
                 <div class="tabs">
                     <button class="tab active" data-target="todos">Todos</button>
-                    <button class="tab" data-target="clientes"><i class="fa-solid fa-user me-1"></i> Clientes</button>
-                    <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
+                    <?php if (!$is_operador): ?>
+                        <button class="tab" data-target="clientes"><i class="fa-solid fa-user me-1"></i> Clientes</button>
+                        <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
+                    <?php endif; ?>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>
