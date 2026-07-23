@@ -362,7 +362,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 </div>
                 <div class="modal-footer border-0 pt-0">
                     <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveUser()">Guardar Configuración</button>
+                    <button type="button" id="btnGuardarUser" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveUser()">Guardar Configuración</button>
                 </div>
             </div>
         </div>
@@ -540,40 +540,60 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             document.getElementById('inputEstado').value = 'INACTIVO';
             document.getElementById('modalAlert').classList.add('d-none');
             
-            const modal = new bootstrap.Modal(document.getElementById('userModal'));
+            const modalEl = document.getElementById('userModal');
+            let modal = bootstrap.Modal.getInstance(modalEl);
+            if (!modal) modal = new bootstrap.Modal(modalEl);
             modal.show();
         }
 
         function editUser(user) {
             document.getElementById('userId').value = user.id;
-            document.getElementById('inputNombre').value = user.nombre;
-            document.getElementById('inputUsuario').value = user.usuario;
-            document.getElementById('inputCedula').value = user.cedula !== '-' ? user.cedula : '';
-            document.getElementById('inputCorreo').value = user.correo !== '-' ? user.correo : '';
-            document.getElementById('inputTelefono').value = user.telefono !== '-' ? user.telefono : '';
+            document.getElementById('inputNombre').value = user.nombre || '';
+            document.getElementById('inputUsuario').value = user.usuario || '';
+            document.getElementById('inputCedula').value = (user.cedula && user.cedula !== '-') ? user.cedula : '';
+            document.getElementById('inputCorreo').value = (user.correo && user.correo !== '-') ? user.correo : '';
+            document.getElementById('inputTelefono').value = (user.telefono && user.telefono !== '-') ? user.telefono : '';
             document.getElementById('inputContrasena').value = '';
             document.getElementById('inputContrasena').required = false;
             document.getElementById('passHint').innerText = '(Dejar en blanco para mantener actual)';
             document.getElementById('inputRol').value = user.id_rol ? user.id_rol : '0';
             document.getElementById('inputSede').value = user.id_sede ? user.id_sede : '0';
-            document.getElementById('inputEstado').value = user.estado;
+            document.getElementById('inputEstado').value = user.estado || 'INACTIVO';
             document.getElementById('userModalTitle').innerText = 'Configurar Usuario, Rol y Sede';
             document.getElementById('modalAlert').classList.add('d-none');
 
-            const modal = new bootstrap.Modal(document.getElementById('userModal'));
+            const modalEl = document.getElementById('userModal');
+            let modal = bootstrap.Modal.getInstance(modalEl);
+            if (!modal) modal = new bootstrap.Modal(modalEl);
             modal.show();
         }
 
         function saveUser() {
             const form = document.getElementById('userForm');
+            const alertEl = document.getElementById('modalAlert');
+            const btn = document.getElementById('btnGuardarUser');
+
             if (!form.checkValidity()) {
-                form.reportValidity();
+                const modalBody = document.querySelector('#userModal .modal-body');
+                if (modalBody) modalBody.scrollTop = 0;
+                
+                const invalidField = form.querySelector(':invalid');
+                if (invalidField) invalidField.focus();
+
+                alertEl.innerText = 'Por favor completa los campos obligatorios requeridos (Nombre, Usuario y un Correo electrónico válido).';
+                alertEl.classList.remove('d-none');
                 return;
             }
 
+            const originalHtml = btn ? btn.innerHTML : 'Guardar Configuración';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...';
+            }
+            alertEl.classList.add('d-none');
+
             const formData = new FormData(form);
             formData.append('action', 'save');
-            // Mapear rol_id_select a rol para compatibilidad con el backend
             const rolVal = document.getElementById('inputRol').value;
             formData.append('rol', rolVal);
 
@@ -581,21 +601,40 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 method: 'POST',
                 body: formData
             })
-            .then(res => res.json())
-            .then(data => {
+            .then(res => res.text())
+            .then(text => {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    console.error('Server non-JSON response:', text);
+                    alertEl.innerText = 'Respuesta inesperada del servidor. Por favor intenta de nuevo.';
+                    alertEl.classList.remove('d-none');
+                    return;
+                }
+
                 if (data.success) {
                     const modalEl = document.getElementById('userModal');
                     const modal = bootstrap.Modal.getInstance(modalEl);
                     if (modal) modal.hide();
                     loadUsers();
                 } else {
-                    const alert = document.getElementById('modalAlert');
-                    alert.innerText = data.message || 'Error al guardar';
-                    alert.classList.remove('d-none');
+                    alertEl.innerText = data.message || 'Error al guardar';
+                    alertEl.classList.remove('d-none');
                 }
             })
             .catch(err => {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
                 console.error(err);
+                alertEl.innerText = 'Error al comunicarse con el servidor. Por favor intenta de nuevo.';
+                alertEl.classList.remove('d-none');
             });
         }
 

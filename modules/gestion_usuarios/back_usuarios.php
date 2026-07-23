@@ -36,6 +36,10 @@ if ($res_mci && $row_mci = mysqli_fetch_assoc($res_mci)) {
 
 @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN estado ENUM('ACTIVO', 'INACTIVO') DEFAULT 'INACTIVO'");
 @mysqli_query($con, "ALTER TABLE usuario ADD COLUMN id_sede INT DEFAULT NULL");
+@mysqli_query($con, "ALTER TABLE usuario MODIFY COLUMN rol VARCHAR(100) DEFAULT NULL");
+
+$agente_info = getAgenteInfo();
+$es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) === 'MASTER');
 
 $action = $_REQUEST['action'] ?? 'list';
 
@@ -69,9 +73,6 @@ switch ($action) {
                 ];
             }
         }
-
-        $agente_info = getAgenteInfo();
-        $es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) === 'MASTER');
 
         if ($es_master_puro) {
             // Garantizar que el usuario Master siempre esté en el listado para MASTER puro
@@ -198,10 +199,10 @@ switch ($action) {
                 $stmtP->close();
             }
 
-            // Actualizar perfil
-            $stmtPerf = $con->prepare("UPDATE usuario_perfil SET nombre = ?, cedula = ?, correo = ?, telefono = ? WHERE id_usuario = ?");
+            // Actualizar o crear perfil de usuario (UPSERT)
+            $stmtPerf = $con->prepare("INSERT INTO usuario_perfil (id_usuario, nombre, cedula, correo, telefono) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nombre = VALUES(nombre), cedula = VALUES(cedula), correo = VALUES(correo), telefono = VALUES(telefono)");
             if ($stmtPerf) {
-                $stmtPerf->bind_param("ssssi", $nombre, $cedula, $correo, $telefono, $id);
+                $stmtPerf->bind_param("issss", $id, $nombre, $cedula, $correo, $telefono);
                 $stmtPerf->execute();
                 $stmtPerf->close();
             }
