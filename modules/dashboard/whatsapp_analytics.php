@@ -448,6 +448,13 @@ if ($res_sedes) {
                     }
                 }, 'json');
             });
+
+            // Recargar plantillas al cambiar de sede
+            $('#filterSede').change(function() {
+                templatesLoaded = false;
+                $('#filterPlantilla').html('<option value="">Todas las plantillas</option>');
+                fetchTemplatesOnLoad();
+            });
         });
 
         function fetchTemplatesOnLoad() {

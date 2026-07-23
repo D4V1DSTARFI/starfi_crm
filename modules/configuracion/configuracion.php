@@ -759,6 +759,9 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-muted me-2"></i>Lista de Plantillas Sincronizadas</h6>
                         <div>
+                            <button type="button" class="btn btn-success shadow-sm rounded-pill fw-bold me-2" onclick="sincronizarPlantillasMeta()">
+                                <i class="fa-solid fa-rotate me-1"></i> Sincronizar Plantillas
+                            </button>
                             <button type="button" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
                                 <i class="fa-solid fa-star me-1"></i> Auto-Crear Plantilla CSAT
                             </button>

@@ -446,6 +446,53 @@ function cargarPlantillasDeMeta() {
     });
 }
 
+function sincronizarPlantillasMeta() {
+    let id_sede = $('#plantillas_id_sede').val();
+    let tbody = $('#tablaPlantillasMeta tbody');
+    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i>Sincronizando con Meta...</td></tr>');
+    
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'sync_meta_templates', id_sede: id_sede },
+        success: function(res) {
+            if(res.status === 'success') {
+                tbody.empty();
+                if(!res.data || res.data.length === 0) {
+                    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted">No hay plantillas registradas en Meta.</td></tr>');
+                    return;
+                }
+                
+                res.data.forEach(t => {
+                    let badgeColor = 'bg-secondary';
+                    if (t.status === 'APPROVED') badgeColor = 'bg-success';
+                    else if (t.status === 'REJECTED') badgeColor = 'bg-danger';
+                    else if (t.status === 'PENDING') badgeColor = 'bg-warning text-dark';
+                    
+                    let html = `
+                        <tr>
+                            <td class="fw-bold text-dark">${t.name}</td>
+                            <td><span class="badge bg-light text-dark border">${t.category}</span></td>
+                            <td>${t.language}</td>
+                            <td><span class="badge ${badgeColor}">${t.status}</span></td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline-danger" onclick="eliminarPlantilla('${t.name}')" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.append(html);
+                });
+            } else {
+                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${res.message}</td></tr>`);
+            }
+        },
+        error: function() {
+            tbody.html('<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Error de conexión al sincronizar plantillas.</td></tr>');
+        }
+    });
+}
+
 function guardarNuevaPlantilla() {
     let id_sede = $('#plantillas_id_sede').val();
     let name = $('#new_template_name').val().trim();

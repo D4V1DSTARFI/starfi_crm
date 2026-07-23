@@ -37,12 +37,42 @@ switch ($action) {
     // --- GESTIÓN DE PLANTILLAS META ---
     case 'get_meta_templates':
         $id_sede = intval($_POST['id_sede'] ?? 0);
+        // Intentar leer desde la base de datos
+        $res = $con->query("SELECT name, category, language, status FROM plantillas_whatsapp WHERE id_sede = $id_sede ORDER BY name ASC");
+        if ($res) {
+            $data = [];
+            while($row = $res->fetch_assoc()) {
+                $data[] = $row;
+            }
+            echo json_encode(['status' => 'success', 'data' => $data]);
+        } else {
+            // Si la tabla no existe o hay error, retornar array vacío.
+            echo json_encode(['status' => 'success', 'data' => []]);
+        }
+        break;
+
+    case 'sync_meta_templates':
+        $id_sede = intval($_POST['id_sede'] ?? 0);
         $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
         if ($res && $row = $res->fetch_assoc()) {
             if (empty($row['id_negocio'])) {
                 echo json_encode(['status' => 'error', 'message' => 'WABA ID (ID de Negocio) no configurado en la API de WhatsApp de esta sede.']);
                 exit;
             }
+            
+            // Crear tabla si no existe
+            $con->query("CREATE TABLE IF NOT EXISTS `plantillas_whatsapp` (
+              `id` int(11) NOT NULL AUTO_INCREMENT,
+              `id_sede` int(11) NOT NULL,
+              `name` varchar(255) NOT NULL,
+              `category` varchar(100) NOT NULL,
+              `language` varchar(50) NOT NULL,
+              `status` varchar(100) NOT NULL,
+              `last_sync` datetime NOT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `sede_name` (`id_sede`,`name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+            
             $waba_id = $row['id_negocio'];
             $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
             $curl = curl_init();
@@ -54,7 +84,30 @@ switch ($action) {
             curl_close($curl);
             
             if (isset($resp['data'])) {
-                echo json_encode(['status' => 'success', 'data' => $resp['data']]);
+                $now = date('Y-m-d H:i:s');
+                // Para simplificar, eliminamos las de esta sede e insertamos de nuevo
+                $con->query("DELETE FROM plantillas_whatsapp WHERE id_sede = $id_sede");
+                
+                $saved_data = [];
+                foreach ($resp['data'] as $t) {
+                    $name = $con->real_escape_string($t['name'] ?? '');
+                    $category = $con->real_escape_string($t['category'] ?? '');
+                    $language = $con->real_escape_string($t['language'] ?? '');
+                    $status = $con->real_escape_string($t['status'] ?? '');
+                    
+                    if (!empty($name)) {
+                        $con->query("INSERT INTO plantillas_whatsapp (id_sede, name, category, language, status, last_sync) VALUES ($id_sede, '$name', '$category', '$language', '$status', '$now')");
+                        $saved_data[] = [
+                            'name' => $name,
+                            'category' => $category,
+                            'language' => $language,
+                            'status' => $status
+                        ];
+                    }
+                }
+                
+                // Retornamos las recien guardadas
+                echo json_encode(['status' => 'success', 'data' => $saved_data]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Error al leer de Meta: ' . ($resp['error']['message'] ?? 'Desconocido')]);
             }

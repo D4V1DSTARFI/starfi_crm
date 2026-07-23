@@ -190,6 +190,35 @@ $id_linea = 0;
 $id_empresa = 1; // Default
 $row_active = null; // Guardará la info de la línea activa en caso de fallback
 
+// === NUEVO: Obtener la empresa original de la sede (sin importar si tiene línea de WA activa) ===
+$original_id_empresa = null;
+if (!empty($verify_token)) {
+    $stmt_orig = $con->prepare("SELECT id_empresa, id as crm_id_sede FROM sedes WHERE api_token = ? LIMIT 1");
+    if ($stmt_orig) {
+        $stmt_orig->bind_param("s", $verify_token);
+        $stmt_orig->execute();
+        $q_orig = $stmt_orig->get_result();
+        if ($q_orig && $q_orig->num_rows > 0) {
+            $row_orig = $q_orig->fetch_assoc();
+            $original_id_empresa = $row_orig['id_empresa'];
+            $crm_id_sede = $row_orig['crm_id_sede'];
+        }
+        $stmt_orig->close();
+    }
+} elseif (!empty($id_sede)) {
+    $tmp_crm_id_sede = ($id_sede == 23) ? 24 : (intval($id_sede) + 2);
+    $q_orig = $con->query("SELECT id_empresa, id as crm_id_sede FROM sedes WHERE id = $tmp_crm_id_sede LIMIT 1");
+    if ($q_orig && $q_orig->num_rows > 0) {
+        $row_orig = $q_orig->fetch_assoc();
+        $original_id_empresa = $row_orig['id_empresa'];
+        $crm_id_sede = $row_orig['crm_id_sede'];
+    }
+}
+if ($original_id_empresa) {
+    $id_empresa = $original_id_empresa;
+}
+// ==============================================================================================
+
 // 1. Intentar buscar por token de verificación único (60-64 caracteres)
 if (!empty($verify_token)) {
     $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
@@ -278,6 +307,11 @@ if (empty($token)) {
             $crm_id_sede = $row_active['crm_id_sede'];
         }
     }
+}
+
+// Restaurar id_empresa original si se usó un fallback de línea
+if (!empty($original_id_empresa)) {
+    $id_empresa = $original_id_empresa;
 }
 
 // Si la Sede no posee una línea de WhatsApp activa configurada, NO enviar usando otra sede
