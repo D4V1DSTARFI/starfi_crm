@@ -329,9 +329,25 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             marcar_como_leido_api($linea_info, $id_mensaje_meta);
             
             // ====== LÓGICA DE ROBOT / BOT DE SEDE ======
-            // Solo responde si el bot está activado en la sede y la conversación no ha sido tomada por un agente
+            // Verificar si el número remitente pertenece a un operador/usuario registrado en la plataforma
+            $es_operador = false;
+            $tel_digits = preg_replace('/[^0-9]/', '', $telefono_cliente);
+            if (!empty($tel_digits)) {
+                $q_ops = mysqli_query($con, "SELECT telefono FROM usuario_perfil WHERE telefono IS NOT NULL AND telefono != '' AND telefono != '-'");
+                if ($q_ops && mysqli_num_rows($q_ops) > 0) {
+                    while ($row_op = mysqli_fetch_assoc($q_ops)) {
+                        $op_tel_digits = preg_replace('/[^0-9]/', '', $row_op['telefono']);
+                        if (!empty($op_tel_digits) && (strpos($tel_digits, $op_tel_digits) !== false || strpos($op_tel_digits, $tel_digits) !== false)) {
+                            $es_operador = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Solo responde si el bot está activado en la sede, el remitente NO es un operador y la conversación no ha sido tomada por un agente
             $bot_activo = (isset($linea_info['bot_activo']) && $linea_info['bot_activo'] == 1);
-            if ($bot_activo && ($estado_conv === 'BOT_RECOPILANDO' || $estado_conv === 'ESPERA_ASIGNACION')) {
+            if ($bot_activo && !$es_operador && ($estado_conv === 'BOT_RECOPILANDO' || $estado_conv === 'ESPERA_ASIGNACION')) {
                 $id_sede = intval($linea_info['id_sede']);
                 $cuerpo_upper = strtoupper(trim($cuerpo_mensaje));
                 $bot_respondio = false;
