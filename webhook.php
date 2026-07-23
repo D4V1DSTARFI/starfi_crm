@@ -359,8 +359,10 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                         $row = mysqli_fetch_assoc($q_bienvenida);
                         enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                         $bot_respondio = true;
-                        if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
-if ($row['tipo'] === 'CIERRE_CSAT') {
+                        if ($row['tipo'] === 'CONTACTOS') { 
+                            enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
+                        }
+                        if ($row['tipo'] === 'CIERRE_CSAT') {
                             enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                         }
                     }
@@ -371,8 +373,10 @@ if ($row['tipo'] === 'CIERRE_CSAT') {
                         $row = mysqli_fetch_assoc($q_match);
                         enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                         $bot_respondio = true;
-                        if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
-if ($row['tipo'] === 'CIERRE_CSAT') {
+                        if ($row['tipo'] === 'CONTACTOS') { 
+                            enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
+                        }
+                        if ($row['tipo'] === 'CIERRE_CSAT') {
                             enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                         }
                     } else {
@@ -382,8 +386,10 @@ if ($row['tipo'] === 'CIERRE_CSAT') {
                             $row = mysqli_fetch_assoc($q_def);
                             enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                             $bot_respondio = true;
-                            if (stripos($row['mensaje'], 'asesor') !== false || stripos($row['mensaje'], 'asesores') !== false || $row['tipo'] === 'CONTACTOS') { enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); }
-if ($row['tipo'] === 'CIERRE_CSAT') {
+                            if ($row['tipo'] === 'CONTACTOS') { 
+                                enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
+                            }
+                            if ($row['tipo'] === 'CIERRE_CSAT') {
                                 enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
                             }
                         }
@@ -497,17 +503,11 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
         while ($row = mysqli_fetch_assoc($q_asesores)) {
             $asesores[] = $row;
         }
-    } else {
-        // Fallback en caso de que la tabla estÃ© vacÃ­a
-        $asesores = [
-            ['nombre' => 'Ceny Landaeta', 'telefono' => '+584126127873'],
-            ['nombre' => 'Gabriel Benitez', 'telefono' => '+584242907452'],
-            ['nombre' => 'Junior Sosa', 'telefono' => '+584123695820'],
-            ['nombre' => 'Luis Albarran', 'telefono' => '+584242988805'],
-            ['nombre' => 'Yorman Cardozo', 'telefono' => '+584127029710'],
-            ['nombre' => 'Marcos Santo Domingo', 'telefono' => '+584122949976'],
-            ['nombre' => 'Miguel Strocchia', 'telefono' => '+584126862683']
-        ];
+    }
+    
+    // Si la sede no posee asesores registrados en la base de datos, NO enviar ninguno
+    if (empty($asesores)) {
+        return;
     }
     
     $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
