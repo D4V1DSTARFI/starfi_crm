@@ -308,22 +308,22 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     $is_master = ($agente_id_num === 1 || $rol_agente === 'MASTER' || $rol_agente === 'MASTER CI');
                     $is_operador = (!$is_master && ($rol_agente === 'OPERADOR' || $rol_agente === 'AGENTE' || $rol_agente === '3'));
                     
-                    if (!$is_master && $user_assigned_sede > 0): 
-                        // Tanto Administradores como Operadores y otros roles quedan fijos en su sede asignada
+                    if ($is_master): 
+                        // Únicamente los usuarios Master ven el selector desplegable de Sedes
                     ?>
-                        <select id="filterSede" class="form-select form-select-sm" disabled style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F1F5F9; cursor: not-allowed;">
+                        <select id="filterSede" class="form-select form-select-sm mb-2" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
+                            <option value="">Todas las Sedes</option>
                             <?php foreach ($sedes as $s): ?>
-                                <?php if ($user_assigned_sede == $s['id']): ?>
-                                    <option value="<?= $s['id'] ?>" selected><?= htmlspecialchars($s['nombre_sede']) ?></option>
-                                <?php endif; ?>
+                                <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     <?php else: ?>
-                        <select id="filterSede" class="form-select form-select-sm" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
-                            <option value="">Todas las Sedes</option>
-                            <?php foreach ($sedes as $s): ?>
-                                <option value="<?= $s['id'] ?>" <?= ($user_assigned_sede == $s['id']) ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre_sede']) ?></option>
-                            <?php endforeach; ?>
+                        <input type="hidden" id="filterSede" value="<?= $user_assigned_sede ?>">
+                    <?php endif; ?>
+
+                    <?php if (!$is_operador): ?>
+                        <select id="filterOperador" class="form-select form-select-sm" style="border-radius: 20px; padding: 6px 15px; border-color: #E2E8F0; font-size: 0.85rem; color: #475569; background-color: #F8FAFC;">
+                            <option value="">Todos los Operadores</option>
                         </select>
                     <?php endif; ?>
                 </div>

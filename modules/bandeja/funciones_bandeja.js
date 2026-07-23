@@ -22,8 +22,7 @@ $(document).ready(function () {
         }
     });
 
-    loadChats();
-
+    loadOperadoresFilter();
     loadChats();
 
     // Tiempo Real con Server-Sent Events (SSE)
@@ -330,6 +329,12 @@ $(document).ready(function () {
 
     // Filtro por Sede
     $(document).on('change', '#filterSede', function () {
+        loadOperadoresFilter();
+        loadChats();
+    });
+
+    // Filtro por Operador
+    $(document).on('change', '#filterOperador', function () {
         loadChats();
     });
 
@@ -493,13 +498,42 @@ $(document).ready(function () {
     });
 });
 
-function loadChats() {
+function loadOperadoresFilter() {
+    const filterOperador = $('#filterOperador');
+    if (!filterOperador.length || filterOperador.is(':disabled')) return;
+
     const id_sede = $('#filterSede').val() || '';
     $.ajax({
         url: 'back_bandeja.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_chats', filter: currentFilter, id_sede: id_sede },
+        data: { action: 'get_agents', id_sede: id_sede },
+        success: function (res) {
+            if (res.status === 'success') {
+                const currentVal = filterOperador.val();
+                let html = '<option value="">Todos los Operadores</option>';
+                res.data.forEach(ag => {
+                    html += `<option value="${ag.id}">${ag.nombre_completo}</option>`;
+                });
+                filterOperador.html(html);
+                if (currentVal && filterOperador.find(`option[value="${currentVal}"]`).length) {
+                    filterOperador.val(currentVal);
+                } else {
+                    filterOperador.val('');
+                }
+            }
+        }
+    });
+}
+
+function loadChats() {
+    const id_sede = $('#filterSede').val() || '';
+    const id_agente = $('#filterOperador').val() || '';
+    $.ajax({
+        url: 'back_bandeja.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'load_chats', filter: currentFilter, id_sede: id_sede, id_agente: id_agente },
         success: function (response) {
             if (response.status === 'success') {
                 renderChatList(response.data);

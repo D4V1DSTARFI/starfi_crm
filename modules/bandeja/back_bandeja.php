@@ -139,6 +139,12 @@ switch ($action) {
                 break;
             }
             $query .= " AND c.id_agente = $agente_id_actual";
+        } else {
+            // Para Master y Administrador: Si seleccionaron un operador específico en el filtro
+            $selected_agente = intval($_POST['id_agente'] ?? 0);
+            if ($selected_agente > 0) {
+                $query .= " AND c.id_agente = $selected_agente";
+            }
         }
 
         if (!$is_master && $user_sede > 0) {
@@ -800,11 +806,14 @@ switch ($action) {
 
     case 'get_agents':
         $conversacion_id = intval($_POST['conversacion_id'] ?? $_GET['conversacion_id'] ?? 0);
+        $posted_sede = intval($_POST['id_sede'] ?? $_GET['id_sede'] ?? 0);
         $agente = getAgenteInfo();
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         $target_sede = 0;
-        if ($conversacion_id > 0) {
+        if ($posted_sede > 0) {
+            $target_sede = $posted_sede;
+        } elseif ($conversacion_id > 0) {
             $stmt_s = $con->prepare("
                 SELECT l.id_sede 
                 FROM conversaciones c 
