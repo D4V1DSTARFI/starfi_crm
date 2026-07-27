@@ -129,7 +129,8 @@ switch ($action) {
         $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
         $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
         $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
-        $is_operador = (!$is_master && ($rol_raw === 'OPERADOR' || $rol_raw === 'AGENTE' || $rol_raw === '3'));
+        $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
+        $is_operador = (!$is_master && !$is_admin);
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         // RESTRICCIÓN PARA OPERADOR: No puede ver Ventas ni Clientes, y sólo puede ver mensajes asignados a él
@@ -148,7 +149,7 @@ switch ($action) {
         }
 
         if (!$is_master && $user_sede > 0) {
-            // Operadores y Administradores filtran por su sede asignada
+            // Operadores y Administradores filtran por su sede/tienda asignada
             $query .= " AND l.id_sede = $user_sede";
         } else {
             // Master ve todas las sedes (a menos que aplique un filtro manual de sede)
@@ -176,7 +177,8 @@ switch ($action) {
         $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
         $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
         $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
-        $is_operador = (!$is_master && ($rol_raw === 'OPERADOR' || $rol_raw === 'AGENTE' || $rol_raw === '3'));
+        $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
+        $is_operador = (!$is_master && !$is_admin);
 
         if ($is_operador && $conversacion_id > 0) {
             $chk = $con->query("SELECT id FROM conversaciones WHERE id = $conversacion_id AND id_agente = $agente_id_actual");
@@ -199,8 +201,11 @@ switch ($action) {
             $stmt->execute();
             $res = $stmt->get_result();
             
-            // Marcar mensajes como leídos
-            $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+            // Marcar mensajes como leídos solo si es OPERADOR al abrir.
+            // Para Administrador/Master se mantiene sin leer a menos que respondan.
+            if ($is_operador) {
+                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+            }
             
             $messages = [];
             while ($row = $res->fetch_assoc()) {
@@ -322,6 +327,8 @@ switch ($action) {
         if ($stmt) {
             $stmt->bind_param("ississss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text);
             if ($stmt->execute()) {
+                // Al responder (ya sea Operador, Administrador o Master), la conversación se marca como leída
+                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
                 echo json_encode(['status' => 'success', 'message_id' => $stmt->insert_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar mensaje en BD.']);
@@ -463,6 +470,8 @@ switch ($action) {
             ");
             $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
             if ($stmt_msg->execute()) {
+                // Al enviar un archivo/multimedia, la conversación se marca como leída
+                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
                 echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar en BD.']);
