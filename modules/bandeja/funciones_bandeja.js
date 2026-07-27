@@ -607,7 +607,7 @@ function renderChatList(chats) {
                 <div class="chat-summary">
                     <div class="chat-top">
                         <h4>${name}</h4>
-                        <span class="time">${formatTime(lastTime)}</span>
+                        <span class="time" title="${formatFullDateTime(lastTime)}">${formatChatListDate(lastTime)}</span>
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
@@ -828,9 +828,27 @@ function renderMessages(messages, scrollToBottom) {
         area.append('<div class="text-center text-muted mt-5">Inicia la conversación.</div>');
         return;
     }
+    let lastDateKey = null;
     messages.forEach(msg => {
         let msgHtml = '';
         let timeLabel = formatTime(msg.timestamp);
+
+        let parsedDate = parseDateTime(msg.timestamp);
+        let dateKey = parsedDate ? `${parsedDate.getFullYear()}-${String(parsedDate.getMonth()+1).padStart(2,'0')}-${String(parsedDate.getDate()).padStart(2,'0')}` : null;
+
+        if (dateKey && dateKey !== lastDateKey) {
+            lastDateKey = dateKey;
+            let dividerHtml = `
+                <div class="date-divider text-center my-3 w-100" style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 15px; margin-bottom: 15px;">
+                    <div style="flex: 1; height: 1px; background: #E5E7EB;"></div>
+                    <span class="badge bg-light text-secondary border px-3 py-1.5 rounded-pill" style="font-size: 0.75rem; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                        <i class="fa-regular fa-calendar-days me-1 text-primary"></i> ${formatDateDivider(msg.timestamp)}
+                    </span>
+                    <div style="flex: 1; height: 1px; background: #E5E7EB;"></div>
+                </div>
+            `;
+            area.append(dividerHtml);
+        }
 
         let mediaHtml = '';
         if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
@@ -1192,9 +1210,87 @@ function sendMessage() {
     });
 }
 
+function parseDateTime(datetimeStr) {
+    if (!datetimeStr) return null;
+    let str = String(datetimeStr).replace(' ', 'T');
+    let d = new Date(str);
+    if (isNaN(d.getTime())) {
+        d = new Date(datetimeStr);
+    }
+    return isNaN(d.getTime()) ? null : d;
+}
+
+function formatChatListDate(datetimeStr) {
+    const d = parseDateTime(datetimeStr);
+    if (!d) return '';
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (msgDate.getTime() === today.getTime()) {
+        return timeStr;
+    } else if (msgDate.getTime() === yesterday.getTime()) {
+        return 'Ayer';
+    } else {
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        if (year === now.getFullYear()) {
+            return `${day}/${month}`;
+        }
+        return `${day}/${month}/${year}`;
+    }
+}
+
+function formatDateDivider(datetimeStr) {
+    const d = parseDateTime(datetimeStr);
+    if (!d) return '';
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+    const dayName = days[d.getDay()];
+    const dayNum = d.getDate();
+    const monthName = months[d.getMonth()];
+    const year = d.getFullYear();
+
+    if (msgDate.getTime() === today.getTime()) {
+        return `Hoy - ${dayNum} de ${monthName}`;
+    } else if (msgDate.getTime() === yesterday.getTime()) {
+        return `Ayer - ${dayNum} de ${monthName}`;
+    } else {
+        if (year === now.getFullYear()) {
+            return `${dayName}, ${dayNum} de ${monthName}`;
+        }
+        return `${dayName}, ${dayNum} de ${monthName} de ${year}`;
+    }
+}
+
+function formatFullDateTime(datetimeStr) {
+    const d = parseDateTime(datetimeStr);
+    if (!d) return '';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${day}/${month}/${year} ${timeStr}`;
+}
+
 function formatTime(datetimeStr) {
-    if (!datetimeStr) return '';
-    const d = new Date(datetimeStr);
+    const d = parseDateTime(datetimeStr);
+    if (!d) return '';
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
