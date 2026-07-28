@@ -165,15 +165,32 @@ $(document).ready(function() {
         });
     });
 
-    // 3. Configuración GEMA AI
+    // 3. Configuración GEMA AI Multi-Sede
+    cargarSedesEnGemaSelect();
+
+    $('#gema_id_sede').on('change', function() {
+        const id_sede = $(this).val();
+        if (id_sede) {
+            loadGemaConfig(id_sede);
+        }
+    });
+
     $('#btnSaveGema').on('click', function() {
+        const id_sede = $('#gema_id_sede').val();
         const prompt = $('#gema_prompt').val().trim();
         const nombre = $('#gema_nombre').val().trim();
         const token = $('#gema_token').val().trim();
-        const estado = $('#gema_estado').is(':checked') ? 1 : 0;
+        const modelo = $('#gema_modelo_ia').val();
+        const temperatura = $('#gema_temperatura').val();
+        const estado = $('#gema_estado').is(':checked') ? 'ACTIVO' : 'INACTIVO';
         
+        if(!id_sede) {
+            Swal.fire('Error', 'Seleccione una Sede', 'warning');
+            return;
+        }
+
         if(!prompt) {
-            Swal.fire('Error', 'El Prompt Inicial es obligatorio', 'warning');
+            Swal.fire('Error', 'El Prompt de Instrucciones es obligatorio', 'warning');
             return;
         }
 
@@ -186,10 +203,13 @@ $(document).ready(function() {
             dataType: 'json',
             data: {
                 action: 'save_gema',
-                prompt: prompt,
-                nombre: nombre,
-                token: token,
-                estado: estado
+                id_sede: id_sede,
+                agente_nombre: nombre,
+                agente_instrucciones: prompt,
+                gemini_api_key: token,
+                modelo_ia: modelo,
+                temperatura: temperatura,
+                estado_ia: estado
             },
             success: function(res) {
                 if(res.status === 'success'){
@@ -204,23 +224,88 @@ $(document).ready(function() {
         });
     });
 
-    // Cargar config Gema si existe
-    loadGemaConfig();
+    $('#btnTestGema').on('click', function() {
+        const token = $('#gema_token').val().trim();
+        const modelo = $('#gema_modelo_ia').val();
+        const nombre = $('#gema_nombre').val().trim();
+        const temperatura = $('#gema_temperatura').val();
+
+        if(!token) {
+            Swal.fire('Atención', 'Introduce una API Key para realizar la prueba.', 'warning');
+            return;
+        }
+
+        const btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Probando...');
+
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'test_gema_connection',
+                token: token,
+                modelo_ia: modelo,
+                nombre: nombre,
+                temperatura: temperatura
+            },
+            success: function(res) {
+                if(res.status === 'success') {
+                    $('#testGemaContent').text(res.respuesta);
+                    $('#testGemaLog').removeClass('d-none');
+                    Swal.fire('¡Conexión Exitosa!', 'La API de IA respondió correctamente.', 'success');
+                } else {
+                    $('#testGemaLog').addClass('d-none');
+                    Swal.fire('Error de Conexión', res.message, 'error');
+                }
+            },
+            error: function() {
+                Swal.fire('Error', 'Fallo al comunicarse con el servidor.', 'error');
+            },
+            complete: function() {
+                btn.prop('disabled', false).html('<i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión IA');
+            }
+        });
+    });
 
 });
 
-function loadGemaConfig() {
+function cargarSedesEnGemaSelect() {
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'get_sedes_list' },
+        success: function(res) {
+            if(res.status === 'success' && res.data) {
+                let select = $('#gema_id_sede');
+                select.empty();
+                res.data.forEach(s => {
+                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                });
+                if (res.data.length > 0) {
+                    select.val(res.data[0].id);
+                    loadGemaConfig(res.data[0].id);
+                }
+            }
+        }
+    });
+}
+
+function loadGemaConfig(id_sede) {
     $.ajax({
         url: 'back_configuracion.php', 
         type: 'POST', 
         dataType: 'json',
-        data: { action: 'load_gema' },
+        data: { action: 'load_gema', id_sede: id_sede },
         success: function(res) {
             if(res.status === 'success' && res.data) {
-                if (res.data.prompt) $('#gema_prompt').val(res.data.prompt);
-                if (res.data.nombre) $('#gema_nombre').val(res.data.nombre);
-                if (res.data.token) $('#gema_token').val(res.data.token);
-                $('#gema_estado').prop('checked', res.data.estado == 1);
+                if (res.data.prompt !== undefined) $('#gema_prompt').val(res.data.prompt);
+                if (res.data.nombre !== undefined) $('#gema_nombre').val(res.data.nombre);
+                if (res.data.token !== undefined) $('#gema_token').val(res.data.token);
+                if (res.data.modelo_ia !== undefined) $('#gema_modelo_ia').val(res.data.modelo_ia);
+                if (res.data.temperatura !== undefined) $('#gema_temperatura').val(res.data.temperatura);
+                $('#gema_estado').prop('checked', res.data.estado == 1 || res.data.estado_ia === 'ACTIVO');
             }
         }
     });

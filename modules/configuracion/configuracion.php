@@ -316,7 +316,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <div class="tab-pane fade" id="gema" role="tabpanel">
                     <div class="config-card" style="padding: 0;">
                         <div class="d-flex justify-content-between align-items-center" style="padding: 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.04);">
-                            <h4 class="config-card-title border-0 pb-0 mb-0"><i class="fa-solid fa-wand-magic-sparkles text-starfi-primary me-2"></i> Asistente de Inteligencia Artificial (Gema)</h4>
+                            <h4 class="config-card-title border-0 pb-0 mb-0"><i class="fa-solid fa-wand-magic-sparkles text-starfi-primary me-2"></i> Asistente de Inteligencia Artificial Multi-Sede (Gema)</h4>
                         </div>
 
                         <div class="p-4" style="background-color: #F8FAFC; min-height: 400px;">
@@ -324,43 +324,79 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 <!-- Columna Izquierda: Ajustes Principales -->
                                 <div class="col-md-7">
                                     
+                                    <!-- Selección de Sede -->
+                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 8px; border: 1px solid #CBD5E1 !important; background-color: #F1F5F9;">
+                                        <div class="card-body p-3">
+                                            <label class="form-label text-dark fw-bold text-uppercase mb-1" style="font-size: 0.8rem;"><i class="fa-solid fa-building me-1 text-primary"></i> SELECCIONAR SEDE A CONFIGURAR</label>
+                                            <select class="form-select form-select-premium fw-bold" id="gema_id_sede" style="background-color: #ffffff;">
+                                                <option value="">Cargando sedes...</option>
+                                            </select>
+                                            <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-shield-halved me-1"></i> Cada sede posee su propia configuración, API Key e inventario de respuestas aislado.</small>
+                                        </div>
+                                    </div>
+
                                     <!-- Toggle de activación -->
                                     <div class="card border-0 shadow-sm mb-4" style="border-radius: 8px; border: 1px solid #E2E8F0 !important;">
                                         <div class="card-body">
                                             <div class="form-check form-switch d-flex align-items-start ps-0">
                                                 <input class="form-check-input mt-1 me-3 ms-0" type="checkbox" id="gema_estado" style="width: 2.8rem; height: 1.4rem; cursor: pointer; flex-shrink: 0;" checked>
                                                 <div>
-                                                    <label class="form-check-label fw-bold text-dark mb-1" for="gema_estado" style="font-size: 0.95rem;">Activar Agente Conversacional IA (Gema)</label>
-                                                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.4;">Cuando esté activo, el chatbot responderá automáticamente usando Inteligencia Artificial (Gemini) en WhatsApp en lugar del flujo rígido tradicional.</p>
+                                                    <label class="form-check-label fw-bold text-dark mb-1" for="gema_estado" style="font-size: 0.95rem;">Activar Agente Conversacional IA para esta Sede</label>
+                                                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.4;">Cuando esté activo, el chatbot responderá automáticamente usando la API de Gemma / Gemini en WhatsApp para las líneas de esta sede.</p>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <!-- Nombre -->
-                                    <div class="mb-4">
-                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">NOMBRE DEL AGENTE VIRTUAL</label>
-                                        <input type="text" class="form-control form-control-premium" id="gema_nombre" placeholder="Gema" value="Gema" style="background-color: #F8FAFC;">
+                                    <div class="row g-3 mb-4">
+                                        <!-- Nombre del Asistente -->
+                                        <div class="col-md-6">
+                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">NOMBRE DEL AGENTE VIRTUAL</label>
+                                            <input type="text" class="form-control form-control-premium" id="gema_nombre" placeholder="Ej: Gema Altamira" value="Gema" style="background-color: #F8FAFC;">
+                                        </div>
+                                        <!-- Modelo de IA -->
+                                        <div class="col-md-6">
+                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">MODELO DE IA</label>
+                                            <select class="form-select form-select-premium" id="gema_modelo_ia" style="background-color: #F8FAFC;">
+                                                <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash (Recomendado)</option>
+                                                <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                                                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                                <option value="gemma-4-31b-it">Gemma 4 31B IT</option>
+                                                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                            </select>
+                                        </div>
                                     </div>
-                                    
-                                    <!-- API Key -->
-                                    <div class="mb-4">
-                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">GEMINI API KEY</label>
-                                        <input type="password" class="form-control form-control-premium" id="gema_token" placeholder="...................." style="background-color: #F8FAFC;">
-                                        <small class="text-muted d-block mt-2" style="font-size: 0.8rem;"><i class="fa-solid fa-key me-1"></i> Introduce tu API Key de Google AI Studio para activar la IA.</small>
+
+                                    <div class="row g-3 mb-4">
+                                        <!-- API Key -->
+                                        <div class="col-md-8">
+                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">GEMINI API KEY</label>
+                                            <input type="password" class="form-control form-control-premium" id="gema_token" placeholder="AIzaSy..................." style="background-color: #F8FAFC;">
+                                        </div>
+                                        <!-- Temperatura -->
+                                        <div class="col-md-4">
+                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">TEMPERATURA (0.0 - 1.0)</label>
+                                            <input type="number" class="form-control form-control-premium" id="gema_temperatura" min="0.0" max="1.0" step="0.1" value="0.4" style="background-color: #F8FAFC;">
+                                        </div>
+                                        <div class="col-12 mt-1">
+                                            <small class="text-muted d-block" style="font-size: 0.8rem;"><i class="fa-solid fa-key me-1"></i> Credencial de Google AI Studio. Temperatura 0.4 es ideal para precisión de inventario.</small>
+                                        </div>
                                     </div>
 
                                     <!-- Prompt -->
                                     <div class="mb-4">
                                         <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">INSTRUCCIONES DE COMPORTAMIENTO (PROMPT DE SISTEMA)</label>
                                         <textarea class="form-control form-control-premium" id="gema_prompt" rows="8" placeholder="Eres Gema, la asistente virtual inteligente de STARFI CRM..." style="background-color: #F8FAFC; resize: vertical;"></textarea>
-                                        <small class="text-muted d-block mt-2" style="font-size: 0.8rem;"><i class="fa-solid fa-circle-info me-1"></i> Dale contexto sobre tu negocio, horarios y formas de contacto.</small>
+                                        <small class="text-muted d-block mt-2" style="font-size: 0.8rem;"><i class="fa-solid fa-circle-info me-1"></i> Define el tono, personalidad, horarios y reglas comerciales de esta tienda.</small>
                                     </div>
                                     
-                                    <!-- Botón Guardar -->
-                                    <div>
+                                    <!-- Botones Guardar y Probar -->
+                                    <div class="d-flex gap-3">
                                         <button id="btnSaveGema" class="btn btn-starfi-primary" style="border-radius: 8px; font-weight: 600; padding: 10px 24px; box-shadow: 0 4px 6px rgba(232, 91, 20, 0.2);">
                                             <i class="fa-solid fa-save me-2"></i> Guardar Configuración IA
+                                        </button>
+                                        <button id="btnTestGema" class="btn btn-outline-secondary" style="border-radius: 8px; font-weight: 600; padding: 10px 20px;">
+                                            <i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión IA
                                         </button>
                                     </div>
 
@@ -368,30 +404,38 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 
                                 <!-- Columna Derecha: Consejos -->
                                 <div class="col-md-5">
-                                    <div class="card shadow-sm" style="border-radius: 12px; background-color: #F8FAFC; border: 1px dashed #CBD5E1 !important;">
+                                    <div class="card shadow-sm mb-3" style="border-radius: 12px; background-color: #F8FAFC; border: 1px dashed #CBD5E1 !important;">
                                         <div class="card-body p-4">
                                             <h6 class="fw-bold text-dark mb-4" style="font-size: 1.05rem;">
-                                                <i class="fa-regular fa-lightbulb text-warning me-2 fs-5"></i> Consejos para tu Agente
+                                                <i class="fa-regular fa-lightbulb text-warning me-2 fs-5"></i> Consejos para tu Agente de Sede
                                             </h6>
                                             
                                             <ul class="list-unstyled mb-0" style="font-size: 0.85rem; color: #475569; line-height: 1.6;">
                                                 <li class="mb-3 d-flex">
                                                     <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Sé específico:</strong> Define claramente las reglas de negocio (ej. "No des precios exactos, invita a cotizar").</div>
+                                                    <div><strong>Aislamiento por Sede:</strong> La IA de esta sede responderá consultas de productos usando solo el inventario de esta tienda.</div>
                                                 </li>
                                                 <li class="mb-3 d-flex">
                                                     <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Personalidad:</strong> Gema puede ser amigable, formal, técnica o entusiasta. Escríbelo en las instrucciones.</div>
+                                                    <div><strong>Handover a Humano:</strong> Si el cliente escribe palabras como <i>asesor</i> o <i>hablar con humano</i>, el bot transferirá el chat a la cola de atención.</div>
                                                 </li>
                                                 <li class="mb-3 d-flex">
                                                     <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Idiomas:</strong> Aunque responda en español por defecto, puedes indicarle que atienda en inglés si el cliente escribe en ese idioma.</div>
+                                                    <div><strong>Nombre Institucional:</strong> Personaliza el nombre por tienda (Ej. <i>Gema Altamira</i>, <i>Gema San Antonio</i>).</div>
                                                 </li>
                                                 <li class="d-flex">
                                                     <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Contexto:</strong> Gema lee automáticamente los últimos mensajes de la conversación, por lo que recordará el nombre del cliente si este se lo indica.</div>
+                                                    <div><strong>Memoria Conversacional:</strong> El sistema mantiene una ventana deslizante con los últimos 12 mensajes del chat.</div>
                                                 </li>
                                             </ul>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Log de respuesta de prueba -->
+                                    <div id="testGemaLog" class="card shadow-sm d-none" style="border-radius: 12px; background-color: #F0FDF4; border: 1px solid #BBF7D0 !important;">
+                                        <div class="card-body p-3">
+                                            <h6 class="fw-bold text-success mb-2" style="font-size: 0.9rem;"><i class="fa-solid fa-circle-check me-1"></i> Respuesta de Prueba:</h6>
+                                            <p id="testGemaContent" class="mb-0 text-dark" style="font-size: 0.85rem; white-space: pre-line;"></p>
                                         </div>
                                     </div>
                                 </div>

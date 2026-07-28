@@ -903,42 +903,133 @@ switch ($action) {
         }
         break;
 
-    // --- CONFIGURACIÓN GEMA AI ---
+    // --- CONFIGURACIÓN GEMA AI MULTI-SEDE ---
     case 'save_gema':
-        $prompt = $_POST['prompt'] ?? '';
-        $nombre = $_POST['nombre'] ?? 'Gema';
-        $token = $_POST['token'] ?? '';
-        $estado = intval($_POST['estado'] ?? 1);
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        if ($id_sede <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Debe seleccionar una Sede válida.']);
+            exit;
+        }
+
+        $agente_nombre = trim($_POST['agente_nombre'] ?? $_POST['nombre'] ?? 'Gema');
+        $agente_instrucciones = trim($_POST['agente_instrucciones'] ?? $_POST['prompt'] ?? '');
+        $gemini_api_key = trim($_POST['gemini_api_key'] ?? $_POST['token'] ?? '');
+        $modelo_ia = trim($_POST['modelo_ia'] ?? 'gemma-2-9b-it');
+        $temperatura = floatval($_POST['temperatura'] ?? 0.4);
         
-        $config = [
-            'prompt' => $prompt,
-            'nombre' => $nombre,
-            'token' => $token,
-            'estado' => $estado,
-            'last_updated' => date('Y-m-d H:i:s')
-        ];
-        
-        $file_path = __DIR__ . '/gema_config.json';
-        if (file_put_contents($file_path, json_encode($config, JSON_PRETTY_PRINT))) {
-            echo json_encode(['status' => 'success', 'message' => 'Configuración de GEMA AI guardada correctamente.']);
+        $estado_raw = $_POST['estado_ia'] ?? $_POST['estado'] ?? 'ACTIVO';
+        $estado_ia = ($estado_raw === 'ACTIVO' || $estado_raw === '1' || $estado_raw === 1) ? 'ACTIVO' : 'INACTIVO';
+
+        $stmt = $con->prepare("
+            INSERT INTO configuraciones_ia (id_empresa, id_sede, agente_nombre, agente_instrucciones, gemini_api_key, modelo_ia, temperatura, estado_ia)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                agente_nombre = VALUES(agente_nombre),
+                agente_instrucciones = VALUES(agente_instrucciones),
+                gemini_api_key = VALUES(gemini_api_key),
+                modelo_ia = VALUES(modelo_ia),
+                temperatura = VALUES(temperatura),
+                estado_ia = VALUES(estado_ia)
+        ");
+
+        if ($stmt) {
+            $stmt->bind_param("iissssds", $id_empresa, $id_sede, $agente_nombre, $agente_instrucciones, $gemini_api_key, $modelo_ia, $temperatura, $estado_ia);
+            if ($stmt->execute()) {
+                // También actualizar bot_activo en la tabla sedes para sincro completa
+                $bot_val = ($estado_ia === 'ACTIVO') ? 1 : 0;
+                $con->query("UPDATE sedes SET bot_activo = $bot_val WHERE id = $id_sede");
+
+                echo json_encode(['status' => 'success', 'message' => 'Configuración de Asistente IA guardada correctamente para la sede.']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Error al guardar en la base de datos: ' . $stmt->error]);
+            }
+            $stmt->close();
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'Error al guardar el archivo de configuración.']);
+            echo json_encode(['status' => 'error', 'message' => 'Error al preparar la consulta en la base de datos.']);
         }
         break;
 
     case 'load_gema':
-        $file_path = __DIR__ . '/gema_config.json';
-        if (file_exists($file_path)) {
-            $config = json_decode(file_get_contents($file_path), true);
-            echo json_encode(['status' => 'success', 'data' => $config]);
-        } else {
-            // Default config
-            echo json_encode(['status' => 'success', 'data' => [
-                'prompt' => '',
+        $id_sede = intval($_POST['id_sede'] ?? 0);
+        
+        if ($id_sede <= 0) {
+            // Cargar la primera sede por defecto si no se especificó id_sede
+            $q_first = $con->query("SELECT id FROM sedes WHERE id_empresa = $id_empresa AND estado = 'ACTIVO' LIMIT 1");
+            if ($q_first && $row_f = $q_first->fetch_assoc()) {
+                $id_sede = intval($row_f['id']);
+            }
+        }
+
+        if ($id_sede > 0) {
+            $stmt = $con->prepare("SELECT * FROM configuraciones_ia WHERE id_sede = ? LIMIT 1");
+            $stmt->bind_param("i", $id_sede);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            if ($res && $row = $res->fetch_assoc()) {
+                echo json_encode([
+                    'status' => 'success',
+                    'id_sede' => $id_sede,
+                    'data' => [
+                        'id_sede' => $row['id_sede'],
+                        'nombre' => $row['agente_nombre'],
+                        'prompt' => $row['agente_instrucciones'],
+                        'token' => $row['gemini_api_key'],
+                        'modelo_ia' => $row['modelo_ia'] ?? 'gemma-2-9b-it',
+                        'temperatura' => floatval($row['temperatura'] ?? 0.4),
+                        'estado' => ($row['estado_ia'] === 'ACTIVO') ? 1 : 0,
+                        'estado_ia' => $row['estado_ia']
+                    ]
+                ]);
+                $stmt->close();
+                exit;
+            }
+            $stmt->close();
+        }
+
+        // Configuración por defecto si no existe en BD
+        echo json_encode([
+            'status' => 'success',
+            'id_sede' => $id_sede,
+            'data' => [
+                'id_sede' => $id_sede,
                 'nombre' => 'Gema',
+                'prompt' => 'Eres Gema, la asistente virtual inteligente de STARFI CRM...',
                 'token' => '',
-                'estado' => 1
-            ]]);
+                'modelo_ia' => 'gemma-2-9b-it',
+                'temperatura' => 0.4,
+                'estado' => 1,
+                'estado_ia' => 'ACTIVO'
+            ]
+        ]);
+        break;
+
+    case 'test_gema_connection':
+        require_once __DIR__ . '/../../core/IaConnector.php';
+        $apiKey = trim($_POST['token'] ?? $_POST['gemini_api_key'] ?? '');
+        $modelo = trim($_POST['modelo_ia'] ?? 'gemma-2-9b-it');
+        $nombre = trim($_POST['nombre'] ?? $_POST['agente_nombre'] ?? 'Gema');
+        $temperatura = floatval($_POST['temperatura'] ?? 0.4);
+
+        if (empty($apiKey)) {
+            echo json_encode(['status' => 'error', 'message' => 'Por favor introduce una Gemini API Key para realizar la prueba.']);
+            exit;
+        }
+
+        $configTest = [
+            'agente_nombre' => $nombre,
+            'agente_instrucciones' => 'Responde muy brevemente confirmando que la conexión funciona.',
+            'gemini_api_key' => $apiKey,
+            'modelo_ia' => $modelo,
+            'temperatura' => $temperatura
+        ];
+
+        $resTest = IaConnector::generarRespuestaConDetalles($configTest, [], "Hola, confirma la conexión de prueba en una frase corta.", "");
+
+        if ($resTest['success']) {
+            echo json_encode(['status' => 'success', 'message' => 'Conexión exitosa con la API de IA.', 'respuesta' => $resTest['text']]);
+        } else {
+            $errDetalle = $resTest['error'] ?? 'Error desconocido';
+            echo json_encode(['status' => 'error', 'message' => 'Error de la API: ' . $errDetalle]);
         }
         break;
 

@@ -349,41 +349,75 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             $bot_activo = (isset($linea_info['bot_activo']) && $linea_info['bot_activo'] == 1);
             if ($bot_activo && !$es_operador && ($estado_conv === 'BOT_RECOPILANDO' || $estado_conv === 'ESPERA_ASIGNACION')) {
                 $id_sede = intval($linea_info['id_sede']);
-                $cuerpo_upper = strtoupper(trim($cuerpo_mensaje));
+                $cuerpo_clean = trim($cuerpo_mensaje);
+                $cuerpo_lower = mb_strtolower($cuerpo_clean, 'UTF-8');
                 $bot_respondio = false;
 
-                if ($nueva_conversacion) {
-                    // Si es nueva conversación, buscamos el mensaje de BIENVENIDA o HOLA
-                    $q_bienvenida = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND (tipo = 'BIENVENIDA' OR disparador = 'HOLA') LIMIT 1");
-                    if ($q_bienvenida && mysqli_num_rows($q_bienvenida) > 0) {
-                        $row = mysqli_fetch_assoc($q_bienvenida);
-                        enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
-                        $bot_respondio = true;
-                        if ($row['tipo'] === 'CONTACTOS') { 
-                            enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
-                        }
-                        if ($row['tipo'] === 'CIERRE_CSAT') {
-                            enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                // 1. DETECCIÓN PREVIA DE SOLICITUD DE AGENTE HUMANO (HANDOVER INMEDIATO)
+                $patrones_humano = ['asesor', 'humano', 'agente', 'hablar con alguien', 'atencion personal', 'soporte humano', 'persona'];
+                $solicita_humano = false;
+                foreach ($patrones_humano as $patron) {
+                    if (mb_strpos($cuerpo_lower, $patron) !== false) {
+                        $solicita_humano = true;
+                        break;
+                    }
+                }
+
+                if ($solicita_humano) {
+                    // Cambiar conversación a ESPERA_ASIGNACION
+                    mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
+                    mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'El cliente solicitó atención por un agente humano (Handover).')");
+                    
+                    enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, "Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.", $id_conversacion);
+                    enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
+                    $bot_respondio = true;
+                }
+
+                // 2. ORQUESTACIÓN DE ASISTENTE VIRTUAL IA (SI LA IA ESTÁ ACTIVA PARA ESTA SEDE)
+                if (!$bot_respondio) {
+                    require_once __DIR__ . '/core/IaContextEngine.php';
+                    require_once __DIR__ . '/core/IaConnector.php';
+
+                    $q_ia_config = mysqli_query($con, "SELECT * FROM configuraciones_ia WHERE id_sede = $id_sede AND estado_ia = 'ACTIVO' LIMIT 1");
+                    if ($q_ia_config && mysqli_num_rows($q_ia_config) > 0) {
+                        $configIa = mysqli_fetch_assoc($q_ia_config);
+
+                        // A) Obtener contexto de inventario JIT filtrado estrictamente por esta Sede
+                        $contextoJIT = IaContextEngine::obtenerContextoInventario($con, $id_sede, $cuerpo_mensaje);
+
+                        // B) Recuperar historial reciente de mensajes de la conversación (sliding window)
+                        $historial = IaConnector::recuperarHistorialMensajes($con, $id_conversacion, 12);
+
+                        // C) Generar respuesta con la API de IA (Gemma / Gemini)
+                        $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT);
+
+                        if (!empty($respuestaIa)) {
+                            // Verificar si la respuesta devuelta por la IA solicita Handover explícito
+                            if (strpos($respuestaIa, '[SOLICITAR_AGENTE_HUMANO]') !== false) {
+                                $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
+                                mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
+                                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'La IA solicitó transferencia a agente humano.')");
+                                
+                                if (empty($respuestaLimpia)) {
+                                    $respuestaLimpia = "Te estoy transfiriendo con un asesor de nuestra sede para atenderte personalmente.";
+                                }
+                                enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaLimpia, $id_conversacion);
+                                enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
+                            } else {
+                                enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaIa, $id_conversacion);
+                            }
+                            $bot_respondio = true;
                         }
                     }
-                } else {
-                    // Buscar coincidencia de palabra clave
-                    $q_match = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND UPPER(disparador) = '$cuerpo_upper' LIMIT 1");
-                    if ($q_match && mysqli_num_rows($q_match) > 0) {
-                        $row = mysqli_fetch_assoc($q_match);
-                        enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
-                        $bot_respondio = true;
-                        if ($row['tipo'] === 'CONTACTOS') { 
-                            enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
-                        }
-                        if ($row['tipo'] === 'CIERRE_CSAT') {
-                            enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
-                        }
-                    } else {
-                        // Si no hay coincidencia, buscar DEFAULT
-                        $q_def = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND disparador = 'DEFAULT' LIMIT 1");
-                        if ($q_def && mysqli_num_rows($q_def) > 0) {
-                            $row = mysqli_fetch_assoc($q_def);
+                }
+
+                // 3. FALLBACK: FLUJO DE PALABRAS CLAVE TRADICIONAL DE LA SEDE (SI LA IA NO RESPONDIÓ O ESTÁ INACTIVA)
+                if (!$bot_respondio) {
+                    $cuerpo_upper = strtoupper(trim($cuerpo_mensaje));
+                    if ($nueva_conversacion) {
+                        $q_bienvenida = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND (tipo = 'BIENVENIDA' OR disparador = 'HOLA') LIMIT 1");
+                        if ($q_bienvenida && mysqli_num_rows($q_bienvenida) > 0) {
+                            $row = mysqli_fetch_assoc($q_bienvenida);
                             enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
                             $bot_respondio = true;
                             if ($row['tipo'] === 'CONTACTOS') { 
@@ -391,6 +425,32 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                             }
                             if ($row['tipo'] === 'CIERRE_CSAT') {
                                 enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                            }
+                        }
+                    } else {
+                        $q_match = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND UPPER(disparador) = '$cuerpo_upper' LIMIT 1");
+                        if ($q_match && mysqli_num_rows($q_match) > 0) {
+                            $row = mysqli_fetch_assoc($q_match);
+                            enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                            $bot_respondio = true;
+                            if ($row['tipo'] === 'CONTACTOS') { 
+                                enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
+                            }
+                            if ($row['tipo'] === 'CIERRE_CSAT') {
+                                enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                            }
+                        } else {
+                            $q_def = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND disparador = 'DEFAULT' LIMIT 1");
+                            if ($q_def && mysqli_num_rows($q_def) > 0) {
+                                $row = mysqli_fetch_assoc($q_def);
+                                enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                                $bot_respondio = true;
+                                if ($row['tipo'] === 'CONTACTOS') { 
+                                    enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion); 
+                                }
+                                if ($row['tipo'] === 'CIERRE_CSAT') {
+                                    enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conversacion);
+                                }
                             }
                         }
                     }
@@ -642,7 +702,6 @@ function enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conv
     // 3. Registrar en eventos
     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'Encuesta CSAT enviada y conversación cerrada por el BOT.')");
 }
-?>
 
 /**
  * Enviar mensaje de imagen vía Meta API
