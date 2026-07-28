@@ -144,9 +144,9 @@ class IaConnector {
         curl_close($ch);
 
         if ($response === false || !empty($curlError)) {
-            if ($modelo !== 'gemini-flash-latest') {
+            if ($modelo !== 'gemma-4-31b-it') {
                 $configFallback = $configIa;
-                $configFallback['modelo_ia'] = 'gemini-flash-latest';
+                $configFallback['modelo_ia'] = 'gemma-4-31b-it';
                 return self::generarRespuestaConDetalles($configFallback, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
             }
             return ['success' => false, 'error' => "Error de conexión cURL: " . $curlError, 'http_code' => 0];
@@ -162,10 +162,10 @@ class IaConnector {
             ];
         }
 
-        // Fallback automático si el modelo específico no está disponible para esa API Key
-        if ($httpCode !== 200 && $modelo !== 'gemini-flash-latest') {
+        // Fallback automático hacia gemma-4-31b-it si gemini-3.6-flash alcanza el límite de cuotas (HTTP 429) o error 503/404
+        if ($httpCode !== 200 && $modelo !== 'gemma-4-31b-it') {
             $configFallback = $configIa;
-            $configFallback['modelo_ia'] = 'gemini-flash-latest';
+            $configFallback['modelo_ia'] = 'gemma-4-31b-it';
             $resFallback = self::generarRespuestaConDetalles($configFallback, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
             if ($resFallback['success']) {
                 return $resFallback;
