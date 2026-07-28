@@ -388,11 +388,23 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                         // B) Recuperar historial reciente de mensajes de la conversación (sliding window)
                         $historial = IaConnector::recuperarHistorialMensajes($con, $id_conversacion, 12);
 
-                        // C) Generar respuesta con la API de IA (Gemma / Gemini)
-                        $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT);
+                        // C) Generar respuesta con la API de IA (Gemma / Gemini) pasando el nombre del cliente si ya se conoce
+                        $nombreClienteActual = $nombre_db ?? '';
+                        $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT, $nombreClienteActual);
 
                         if (!empty($respuestaIa)) {
-                            // Verificar si la respuesta devuelta por la IA solicita Handover explícito
+                            // D) Procesar captura de nombre de cliente devuelta por la IA
+                            if (preg_match('/\[GUARDAR_NOMBRE:\s*([^\]]+)\]/i', $respuestaIa, $matches)) {
+                                $nombreCapturado = trim($matches[1]);
+                                if (!empty($nombreCapturado) && mb_strlen($nombreCapturado) > 1 && strtolower($nombreCapturado) !== 'usuario' && strtolower($nombreCapturado) !== 'cliente') {
+                                    $nombreEsc = mysqli_real_escape_string($con, $nombreCapturado);
+                                    mysqli_query($con, "UPDATE clientes_contactos SET nombre = '$nombreEsc' WHERE id = $id_cliente");
+                                    $nombre_db = $nombreCapturado;
+                                }
+                                $respuestaIa = trim(str_replace($matches[0], '', $respuestaIa));
+                            }
+
+                            // E) Verificar si la respuesta devuelta por la IA solicita Handover explícito
                             if (strpos($respuestaIa, '[SOLICITAR_AGENTE_HUMANO]') !== false) {
                                 $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
                                 mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
