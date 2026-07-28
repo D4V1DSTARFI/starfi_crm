@@ -55,18 +55,43 @@ class IaConnector {
             ? $configIa['agente_instrucciones'] 
             : "Eres $nombreAgente, el asistente virtual atento e inteligente de STARFI CRM. Responde de forma amable, precisa y profesional.";
 
-        if (empty($nombreCliente) && !empty($configIa['nombre_cliente'])) {
-            $nombreCliente = $configIa['nombre_cliente'];
+        $nombreValido = false;
+        if (!empty($nombreCliente)) {
+            $nombreClean = strtolower(trim($nombreCliente));
+            if ($nombreClean !== 'usuario' && $nombreClean !== 'cliente' && !preg_match('/^\+?[0-9\s\-]+$/', $nombreClean)) {
+                $nombreValido = true;
+            }
+        }
+
+        // Determinar saludo dinámico según la hora del día (Venezuela GMT-4)
+        date_default_timezone_set("America/Caracas");
+        $horaActual = intval(date('H'));
+        if ($horaActual >= 5 && $horaActual < 12) {
+            $saludoTemporal = "¡Buenos días!";
+        } elseif ($horaActual >= 12 && $horaActual < 18) {
+            $saludoTemporal = "¡Buenas tardes!";
+        } else {
+            $saludoTemporal = "¡Buenas noches!";
         }
 
         $systemPrompt = "Tu nombre es " . $nombreAgente . ".\n" . $instruccionesBase;
-        $systemPrompt .= "\n\nREGLAS DE IDENTIFICACIÓN Y ATENCIÓN PROFESIONAL (WHATSAPP):\n";
+        $systemPrompt .= "\n\nHORA ACTUAL DEL SERVIDOR: Usar preferentemente el saludo de tiempo actual: *" . $saludoTemporal . "*.\n";
+        $systemPrompt .= "\nREGLAS OBLIGATORIAS DE FLUJO DE ATENCIÓN Y CAPTURA DE NOMBRE (WHATSAPP):\n";
 
-        if (!empty($nombreCliente) && strtolower($nombreCliente) !== 'usuario' && strtolower($nombreCliente) !== 'cliente') {
-            $systemPrompt .= "1. IDENTIFICACIÓN DEL CLIENTE: Te estás comunicando con *" . $nombreCliente . "*. Dirígete a él/ella llamándole por su nombre de forma cercana, atenta y profesional.\n";
+        if ($nombreValido) {
+            $systemPrompt .= "1. CLIENTE IDENTIFICADO Y REGISTRADO (*" . $nombreCliente . "*): El cliente ya existe en el sistema y su nombre es *" . $nombreCliente . "*.\n";
+            $systemPrompt .= "   - Salúdalo cordialmente combinando el saludo según la hora del día (" . $saludoTemporal . ") y su nombre (ejemplo: '" . $saludoTemporal . " " . $nombreCliente . ", ¿en qué te puedo colaborar el día de hoy?' o '¡Hola " . $nombreCliente . ", " . strtolower($saludoTemporal) . "! ¿En qué te puedo ayudar hoy?').\n";
+            $systemPrompt .= "   - Atiende sus dudas e inquietudes sobre productos, existencias y servicios de forma directa, amable y personalizada.\n";
         } else {
-            $systemPrompt .= "1. PRIMERO PREGUNTAR EL NOMBRE (REGLA OBLIGATORIA): Aún no tenemos el nombre de este cliente en el sistema. En tu PRIMERA respuesta, tu prioridad es dar la bienvenida, presentarte y PREGUNTAR PRIMERO SU NOMBRE de forma amable y directa (ejemplo: '¡Hola! Bienvenid@ a [Sede], soy " . $nombreAgente . ". Para poder atenderte mejor y registrar tu consulta, ¿cuál es tu nombre, por favor?'). Si el cliente ya hizo una pregunta sobre algún producto, dile con amabilidad que con todo gusto le darás todos los precios e inventario en cuanto te indique cómo se llama.\n";
-            $systemPrompt .= "2. CAPTURA AUTOMÁTICA DE NOMBRE: En cuanto el cliente te indique cómo se llama (ejemplo: 'Me llamo Juan Pérez', 'Soy María', 'Carlos'), extrae únicamente su Nombre y Apellido e incluye al FINAL de tu respuesta la etiqueta EXACTA '[GUARDAR_NOMBRE: Nombre Y Apellido]' (ejemplo: '[GUARDAR_NOMBRE: Carlos Pérez]').\n";
+            $systemPrompt .= "1. PRIMER MENSAJE DE CLIENTE NUEVO (SOLICITAR NOMBRE OBLIGATORIAMENTE): Aún NO conocemos el nombre de este cliente.\n";
+            $systemPrompt .= "   - En tu PRIMER mensaje tu objetivo es únicamente: dar la bienvenida usando el saludo según la hora del día ('" . $saludoTemporal . " 🖐️'), presentarte (ej. 'Soy " . $nombreAgente . ", la asistente virtual de STARFI.') y PREGUNTAR SU NOMBRE (ej. 'Para poder atenderte mejor, ¿por favor me indicas tu nombre?').\n";
+            $systemPrompt .= "   - ESTRICTAMENTE PROHIBIDO: NO preguntes '¿En qué te puedo ayudar el día de hoy?' ni intentes vender o dar información de catálogo en este primer mensaje. NUNCA pases a atenderlo sin antes pedir su nombre.\n";
+            $systemPrompt .= "   - Si el cliente en su primer mensaje ya hizo una consulta sobre productos o precios, dile con amabilidad: '" . $saludoTemporal . " Con todo gusto te daré la información de nuestros productos e inventario, pero primero ¿podrías indicarme tu nombre para registrarte en nuestro sistema, por favor?'.\n";
+            $systemPrompt .= "2. SEGUNDO MENSAJE (CUANDO EL CLIENTE RESPONDE SU NOMBRE):\n";
+            $systemPrompt .= "   - En cuanto el cliente te diga cómo se llama en su mensaje (ej. 'Me llamo Carlos', 'Soy María', 'Carlos Pérez', 'Carlos'):\n";
+            $systemPrompt .= "     a) Extrae únicamente su Nombre y Apellido e incluye al FINAL de tu respuesta la etiqueta EXACTA '[GUARDAR_NOMBRE: Nombre Y Apellido]' (ejemplo: '[GUARDAR_NOMBRE: Carlos Pérez]').\n";
+            $systemPrompt .= "     b) Salúdalo llamándolo por su nombre usando el saludo según la hora del día (ejemplo: '" . $saludoTemporal . " Carlos, mucho gusto en saludarte.').\n";
+            $systemPrompt .= "     c) AHÍ SÍ PREGÚNTALE en qué le puedes colaborar el día de hoy y responde a las consultas que haya formulado.\n";
         }
 
         $systemPrompt .= "3. FORMATO WHATSAPP: Usa negritas (*ejemplo*) para resaltar nombres de productos, precios y datos clave. Usa viñetas limpias (•) para listar artículos.\n";
@@ -76,19 +101,48 @@ class IaConnector {
         $systemPrompt .= "7. TRANSFERENCIA A ASESOR HUMANO: Si el cliente solicita explícitamente ser atendido por un asesor humano o una persona, responde con amabilidad confirmándole la transferencia e incluye EXACTAMENTE la etiqueta '[SOLICITAR_AGENTE_HUMANO]' al final de tu mensaje.\n";
         $systemPrompt .= "8. LLAMADA A LA ACCIÓN: Finaliza ofreciendo ayuda adicional o invitando a concretar la consulta de forma servicial.";
 
-        // Payload array
-        $contents = $historialMensajes;
+        $systemPrompt = self::utf8Clean($systemPrompt);
 
-        // Inyectar el mensaje actual con el contexto fresco de la sede
-        $mensajeFinal = $mensajeActual;
-        if (!empty($contextoJIT)) {
-            $mensajeFinal .= "\n\n" . $contextoJIT;
+        // Normalizar historial para garantizar alternancia estricta de roles (user / model) que exige la API de Gemini
+        $contents = [];
+        $lastRole = null;
+
+        if (is_array($historialMensajes)) {
+            foreach ($historialMensajes as $msg) {
+                $role = ($msg['role'] === 'model') ? 'model' : 'user';
+                $text = self::utf8Clean(trim($msg['parts'][0]['text'] ?? ''));
+                if (empty($text)) continue;
+
+                if ($role === $lastRole && !empty($contents)) {
+                    $idx = count($contents) - 1;
+                    $contents[$idx]['parts'][0]['text'] .= "\n" . $text;
+                } else {
+                    $contents[] = [
+                        'role' => $role,
+                        'parts' => [['text' => $text]]
+                    ];
+                    $lastRole = $role;
+                }
+            }
         }
 
-        $contents[] = [
-            'role' => 'user',
-            'parts' => [['text' => $mensajeFinal]]
-        ];
+        // Inyectar el mensaje actual con el contexto fresco de la sede
+        $mensajeFinal = self::utf8Clean(trim($mensajeActual));
+        if (!empty($contextoJIT)) {
+            $mensajeFinal .= "\n\n" . self::utf8Clean($contextoJIT);
+        }
+
+        if (!empty($mensajeFinal)) {
+            if ($lastRole === 'user' && !empty($contents)) {
+                $idx = count($contents) - 1;
+                $contents[$idx]['parts'][0]['text'] .= "\n" . $mensajeFinal;
+            } else {
+                $contents[] = [
+                    'role' => 'user',
+                    'parts' => [['text' => $mensajeFinal]]
+                ];
+            }
+        }
 
         $temperature = isset($configIa['temperatura']) ? (float)$configIa['temperatura'] : 0.4;
 
@@ -106,8 +160,16 @@ class IaConnector {
     }
 
     /**
-     * Ejecuta la llamada cURL y retorna los detalles completos (texto o error con código HTTP).
+     * Limpia y convierte cualquier string a UTF-8 válido.
      */
+    public static function utf8Clean($data) {
+        if (!is_string($data) || empty($data)) return $data;
+        if (!mb_check_encoding($data, 'UTF-8')) {
+            $data = mb_convert_encoding($data, 'UTF-8', 'ISO-8859-1');
+        }
+        return $data;
+    }
+
     /**
      * Ejecuta la llamada cURL y retorna los detalles completos (texto o error con código HTTP).
      */
@@ -124,12 +186,17 @@ class IaConnector {
         $modelo = !empty($configIa['modelo_ia']) ? $configIa['modelo_ia'] : 'gemini-3.6-flash';
         $payload = self::construirPayload($configIa, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
 
+        $jsonPayload = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE);
+        if ($jsonPayload === false) {
+            return ['success' => false, 'error' => 'Error al codificar JSON payload: ' . json_last_error_msg()];
+        }
+
         $url = "https://generativelanguage.googleapis.com/v1beta/models/{$modelo}:generateContent?key={$apiKey}";
 
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonPayload);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json'
         ]);
@@ -144,9 +211,9 @@ class IaConnector {
         curl_close($ch);
 
         if ($response === false || !empty($curlError)) {
-            if ($modelo !== 'gemma-4-31b-it') {
+            if ($modelo !== 'gemini-2.0-flash') {
                 $configFallback = $configIa;
-                $configFallback['modelo_ia'] = 'gemma-4-31b-it';
+                $configFallback['modelo_ia'] = 'gemini-2.0-flash';
                 return self::generarRespuestaConDetalles($configFallback, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
             }
             return ['success' => false, 'error' => "Error de conexión cURL: " . $curlError, 'http_code' => 0];
@@ -154,18 +221,32 @@ class IaConnector {
 
         $responseData = json_decode($response, true);
 
-        if ($httpCode === 200 && isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-            return [
-                'success' => true, 
-                'text' => trim($responseData['candidates'][0]['content']['parts'][0]['text']),
-                'http_code' => 200
-            ];
+        if ($httpCode === 200 && !empty($responseData['candidates'][0]['content']['parts'])) {
+            $parts = $responseData['candidates'][0]['content']['parts'];
+            $textoFinal = '';
+            foreach ($parts as $p) {
+                if (empty($p['thought']) && !empty($p['text'])) {
+                    $textoFinal .= $p['text'] . "\n";
+                }
+            }
+            if (empty(trim($textoFinal))) {
+                $lastPart = end($parts);
+                $textoFinal = $lastPart['text'] ?? '';
+            }
+
+            if (!empty(trim($textoFinal))) {
+                return [
+                    'success' => true, 
+                    'text' => trim($textoFinal),
+                    'http_code' => 200
+                ];
+            }
         }
 
-        // Fallback automático hacia gemma-4-31b-it si gemini-3.6-flash alcanza el límite de cuotas (HTTP 429) o error 503/404
-        if ($httpCode !== 200 && $modelo !== 'gemma-4-31b-it') {
+        // Fallback automático hacia gemini-2.0-flash si el modelo configurado falla o alcanza cuota
+        if ($httpCode !== 200 && $modelo !== 'gemini-2.0-flash') {
             $configFallback = $configIa;
-            $configFallback['modelo_ia'] = 'gemma-4-31b-it';
+            $configFallback['modelo_ia'] = 'gemini-2.0-flash';
             $resFallback = self::generarRespuestaConDetalles($configFallback, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
             if ($resFallback['success']) {
                 return $resFallback;
