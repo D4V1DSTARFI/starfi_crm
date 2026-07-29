@@ -49,7 +49,7 @@ class IaConnector {
     /**
      * Construye el payload JSON estándar compatible con Google Gemini / Gemma REST API.
      */
-    public static function construirPayload(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT, string $nombreCliente = ''): array {
+    public static function construirPayload(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT): array {
         $nombreAgente = !empty($configIa['agente_nombre']) ? $configIa['agente_nombre'] : 'Gema';
         $instruccionesBase = !empty($configIa['agente_instrucciones']) 
             ? $configIa['agente_instrucciones'] 
@@ -153,7 +153,7 @@ class IaConnector {
             'contents' => $contents,
             'generationConfig' => [
                 'temperature' => $temperature,
-                'maxOutputTokens' => 1000,
+                'maxOutputTokens' => 500,
                 'topP' => 0.95
             ]
         ];
@@ -184,7 +184,7 @@ class IaConnector {
         }
 
         $modelo = !empty($configIa['modelo_ia']) ? $configIa['modelo_ia'] : 'gemini-3.6-flash';
-        $payload = self::construirPayload($configIa, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
+        $payload = self::construirPayload($configIa, $historialMensajes, $mensajeActual, $contextoJIT);
 
         $jsonPayload = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE);
         if ($jsonPayload === false) {
@@ -260,8 +260,8 @@ class IaConnector {
     /**
      * Método abreviado que retorna solo el texto o null.
      */
-    public static function generarRespuesta(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT, string $nombreCliente = ''): ?string {
-        $res = self::generarRespuestaConDetalles($configIa, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
+    public static function generarRespuesta(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT): ?string {
+        $res = self::generarRespuestaConDetalles($configIa, $historialMensajes, $mensajeActual, $contextoJIT);
         return $res['success'] ? $res['text'] : null;
     }
 }
