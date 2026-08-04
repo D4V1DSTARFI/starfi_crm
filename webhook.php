@@ -174,15 +174,18 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     $perfil = mysqli_real_escape_string($con, $perfil);
     $telefono_receptor_id = mysqli_real_escape_string($con, $telefono_receptor_id);
     
-    // 1. BUSCAR LA LINEA CORRESPONDIENTE AL NÚMERO RECEPTOR
+    // 1. BUSCAR LA LINEA CORRESPONDIENTE AL NÚMERO RECEPTOR (STARFI CODE / SUPERFORMICA / ETC)
     $id_linea = null;
     $id_empresa = 1; // Default
     $id_sede = null;
     
     if ($telefono_receptor_id) {
-        $query_api = "SELECT l.id, s.id_empresa, l.id_sede FROM lineas_whatsapp l 
+        $query_api = "SELECT l.id, s.id_empresa, l.id_sede 
+                      FROM lineas_whatsapp l 
                       LEFT JOIN sedes s ON l.id_sede = s.id 
-                      WHERE l.meta_app_id = '$telefono_receptor_id' AND l.estado_conexion = 'CONECTADO' LIMIT 1";
+                      WHERE (l.meta_app_id = '$telefono_receptor_id' OR l.meta_telefono_id = '$telefono_receptor_id' OR l.numero_telefono LIKE '%$telefono_receptor_id%')
+                        AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO') 
+                      LIMIT 1";
         $result_api = mysqli_query($con, $query_api);
         if ($result_api && mysqli_num_rows($result_api) > 0) {
             $row = mysqli_fetch_assoc($result_api);
@@ -192,11 +195,13 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         }
     }
     
-    // Fallback a cualquier línea activa si no se encuentra
+    // Fallback a cualquier línea activa si no se encuentra la coincidencia específica
     if (!$id_linea) {
-        $query_api = "SELECT l.id, s.id_empresa, l.id_sede FROM lineas_whatsapp l 
+        $query_api = "SELECT l.id, s.id_empresa, l.id_sede 
+                      FROM lineas_whatsapp l 
                       LEFT JOIN sedes s ON l.id_sede = s.id 
-                      WHERE l.estado_conexion = 'CONECTADO' LIMIT 1";
+                      WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO') 
+                      LIMIT 1";
         $result_api = mysqli_query($con, $query_api);
         if ($result_api && mysqli_num_rows($result_api) > 0) {
             $row = mysqli_fetch_assoc($result_api);
@@ -814,10 +819,19 @@ function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente,
 function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_cliente, $numero_cliente) {
     if ($id_sede <= 0) return;
     
-    // 1. Obtener línea de WhatsApp activa para la sede
+    // 1. Obtener id_empresa de la sede
+    $id_empresa = 0;
+    $qSedeInfo = mysqli_query($con, "SELECT id_empresa FROM sedes WHERE id = $id_sede LIMIT 1");
+    if ($qSedeInfo && $rowSede = mysqli_fetch_assoc($qSedeInfo)) {
+        $id_empresa = intval($rowSede['id_empresa']);
+    }
+
+    // 2. Obtener línea de WhatsApp activa para la sede (o empresa)
     $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) {
-        $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
+        if ($id_empresa > 0) {
+            $qLinea = mysqli_query($con, "SELECT l.meta_token, l.meta_app_id FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = $id_empresa AND l.estado = 'ACTIVO' LIMIT 1");
+        }
     }
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
     
@@ -825,9 +839,11 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     $meta_token = $rowLinea['meta_token'];
     $phone_number_id = $rowLinea['meta_app_id'];
     if (empty($meta_token) || empty($phone_number_id)) return;
-    
-    // 2. Colección de números de destino ÚNICAMENTE para Administradores/Gerentes asignados a ESTA SEDE
+
+    // 3. Colección de números de destino ÚNICAMENTE para Administradores/Gerentes de ESTA SEDE o EMPRESA
     $telefonos_destinatarios = [];
+    
+    // Primero: buscar administradores asignados específicamente a ESTA SEDE
     $qAdmin = mysqli_query($con, "
         SELECT DISTINCT up.telefono 
         FROM usuario u 
@@ -847,19 +863,19 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
         }
     }
 
-    // Fallback: Si no hay un administrador asignado específicamente a esa sede, buscar administradores globales / master
-    if (empty($telefonos_destinatarios)) {
-        $qAdminGlobal = mysqli_query($con, "
+    // Segundo: si no hay admin en esa sede específica, buscar administradores asignados a la MISMA EMPRESA (id_empresa)
+    if (empty($telefonos_destinatarios) && $id_empresa > 0) {
+        $qAdminEmpresa = mysqli_query($con, "
             SELECT DISTINCT up.telefono 
             FROM usuario u 
             JOIN usuario_perfil up ON u.id = up.id_usuario 
             LEFT JOIN roles r ON u.rol = r.id 
             WHERE u.estado = 'ACTIVO' 
-              AND (u.id_sede IS NULL OR u.id_sede = 0)
+              AND u.id_empresa = $id_empresa
               AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
         ");
-        if ($qAdminGlobal) {
-            while ($rowAd = mysqli_fetch_assoc($qAdminGlobal)) {
+        if ($qAdminEmpresa) {
+            while ($rowAd = mysqli_fetch_assoc($qAdminEmpresa)) {
                 $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
                 if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
                     $telefonos_destinatarios[] = $tel;
