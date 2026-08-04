@@ -11,11 +11,6 @@ $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 $agente_id = intval($_SESSION['agente_id']);
 
-if (in_array($action, ['send_message', 'upload_media', 'retry_message'])) {
-    echo json_encode(['status' => 'error', 'message' => 'El envío de mensajes del CRM está pausado por emergencia.']);
-    exit;
-}
-
 switch ($action) {
     case 'get_respuestas_rapidas':
         $res = $con->query("SELECT titulo, mensaje FROM respuestas_rapidas WHERE estado = 'ACTIVO' ORDER BY id DESC");
