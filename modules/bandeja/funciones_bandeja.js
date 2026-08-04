@@ -528,42 +528,74 @@ function loadOperadoresFilter() {
     });
 }
 
-function loadChats() {
+let currentChatPage = 1;
+let hasMoreChats = false;
+let isLoadingChats = false;
+
+function loadChats(append = false) {
+    if (isLoadingChats) return;
+
+    if (!append) {
+        currentChatPage = 1;
+        $('#chatList').html('<div class="text-center p-4"><div class="spinner-border text-secondary mb-2" role="status"></div><p class="text-muted" style="font-size: 0.85rem;">Cargando conversaciones recientes...</p></div>');
+    } else {
+        currentChatPage++;
+    }
+
+    isLoadingChats = true;
     const id_sede = $('#filterSede').val() || '';
     const id_agente = $('#filterOperador').val() || '';
+
     $.ajax({
         url: 'back_bandeja.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_chats', filter: currentFilter, id_sede: id_sede, id_agente: id_agente },
+        data: { 
+            action: 'load_chats', 
+            filter: currentFilter, 
+            id_sede: id_sede, 
+            id_agente: id_agente,
+            page: currentChatPage,
+            limit: 30
+        },
         success: function (response) {
+            isLoadingChats = false;
             if (response.status === 'success') {
-                renderChatList(response.data);
+                hasMoreChats = !!response.has_more;
+                renderChatList(response.data, append, hasMoreChats);
             } else {
-                $('#chatList').html(`<div class="p-3 text-danger text-center"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${response.message}</div>`);
+                if (!append) {
+                    $('#chatList').html(`<div class="p-3 text-danger text-center"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${response.message}</div>`);
+                }
             }
         },
         error: function (xhr, status, error) {
+            isLoadingChats = false;
             if (xhr.status === 401) return; // Se maneja globalmente
             console.error("AJAX Error:", status, error, xhr.responseText);
-            let resp = xhr.responseText ? xhr.responseText.replace(/</g, '&lt;').substring(0, 200) : error;
-            $('#chatList').html(`<div class="p-3 text-danger text-center" style="word-break: break-word;"><i class="fa-solid fa-database d-block mb-2 fs-3"></i> <b>Error de Servidor:</b><br><small>${resp}</small></div>`);
+            if (!append) {
+                let resp = xhr.responseText ? xhr.responseText.replace(/</g, '&lt;').substring(0, 200) : error;
+                $('#chatList').html(`<div class="p-3 text-danger text-center" style="word-break: break-word;"><i class="fa-solid fa-database d-block mb-2 fs-3"></i> <b>Error de Servidor:</b><br><small>${resp}</small></div>`);
+            }
         }
     });
 }
 
-function renderChatList(chats) {
+function renderChatList(chats, append = false, has_more = false) {
     const list = $('#chatList');
+    $('#btnLoadMoreContainer').remove();
 
     let totalUnread = 0;
 
-    if (chats.length === 0) {
-        list.html('<div class="p-4 text-center text-muted" style="font-size:0.85rem;"><i class="fa-solid fa-mug-hot fs-3 mb-2 d-block"></i> No hay conversaciones aquí.</div>');
-        $('#badgeNoLeidos').hide();
-        return;
+    if (!append) {
+        if (chats.length === 0) {
+            list.html('<div class="p-4 text-center text-muted" style="font-size:0.85rem;"><i class="fa-solid fa-mug-hot fs-3 mb-2 d-block"></i> No hay conversaciones aquí.</div>');
+            $('#badgeNoLeidos').hide();
+            return;
+        }
+        list.empty();
     }
 
-    list.empty();
     chats.forEach(chat => {
         let name = chat.cliente_nombre ? chat.cliente_nombre : chat.numero_whatsapp;
         let badge = '';
@@ -628,6 +660,21 @@ function renderChatList(chats) {
         `;
         list.append(html);
     });
+
+    if (has_more) {
+        list.append(`
+            <div id="btnLoadMoreContainer" class="p-3 text-center">
+                <button id="btnLoadMoreChats" class="btn btn-sm btn-outline-secondary w-100 py-2" style="border-radius: 20px; font-weight: 600;">
+                    <i class="fa-solid fa-circle-chevron-down me-1"></i> Cargar más conversaciones
+                </button>
+            </div>
+        `);
+
+        $('#chatList').off('click', '#btnLoadMoreChats').on('click', '#btnLoadMoreChats', function() {
+            $(this).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Cargando conversaciones...').prop('disabled', true);
+            loadChats(true);
+        });
+    }
 
     if (currentFilter === 'no-leido') {
         if (totalUnread > 0) $('#badgeNoLeidos').text(totalUnread).show();

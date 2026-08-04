@@ -159,7 +159,12 @@ switch ($action) {
             }
         }
 
-        $query .= " ORDER BY IFNULL(ultimo_mensaje_ts, c.fecha_inicio) DESC";
+        $page = max(1, intval($_POST['page'] ?? 1));
+        $limit = max(1, min(100, intval($_POST['limit'] ?? 30)));
+        $offset = ($page - 1) * $limit;
+        $fetch_limit = $limit + 1;
+
+        $query .= " ORDER BY IFNULL(ultimo_mensaje_ts, c.fecha_inicio) DESC LIMIT $fetch_limit OFFSET $offset";
         $res = $con->query($query);
         
         $chats = [];
@@ -168,7 +173,20 @@ switch ($action) {
                 $chats[] = $row;
             }
         }
-        echo json_encode(['status' => 'success', 'data' => $chats]);
+
+        $has_more = false;
+        if (count($chats) > $limit) {
+            $has_more = true;
+            array_pop($chats);
+        }
+
+        echo json_encode([
+            'status' => 'success', 
+            'data' => $chats,
+            'page' => $page,
+            'limit' => $limit,
+            'has_more' => $has_more
+        ]);
         break;
 
     case 'load_messages':
