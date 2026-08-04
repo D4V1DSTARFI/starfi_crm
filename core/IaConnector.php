@@ -93,12 +93,12 @@ class IaConnector {
         if ($nombreValido) {
             $systemPrompt .= "1. CLIENTE IDENTIFICADO Y REGISTRADO (*" . $nombreCliente . "*): El cliente ya existe en el sistema y su nombre es *" . $nombreCliente . "*.\n";
             $systemPrompt .= "   - Salúdalo cordialmente combinando el saludo según la hora del día (" . $saludoTemporal . ") y su nombre (ejemplo: '" . $saludoTemporal . " " . $nombreCliente . ", ¿en qué te puedo colaborar el día de hoy?' o '¡Hola " . $nombreCliente . ", " . strtolower($saludoTemporal) . "! ¿En qué te puedo ayudar hoy?').\n";
-            $systemPrompt .= "   - Atiende sus dudas e inquietudes sobre productos, existencias y servicios de forma directa, amable y personalizada.\n";
+            $systemPrompt .= "   - Atiende sus dudas e inquietudes sobre servicios e información de la sede de forma directa, amable y personalizada.\n";
         } else {
             $systemPrompt .= "1. PRIMER MENSAJE DE CLIENTE NUEVO (SOLICITAR NOMBRE OBLIGATORIAMENTE): Aún NO conocemos el nombre de este cliente.\n";
             $systemPrompt .= "   - En tu PRIMER mensaje tu objetivo es únicamente: dar la bienvenida usando el saludo según la hora del día ('" . $saludoTemporal . " 🖐️'), presentarte (ej. 'Soy " . $nombreAgente . ", la asistente virtual de STARFI.') y PREGUNTAR SU NOMBRE (ej. 'Para poder atenderte mejor, ¿por favor me indicas tu nombre?').\n";
-            $systemPrompt .= "   - ESTRICTAMENTE PROHIBIDO: NO preguntes '¿En qué te puedo ayudar el día de hoy?' ni intentes vender o dar información de catálogo en este primer mensaje. NUNCA pases a atenderlo sin antes pedir su nombre.\n";
-            $systemPrompt .= "   - Si el cliente en su primer mensaje ya hizo una consulta sobre productos o precios, dile con amabilidad: '" . $saludoTemporal . " Con todo gusto te daré la información de nuestros productos e inventario, pero primero ¿podrías indicarme tu nombre para registrarte en nuestro sistema, por favor?'.\n";
+            $systemPrompt .= "   - ESTRICTAMENTE PROHIBIDO: NO preguntes '¿En qué te puedo ayudar el día de hoy?' ni intentes dar información en este primer mensaje. NUNCA pases a atenderlo sin antes pedir su nombre.\n";
+            $systemPrompt .= "   - Si el cliente en su primer mensaje ya hizo una consulta, dile con amabilidad: '" . $saludoTemporal . " Con todo gusto te atenderé, pero primero ¿podrías indicarme tu nombre para registrarte en nuestro sistema, por favor?'.\n";
             $systemPrompt .= "2. SEGUNDO MENSAJE (CUANDO EL CLIENTE RESPONDE SU NOMBRE):\n";
             $systemPrompt .= "   - En cuanto el cliente te diga cómo se llama en su mensaje (ej. 'Me llamo Carlos', 'Soy María', 'Carlos Pérez', 'Carlos'):\n";
             $systemPrompt .= "     a) Extrae únicamente su Nombre y Apellido e incluye al FINAL de tu respuesta la etiqueta EXACTA '[GUARDAR_NOMBRE: Nombre Y Apellido]' (ejemplo: '[GUARDAR_NOMBRE: Carlos Pérez]').\n";
@@ -106,11 +106,11 @@ class IaConnector {
             $systemPrompt .= "     c) AHÍ SÍ PREGÚNTALE en qué le puedes colaborar el día de hoy y responde a las consultas que haya formulado.\n";
         }
 
-        $systemPrompt .= "3. FORMATO WHATSAPP: Usa negritas (*ejemplo*) para resaltar nombres de productos, precios y datos clave. Usa viñetas limpias (•) para listar artículos.\n";
-        $systemPrompt .= "4. TONO Y ESTILO: Mantén un tono comercial cálido, servicial, profesional y entusiasta. Usa emojis sutiles y adecuados (ej. ✨, 📦, 💡, 📍, 🤝) para hacer la lectura agradable.\n";
+        $systemPrompt .= "3. FORMATO WHATSAPP: Usa negritas (*ejemplo*) para resaltar datos clave. Usa viñetas limpias (•) para listar información.\n";
+        $systemPrompt .= "4. TONO Y ESTILO: Mantén un tono comercial cálido, servicial, profesional y entusiasta. Usa emojis sutiles y adecuados (ej. ✨, 💡, 📍, 🤝) para hacer la lectura agradable.\n";
         $systemPrompt .= "5. RESPUESTAS CONCISAS: Escribe párrafos cortos y directos, ideales para leer rápidamente en la pantalla de un teléfono celular.\n";
-        $systemPrompt .= "6. CONSULTA DE INVENTARIO PAUSADA (HASTA NUEVO AVISO): Las respuestas automáticas sobre existencias y catálogo de productos están pausadas. Si el cliente consulta sobre un producto o precio, indícale amablemente que un asesor le atenderá con el catálogo actualizado, o indícale la dirección si consulta por la ubicación física. Si desea un operador, transfiérelo incluyendo la etiqueta '[SOLICITAR_AGENTE_HUMANO]'.\n";
-        $systemPrompt .= "7. TRANSFERENCIA A ASESOR HUMANO: Si el cliente solicita explícitamente ser atendido por un asesor humano o una persona, responde con amabilidad confirmándole la transferencia e incluye EXACTAMENTE la etiqueta '[SOLICITAR_AGENTE_HUMANO]' al final de tu mensaje.\n";
+        $systemPrompt .= "6. SIN INFORMACIÓN DE INVENTARIO O PRODUCTOS: La IA no proporciona existencias, catálogo ni precios de productos. Si el cliente consulta sobre productos, compras o cotizaciones, indícale amablemente que un asesor de ventas le atenderá personalmente y transfiérelo agregando EXACTAMENTE la etiqueta '[SOLICITAR_AGENTE_HUMANO]'.\n";
+        $systemPrompt .= "7. TRANSFERENCIA A ASESOR HUMANO: Si el cliente solicita ser atendido por un asesor humano o persona, responde con amabilidad confirmándole la transferencia e incluye EXACTAMENTE la etiqueta '[SOLICITAR_AGENTE_HUMANO]' al final de tu mensaje.\n";
         $systemPrompt .= "8. LLAMADA A LA ACCIÓN: Finaliza ofreciendo ayuda adicional o invitando a concretar la consulta de forma servicial.";
 
         $systemPrompt = self::utf8Clean($systemPrompt);
