@@ -232,11 +232,22 @@ switch ($action) {
         }
 
         $is_new_chat = false;
-        // Si no hay conversación activa, la creamos
+        // Si no hay conversación activa, la creamos respetando la sede del agente
         if ($conversacion_id <= 0 && $cliente_id > 0) {
-            // Buscar la primera línea conectada
-            $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE estado_conexion = 'CONECTADO' LIMIT 1");
-            $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
+            $agente_info = getAgenteInfo();
+            $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
+            
+            $id_linea = null;
+            if ($user_sede > 0) {
+                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                if ($resLinea && $resLinea->num_rows > 0) {
+                    $id_linea = $resLinea->fetch_assoc()['id'];
+                }
+            }
+            if (!$id_linea) {
+                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
+            }
             
             $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
             $stmt->bind_param("iii", $id_linea, $cliente_id, $agente_id);
@@ -366,8 +377,20 @@ switch ($action) {
             $is_new_chat = false;
             // Si no hay conversación activa, la creamos (Misma lógica que enviar mensaje)
             if ($conversacion_id <= 0 && $cliente_id > 0) {
-                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE estado_conexion = 'CONECTADO' LIMIT 1");
-                $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
+                $agente_info = getAgenteInfo();
+                $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
+                
+                $id_linea = null;
+                if ($user_sede > 0) {
+                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                    if ($resLinea && $resLinea->num_rows > 0) {
+                        $id_linea = $resLinea->fetch_assoc()['id'];
+                    }
+                }
+                if (!$id_linea) {
+                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                    $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
+                }
                 $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
                 $stmt->bind_param("iii", $id_linea, $cliente_id, $agente_id);
                 $stmt->execute();

@@ -827,10 +827,10 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     }
 
     // 2. Obtener línea de WhatsApp activa para la sede (o empresa)
-    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) {
         if ($id_empresa > 0) {
-            $qLinea = mysqli_query($con, "SELECT l.meta_token, l.meta_app_id FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = $id_empresa AND l.estado = 'ACTIVO' LIMIT 1");
+            $qLinea = mysqli_query($con, "SELECT l.meta_token, l.meta_app_id FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = $id_empresa AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
         }
     }
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
