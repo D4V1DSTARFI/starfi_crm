@@ -718,6 +718,16 @@ switch ($action) {
         }
         break;
 
+    case 'mark_as_read':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        if ($conversacion_id > 0) {
+            $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+            echo json_encode(['status' => 'success']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'ID inválido']);
+        }
+        break;
+
     case 'reassign_chat':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         $nuevo_agente_id = intval($_POST['nuevo_agente_id'] ?? 0);

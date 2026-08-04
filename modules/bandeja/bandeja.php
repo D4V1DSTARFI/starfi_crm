@@ -508,6 +508,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
 
+    <script>
+        window.userRole = "<?= addslashes(strtoupper(trim($agente['rol'] ?? 'AGENTE'))) ?>";
+        window.isUserAdmin = <?= (in_array(strtoupper(trim($agente['rol'] ?? '')), ['MASTER', 'MASTER CI', 'ADMINISTRADOR', 'ADMIN', 'GERENTE']) || intval($agente['id'] ?? 0) === 1) ? 'true' : 'false' ?>;
+    </script>
     <script src="funciones_bandeja.js?v=<?= time() ?>"></script>
     </div>
 </body>

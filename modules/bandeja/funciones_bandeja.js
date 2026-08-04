@@ -305,10 +305,11 @@ $(document).ready(function () {
         const phone = $(this).data('phone');
         const sede = $(this).data('sede');
         const asesor = $(this).data('asesor');
-        selectChat(id, cliente_id, name, phone, sede, asesor);
+        const no_leidos = parseInt($(this).data('no-leidos') || 0);
+        requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
     });
 
-    // Función global para clics móviles
+    // Función global para clics móviles y clicks de chat
     window.clickChat = function (element) {
         const id = $(element).data('id');
         const cliente_id = $(element).data('cliente-id');
@@ -316,7 +317,8 @@ $(document).ready(function () {
         const phone = $(element).data('phone');
         const sede = $(element).data('sede');
         const asesor = $(element).data('asesor');
-        selectChat(id, cliente_id, name, phone, sede, asesor);
+        const no_leidos = parseInt($(element).data('no-leidos') || 0);
+        requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
     };
 
     // 1. Filtros de pestañas
@@ -600,7 +602,7 @@ function renderChatList(chats) {
             : `<span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-user me-1"></i> CLIENTE</span>`;
 
         let html = `
-            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}">
+            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}">
                 <div class="chat-avatar">
                     <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A" alt="Avatar">
                 </div>
@@ -633,7 +635,130 @@ function renderChatList(chats) {
     }
 }
 
-function selectChat(id, cliente_id, name, phone, nombre_sede, asesor) {
+// Variables de estado para modal de salida de mensajes no leídos (Administrador)
+let pendingExitUnreadChat = null;
+
+function requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos) {
+    if (window.isUserAdmin && pendingExitUnreadChat && pendingExitUnreadChat.id !== id) {
+        promptExitUnreadChat(pendingExitUnreadChat, function () {
+            selectChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
+        });
+    } else {
+        selectChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
+    }
+}
+
+function promptExitUnreadChat(chatCtx, onDone) {
+    Swal.fire({
+        title: `¿Qué deseas hacer con esta conversación?`,
+        html: `
+            <div class="text-center mb-3">
+                <div class="rounded-circle bg-warning bg-opacity-10 text-warning d-inline-flex align-items-center justify-content-center mb-2" style="width: 54px; height: 54px;">
+                    <i class="fa-solid fa-envelope-open-text fs-3"></i>
+                </div>
+                <h6 class="fw-bold text-dark mb-1" style="font-size: 1.05rem;">${chatCtx.name}</h6>
+                <p class="text-muted small mb-0">Revisaste esta conversación que tiene mensajes sin leer.</p>
+            </div>
+            
+            <div class="d-grid gap-2 text-start mt-3">
+                <button type="button" id="btnOptKeepUnread" class="btn btn-outline-secondary py-2 px-3 text-start fw-semibold d-flex align-items-center justify-content-between" style="border-radius: 10px; font-size: 0.88rem;">
+                    <span><i class="fa-solid fa-arrow-left me-2 text-secondary"></i> 1. Salir y dejar como está</span>
+                    <span class="badge bg-light text-dark border">Sin cambios</span>
+                </button>
+                <button type="button" id="btnOptMarkRead" class="btn btn-primary py-2 px-3 text-start fw-semibold d-flex align-items-center justify-content-between" style="border-radius: 10px; font-size: 0.88rem; background-color: #0284C7; border-color: #0284C7;">
+                    <span><i class="fa-solid fa-check-double me-2 text-white"></i> 2. Marcar como leído</span>
+                    <span class="badge bg-white text-primary">Leído</span>
+                </button>
+                <button type="button" id="btnOptAssignVendor" class="btn btn-success py-2 px-3 text-start fw-semibold d-flex align-items-center justify-content-between" style="border-radius: 10px; font-size: 0.88rem; background-color: #10B981; border-color: #10B981;">
+                    <span><i class="fa-solid fa-user-plus me-2 text-white"></i> 3. Asignar a un operador</span>
+                    <span class="badge bg-white text-success">Vendedor</span>
+                </button>
+            </div>
+        `,
+        showConfirmButton: false,
+        showCancelButton: false,
+        allowOutsideClick: false,
+        didOpen: () => {
+            document.getElementById('btnOptKeepUnread').addEventListener('click', () => {
+                Swal.close();
+                pendingExitUnreadChat = null;
+                if (onDone) onDone();
+            });
+
+            document.getElementById('btnOptMarkRead').addEventListener('click', () => {
+                $.post('back_bandeja.php', { action: 'mark_as_read', conversacion_id: chatCtx.id }, function () {
+                    loadChats();
+                }, 'json');
+                Swal.close();
+                pendingExitUnreadChat = null;
+                if (onDone) onDone();
+            });
+
+            document.getElementById('btnOptAssignVendor').addEventListener('click', () => {
+                Swal.close();
+                promptAssignOperator(chatCtx, function () {
+                    pendingExitUnreadChat = null;
+                    if (onDone) onDone();
+                });
+            });
+        }
+    });
+}
+
+function promptAssignOperator(chatCtx, onDone) {
+    $.ajax({
+        url: 'back_bandeja.php', type: 'POST', dataType: 'json',
+        data: { action: 'get_agents', conversacion_id: chatCtx.id },
+        success: function (res) {
+            if (res.status === 'success') {
+                let options = '<option value="">-- Selecciona un vendedor/operador --</option>';
+                res.data.forEach(ag => {
+                    options += `<option value="${ag.id}">${ag.nombre_completo}</option>`;
+                });
+
+                Swal.fire({
+                    title: `Asignar Conversación`,
+                    html: `
+                        <p class="text-muted small mb-2">Selecciona el vendedor para asignar el chat de <strong>${chatCtx.name}</strong>:</p>
+                        <select id="swal_assign_agent" class="form-select mb-3">${options}</select>
+                    `,
+                    showCancelButton: true,
+                    confirmButtonText: 'Asignar',
+                    cancelButtonText: 'Cancelar',
+                    confirmButtonColor: '#10B981',
+                    preConfirm: () => {
+                        const val = document.getElementById('swal_assign_agent').value;
+                        if (!val) {
+                            Swal.showValidationMessage('Debes seleccionar un operador.');
+                            return false;
+                        }
+                        return val;
+                    }
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        $.post('back_bandeja.php', {
+                            action: 'reassign_chat',
+                            conversacion_id: chatCtx.id,
+                            nuevo_agente_id: result.value
+                        }, function (r) {
+                            if (r.status === 'success') {
+                                // También marcar como leído al asignar
+                                $.post('back_bandeja.php', { action: 'mark_as_read', conversacion_id: chatCtx.id });
+                                Swal.fire({ icon: 'success', title: 'Asignado', text: 'Se ha asignado el chat y notificado al vendedor.', timer: 1800, showConfirmButton: false });
+                                loadChats();
+                            }
+                            if (onDone) onDone();
+                        }, 'json');
+                    } else {
+                        if (onDone) onDone();
+                    }
+                });
+            }
+        }
+    });
+}
+
+function selectChat(id, cliente_id, name, phone, nombre_sede, asesor, no_leidos) {
     activeChatId = id;
     activeClientId = cliente_id;
     $('.chat-item').removeClass('active');
@@ -673,6 +798,22 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor) {
 
     if ($('#modalProfile360').hasClass('show')) {
         loadProfile360();
+    }
+
+    // Registrar si el Administrador abrió un chat NO LEÍDO
+    const unreadCount = parseInt(no_leidos || 0);
+    if (window.isUserAdmin && unreadCount > 0) {
+        pendingExitUnreadChat = {
+            id: id,
+            cliente_id: cliente_id,
+            name: name,
+            phone: phone,
+            nombre_sede: nombre_sede,
+            asesor: asesor,
+            no_leidos: unreadCount
+        };
+    } else {
+        pendingExitUnreadChat = null;
     }
 
     loadMessages(id, true);
