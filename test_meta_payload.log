@@ -253377,3 +253377,144 @@
         ]
     }
 }
+2026-08-04 17:57:14
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "send_confirmacion_compra_cn_sn_btn",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ (TEST LOCAL)"
+                    },
+                    {
+                        "type": "text",
+                        "text": "2026-08-04"
+                    },
+                    {
+                        "type": "text",
+                        "text": "78.30 USD"
+                    },
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ"
+                    },
+                    {
+                        "type": "text",
+                        "text": "ADMINISTRADORA CESD, C.A"
+                    },
+                    {
+                        "type": "text",
+                        "text": "NE_34"
+                    },
+                    {
+                        "type": "text",
+                        "text": "4126138068"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-08-04 18:00:15
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "send_confirmacion_compra_cn_sn_btn",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ"
+                    },
+                    {
+                        "type": "text",
+                        "text": "2026-08-04"
+                    },
+                    {
+                        "type": "text",
+                        "text": "33.5 USD"
+                    },
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ"
+                    },
+                    {
+                        "type": "text",
+                        "text": "ADMINISTRADORA CESD, C.A"
+                    },
+                    {
+                        "type": "text",
+                        "text": "NE_37"
+                    },
+                    {
+                        "type": "text",
+                        "text": "4126138068"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-08-04 18:03:18
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "send_confirmacion_compra_cn_sn_btn",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ"
+                    },
+                    {
+                        "type": "text",
+                        "text": "2026-08-04"
+                    },
+                    {
+                        "type": "text",
+                        "text": "33.5 USD"
+                    },
+                    {
+                        "type": "text",
+                        "text": "JULIAN GONZALEZ"
+                    },
+                    {
+                        "type": "text",
+                        "text": "ADMINISTRADORA CESD, C.A"
+                    },
+                    {
+                        "type": "text",
+                        "text": "NE_37"
+                    },
+                    {
+                        "type": "text",
+                        "text": "4126138068"
+                    }
+                ]
+            }
+        ]
+    }
+}

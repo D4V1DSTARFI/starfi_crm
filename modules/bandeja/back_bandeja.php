@@ -7,6 +7,28 @@ header('Content-Type: application/json');
 $con = getDbConnection();
 @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
 @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
+@mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
+
+function parse_meta_error_detail($res_meta, $status_code = 0) {
+    if (isset($res_meta['error'])) {
+        $code = $res_meta['error']['code'] ?? '';
+        $msg = $res_meta['error']['message'] ?? '';
+        $details = $res_meta['error']['error_data']['details'] ?? '';
+        
+        if ($code == 131047) {
+            return "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o utilizar una plantilla aprobada.";
+        } elseif ($code == 131026) {
+            return "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
+        } elseif ($code == 131049) {
+            return "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
+        } elseif ($code == 130472) {
+            return "Restricción de Meta (Error 130472). El número forma parte de una prueba o restricción.";
+        } else {
+            return "Rechazado por Meta (Error $code): " . ($details ? $details : $msg);
+        }
+    }
+    return "Fallo de conexión o HTTP $status_code con Meta WhatsApp Cloud API.";
+}
 
 $action = $_POST['action'] ?? '';
 $agente_id = intval($_SESSION['agente_id']);
@@ -207,7 +229,7 @@ switch ($action) {
         }
         
         $query = "
-            SELECT m.id, m.tipo, m.origen, m.contenido, m.timestamp, m.estado_envio, m.url_archivo, m.reply_to_text, m.id_mensaje_meta, up.nombre as nombre_agente 
+            SELECT m.id, m.tipo, m.origen, m.contenido, m.timestamp, m.estado_envio, m.url_archivo, m.reply_to_text, m.id_mensaje_meta, m.error_detalle, up.nombre as nombre_agente 
             FROM mensajes_y_eventos m
             LEFT JOIN usuario_perfil up ON m.id_agente = up.id_usuario
             WHERE m.id_conversacion = ? 
@@ -334,11 +356,16 @@ switch ($action) {
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 5); // Timeout rápido para no bloquear
                 $response = curl_exec($ch);
+                $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_close($ch);
                 
                 $res_meta = json_decode($response, true);
                 if (isset($res_meta['messages'][0]['id'])) {
                     $id_mensaje_meta = $res_meta['messages'][0]['id'];
+                    $estado_envio = 'ENVIADO';
+                } else {
+                    $estado_envio = 'FALLIDO';
+                    $error_detalle = parse_meta_error_detail($res_meta, $status_code);
                 }
             }
             // -------------------------------------------------------------
@@ -351,10 +378,10 @@ switch ($action) {
         if(empty($reply_to_meta_id)) $reply_to_meta_id = null;
         if(empty($reply_to_text)) $reply_to_text = null;
         
-        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, id_agente, contenido, id_mensaje_meta, reply_to_meta_id, reply_to_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        $query = "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, id_agente, contenido, id_mensaje_meta, reply_to_meta_id, reply_to_text, estado_envio, error_detalle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt = $con->prepare($query);
         if ($stmt) {
-            $stmt->bind_param("ississss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text);
+            $stmt->bind_param("ississssss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text, $estado_envio, $error_detalle);
             if ($stmt->execute()) {
                 // Al responder (ya sea Operador, Administrador o Master), la conversación se marca como leída
                 $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
@@ -643,12 +670,15 @@ switch ($action) {
         }
         
         if ($id_mensaje_meta) {
-            $stmt = $con->prepare("UPDATE mensajes_y_eventos SET estado_envio = 'ENVIADO', id_mensaje_meta = ? WHERE id = ?");
+            $stmt = $con->prepare("UPDATE mensajes_y_eventos SET estado_envio = 'ENVIADO', error_detalle = NULL, id_mensaje_meta = ? WHERE id = ?");
             $stmt->bind_param("si", $id_mensaje_meta, $msg_id);
             $stmt->execute();
             echo json_encode(['status' => 'success']);
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'Fallo al reintentar con la API de Meta.']);
+            $err_reason = parse_meta_error_detail($res_meta ?? ($res_meta2 ?? []), 0);
+            $err_esc = $con->real_escape_string($err_reason);
+            $con->query("UPDATE mensajes_y_eventos SET estado_envio = 'FALLIDO', error_detalle = '$err_esc' WHERE id = $msg_id");
+            echo json_encode(['status' => 'error', 'message' => $err_reason]);
         }
         break;
 

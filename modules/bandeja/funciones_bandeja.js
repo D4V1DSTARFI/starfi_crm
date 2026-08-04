@@ -1207,7 +1207,10 @@ function renderMessages(messages, scrollToBottom) {
             if (msg.estado_envio === 'ENTREGADO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'LEIDO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i>';
             if (msg.estado_envio === 'FALLIDO') {
-                estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1" style="color: #EF4444;"></i>
+                let errorDetail = msg.error_detalle ? msg.error_detalle.replace(/"/g, '&quot;') : 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.';
+                let safeDetailJs = errorDetail.replace(/'/g, "\\'").replace(/\n/g, ' ');
+                
+                estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1 text-danger cursor-pointer" onclick="window.showErrorDetail('${safeDetailJs}')" title="${errorDetail}" style="cursor:pointer; font-size: 0.9rem;"></i>
                               <i class="fa-solid fa-rotate-right retry-btn ms-1" data-id="${msg.id}" style="cursor:pointer; color:#EF4444;" title="Reintentar Envío"></i>`;
             }
 
@@ -1250,6 +1253,31 @@ function renderMessages(messages, scrollToBottom) {
 
     if (scrollToBottom) area.scrollTop(area[0].scrollHeight);
 }
+
+window.showErrorDetail = function (detail) {
+    Swal.fire({
+        icon: 'error',
+        title: 'Motivo del Fallo de Envío',
+        html: `
+            <div class="text-start p-2" style="font-size: 0.9rem;">
+                <p class="mb-2"><b>Información técnica devuelta por Meta / Servidor:</b></p>
+                <div class="alert alert-danger mb-3" style="font-size: 0.85rem; word-break: break-word; line-height: 1.5;">
+                    <i class="fa-solid fa-triangle-exclamation me-1"></i> ${detail || 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.'}
+                </div>
+                <div class="p-2 rounded bg-light border" style="font-size: 0.8rem; color: #4B5563;">
+                    <p class="fw-bold mb-1"><i class="fa-solid fa-lightbulb text-warning me-1"></i> Recomendaciones:</p>
+                    <ul class="mb-0 ps-3">
+                        <li><b>Si excedió las 24 horas:</b> Solicita al cliente que envíe un mensaje para reabrir la ventana o envía una plantilla de WhatsApp.</li>
+                        <li><b>Si fue rechazado por el número:</b> Verifique que el número posea WhatsApp activo y prefijo de país correcto (+58).</li>
+                        <li><b>Si fue rechazado por Meta:</b> Revisa la configuración de la línea en Meta Business Manager.</li>
+                    </ul>
+                </div>
+            </div>
+        `,
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#E85B14'
+    });
+};
 
 // Global variable para la respuesta
 window.currentReplyMetaId = null;

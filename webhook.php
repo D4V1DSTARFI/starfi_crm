@@ -76,7 +76,7 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     $telefonoReceptorID = $value['metadata']['phone_number_id'] ?? null;
     $displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
 
-    // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído)
+    // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído, fallido)
     if (isset($value['statuses'][0])) {
         $estado = $value['statuses'][0]['status']; // sent, delivered, read, failed
         $id_mensaje_meta_status = $value['statuses'][0]['id'];
@@ -86,10 +86,35 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         else if ($estado == 'delivered') $estado_sql = 'ENTREGADO';
         else if ($estado == 'read') $estado_sql = 'LEIDO';
         else if ($estado == 'failed') $estado_sql = 'FALLIDO';
+
+        $error_detalle_meta = null;
+        if ($estado == 'failed' && isset($value['statuses'][0]['errors'][0])) {
+            $err = $value['statuses'][0]['errors'][0];
+            $err_code = $err['code'] ?? '';
+            $err_title = $err['title'] ?? '';
+            $err_data = $err['error_data']['details'] ?? ($err['message'] ?? '');
+            
+            if ($err_code == 131047) {
+                $error_detalle_meta = "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o enviar una plantilla aprobada.";
+            } elseif ($err_code == 131026) {
+                $error_detalle_meta = "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
+            } elseif ($err_code == 131049) {
+                $error_detalle_meta = "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
+            } elseif ($err_code == 130472) {
+                $error_detalle_meta = "Restricción de Meta (Error 130472). El número forma parte de un entorno de pruebas o experimento.";
+            } else {
+                $error_detalle_meta = "Rechazado por Meta (Error $err_code - $err_title): $err_data";
+            }
+        }
         
         if ($con && $estado_sql) {
             $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
-            mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql' WHERE id_mensaje_meta = '$id_msg_esc'");
+            if (!empty($error_detalle_meta)) {
+                $err_esc = mysqli_real_escape_string($con, $error_detalle_meta);
+                mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql', error_detalle = '$err_esc' WHERE id_mensaje_meta = '$id_msg_esc'");
+            } else {
+                mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql' WHERE id_mensaje_meta = '$id_msg_esc'");
+            }
         }
         exit;
     }

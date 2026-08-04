@@ -31,6 +31,11 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     $crm_phone_number = $con->real_escape_string($phone_number);
     $crm_estado = ($activo === 1) ? 'ACTIVO' : 'INACTIVO';
     
+    $check_sede_crm = $con->query("SELECT id FROM sedes WHERE id = $crm_sede_id");
+    if ($check_sede_crm && $check_sede_crm->num_rows === 0) {
+        $con->query("INSERT INTO sedes (id, id_empresa, nombre_sede, estado) VALUES ($crm_sede_id, 1, 'SEDE $crm_sede_id', 'ACTIVO')");
+    }
+
     $check_crm = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $crm_sede_id");
     if ($check_crm && $check_crm->num_rows > 0) {
         $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_token', meta_app_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
@@ -219,8 +224,9 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
 
 // 3. Intentar buscar por ID de Sede preciso
 if (empty($token) && !empty($id_sede)) {
-    $crm_id_sede = ($id_sede == 23) ? 24 : (intval($id_sede) + 2);
-    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE (s.id = $crm_id_sede OR s.id = $id_sede) AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    $raw_id = intval($id_sede);
+    $target_crm_id = ($raw_id == 23) ? 24 : ($raw_id > 23 ? $raw_id : $raw_id + 2);
+    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
     if ($q_linea && $q_linea->num_rows > 0) {
         $row = $q_linea->fetch_assoc();
         $telefonoID = $row['meta_app_id'];
@@ -233,7 +239,7 @@ if (empty($token) && !empty($id_sede)) {
 
 // 4. Intentar buscar por token de Meta (si se envió)
 if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
     if ($stmt_meta) {
         $stmt_meta->bind_param("s", $meta_token_val);
         $stmt_meta->execute();
@@ -250,7 +256,18 @@ if (empty($token) && !empty($meta_token_val)) {
     }
 }
 
-// 5. Fallback removido para evitar sedes cruzadas. Si no hay token exacto o id_sede correcto, se deniega el envío.
+// 5. Fallback a la primera línea activa del CRM si no se encontró coincidencia por sede
+if (empty($token)) {
+    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') ORDER BY l.id ASC LIMIT 1");
+    if ($q_active && $q_active->num_rows > 0) {
+        $row = $q_active->fetch_assoc();
+        $telefonoID = $row['meta_app_id'];
+        $token = $row['meta_token'];
+        $id_linea = $row['id_linea'];
+        $id_empresa = $row['id_empresa'];
+        $crm_id_sede = $row['crm_id_sede'];
+    }
+}
 
 
 // Si la Sede no posee una línea de WhatsApp activa configurada, DENEGAR el envío
@@ -323,11 +340,9 @@ $mensaje_payload = [
     'to' => $telefono,
     'type' => 'template',
     'template' => [
-        'namespace' => 'be78987b_011f_4891_8e13_cd03b764fb99',
         'name' => $template_name,
         'language' => [
-            'code' => 'es',
-            'policy' => 'deterministic'
+            'code' => 'es'
         ],
         'components' => [
             [
@@ -401,8 +416,9 @@ if (isset($_POST['template_name']) || isset($_POST['template_params'])) {
     $contenido = 'Confirmacion de compra, cliente: '.$nombre_cliente.', fecha compra: '.$fecha_compra.', monto total: '.$monto_total.' '.$signo.', asesor de ventas: '.$asesor_ventas.', empresa: '.$nombre_empresa.', correlativo: '.$correlativo.', contacto: '.$telefono_asesor;
 }
 
+$contenido_esc = $con->real_escape_string($contenido);
 $insertar = $con->query("INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status) 
-                         VALUES ('$template_name', '$fecha_compra', '$hora_actual', '$telefono_emisor', '$telefono_receptor', '$contenido', '$status_bd')");
+                         VALUES ('$template_name', '$fecha_compra', '$hora_actual', '$telefono_emisor', '$telefono_receptor', '$contenido_esc', '$status_bd')");
 
 if($insertar) {
     $response['registro_bd'] = "[EXITOSO]";
