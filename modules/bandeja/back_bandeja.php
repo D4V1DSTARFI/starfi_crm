@@ -250,8 +250,8 @@ switch ($action) {
                 }
             }
             if (!$id_linea) {
-                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
+                echo json_encode(['status' => 'error', 'message' => 'No hay una línea de WhatsApp configurada y activa exclusivamente para tu sede. No se puede iniciar el chat cruzando líneas de otra sede.']);
+                exit;
             }
             
             $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
@@ -732,10 +732,8 @@ switch ($action) {
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
 
             // Enviar notificación por WhatsApp al operador y a los administradores
+            // Se elimina el fallback a cualquier línea global para evitar usar el número de otra sede
             $qLinea = $con->query("SELECT l.meta_token, l.meta_app_id, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
-            if (!$qLinea || $qLinea->num_rows == 0) {
-                $qLinea = $con->query("SELECT meta_token, meta_app_id, id_sede FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
-            }
             if ($qLinea && $rowLinea = $qLinea->fetch_assoc()) {
                 $meta_token = $rowLinea['meta_token'];
                 $phone_number_id = $rowLinea['meta_app_id'];

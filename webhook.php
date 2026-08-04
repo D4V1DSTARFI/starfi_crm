@@ -27,9 +27,7 @@ if ($token === $tokenVerificacion) {
 }
 
 if (!defined('WEBHOOK_NO_EXECUTE')) {
-    // PAUSA COMPLETA DE EMERGENCIA SOLICITADA POR EL USUARIO
-    http_response_code(200);
-    exit('CRM_PAUSED_EMERGENCY');
+
     /*
      * RECEPCION DE MENSAJES
      */
@@ -198,22 +196,11 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         }
     }
     
-    // Fallback a cualquier línea activa si no se encuentra la coincidencia específica
+    // Si no se encuentra la coincidencia específica, abortamos para evitar mensajes cruzados
     if (!$id_linea) {
-        $query_api = "SELECT l.id, s.id_empresa, l.id_sede 
-                      FROM lineas_whatsapp l 
-                      LEFT JOIN sedes s ON l.id_sede = s.id 
-                      WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO') 
-                      LIMIT 1";
-        $result_api = mysqli_query($con, $query_api);
-        if ($result_api && mysqli_num_rows($result_api) > 0) {
-            $row = mysqli_fetch_assoc($result_api);
-            $id_linea = $row['id'];
-            if ($row['id_empresa']) $id_empresa = $row['id_empresa'];
-            if ($row['id_sede']) $id_sede = $row['id_sede'];
-        } else {
-            $id_linea = 1; // Fallback definitivo
-        }
+        error_log("Línea receptora no encontrada en BD. Telefono receptor Meta ID: " . $telefono_receptor_id);
+        http_response_code(200);
+        return;
     }
     
     // 2. BUSCAR O CREAR CLIENTE
@@ -820,8 +807,7 @@ function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente,
  * Enviar plantilla de notificación interna (starfi_notificacion_interna) ÚNICAMENTE al Administrador cuando un cliente escribe
  */
 function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_cliente, $numero_cliente) {
-    // PAUSA DE EMERGENCIA SOLICITADA POR EL USUARIO PARA DETENER EL LOOP
-    return;
+
     if ($id_sede <= 0) return;
     
     // 1. Obtener id_empresa de la sede
@@ -831,13 +817,8 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
         $id_empresa = intval($rowSede['id_empresa']);
     }
 
-    // 2. Obtener línea de WhatsApp activa para la sede (o empresa)
+    // 2. Obtener línea de WhatsApp activa EXCLUSIVAMENTE para la sede
     $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-    if (!$qLinea || mysqli_num_rows($qLinea) == 0) {
-        if ($id_empresa > 0) {
-            $qLinea = mysqli_query($con, "SELECT l.meta_token, l.meta_app_id FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = $id_empresa AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
-        }
-    }
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
     
     $rowLinea = mysqli_fetch_assoc($qLinea);
