@@ -836,7 +836,7 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     $phone_number_id = $rowLinea['meta_app_id'];
     if (empty($meta_token) || empty($phone_number_id)) return;
     
-    // 2. Colección de números de destino ÚNICAMENTE para Administradores y Master
+    // 2. Colección de números de destino ÚNICAMENTE para Administradores/Gerentes asignados a ESTA SEDE
     $telefonos_destinatarios = [];
     $qAdmin = mysqli_query($con, "
         SELECT DISTINCT up.telefono 
@@ -844,14 +844,36 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
         JOIN usuario_perfil up ON u.id = up.id_usuario 
         LEFT JOIN roles r ON u.rol = r.id 
         WHERE u.estado = 'ACTIVO' 
-          AND (u.id_sede = $id_sede OR u.id_sede IS NULL OR u.id_sede = 0 OR r.nombre = 'MASTER' OR r.nombre = 'ADMINISTRADOR' OR u.rol = 'ADMINISTRADOR' OR u.rol = 'MASTER')
-          AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
+          AND u.id_sede = $id_sede
+          AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN', 'GERENTE') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN', 'GERENTE'))
     ");
-    if ($qAdmin) {
+
+    if ($qAdmin && mysqli_num_rows($qAdmin) > 0) {
         while ($rowAd = mysqli_fetch_assoc($qAdmin)) {
             $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
             if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
                 $telefonos_destinatarios[] = $tel;
+            }
+        }
+    }
+
+    // Fallback: Si no hay un administrador asignado específicamente a esa sede, buscar administradores globales / master
+    if (empty($telefonos_destinatarios)) {
+        $qAdminGlobal = mysqli_query($con, "
+            SELECT DISTINCT up.telefono 
+            FROM usuario u 
+            JOIN usuario_perfil up ON u.id = up.id_usuario 
+            LEFT JOIN roles r ON u.rol = r.id 
+            WHERE u.estado = 'ACTIVO' 
+              AND (u.id_sede IS NULL OR u.id_sede = 0)
+              AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
+        ");
+        if ($qAdminGlobal) {
+            while ($rowAd = mysqli_fetch_assoc($qAdminGlobal)) {
+                $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
+                if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
+                    $telefonos_destinatarios[] = $tel;
+                }
             }
         }
     }
