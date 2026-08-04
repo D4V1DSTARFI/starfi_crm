@@ -4,6 +4,10 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
+// PAUSA COMPLETA DE EMERGENCIA DEL CRM SOLICITADA POR EL USUARIO
+echo json_encode(['status' => 'error', 'message' => 'El envío de notificaciones está pausado por emergencia.']);
+exit;
+
 // Check for remote sync command from Starfi 2.0 decentralized installations
 if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     require_once __DIR__ . '/config/database.php';
