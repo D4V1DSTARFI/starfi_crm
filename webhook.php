@@ -27,6 +27,9 @@ if ($token === $tokenVerificacion) {
 }
 
 if (!defined('WEBHOOK_NO_EXECUTE')) {
+    // PAUSA COMPLETA DE EMERGENCIA SOLICITADA POR EL USUARIO
+    http_response_code(200);
+    exit('CRM_PAUSED_EMERGENCY');
     /*
      * RECEPCION DE MENSAJES
      */
