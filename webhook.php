@@ -817,6 +817,8 @@ function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente,
  * Enviar plantilla de notificación interna (starfi_notificacion_interna) ÚNICAMENTE al Administrador cuando un cliente escribe
  */
 function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_cliente, $numero_cliente) {
+    // PAUSA DE EMERGENCIA SOLICITADA POR EL USUARIO PARA DETENER EL LOOP
+    return;
     if ($id_sede <= 0) return;
     
     // 1. Obtener id_empresa de la sede
