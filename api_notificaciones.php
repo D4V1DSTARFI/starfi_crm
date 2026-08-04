@@ -198,22 +198,22 @@ if (!empty($verify_token)) {
     }
 }
 
-// 2. Intentar buscar por token de Meta (si se envió)
-if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
-    if ($stmt_meta) {
-        $stmt_meta->bind_param("s", $meta_token_val);
-        $stmt_meta->execute();
-        $q_linea = $stmt_meta->get_result();
-        if ($q_linea && $q_linea->num_rows > 0) {
-            $row = $q_linea->fetch_assoc();
-            $telefonoID = $row['meta_app_id'];
-            $token = $row['meta_token'];
-            $id_linea = $row['id_linea'];
-            $id_empresa = $row['id_empresa'];
-            $crm_id_sede = $row['crm_id_sede'];
+// 2. Intentar coincidencia por nombre explícito de empresa/sede si se envió en los datos
+if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
+    $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
+    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO')");
+    if ($q_all && $q_all->num_rows > 0) {
+        while ($row = $q_all->fetch_assoc()) {
+            $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
+            if (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false) {
+                $telefonoID = $row['meta_app_id'];
+                $token = $row['meta_token'];
+                $id_linea = $row['id_linea'];
+                $id_empresa = $row['id_empresa'];
+                $crm_id_sede = $row['crm_id_sede'];
+                break;
+            }
         }
-        $stmt_meta->close();
     }
 }
 
@@ -231,22 +231,22 @@ if (empty($token) && !empty($id_sede)) {
     }
 }
 
-// 4. Intentar coincidencia por nombre de empresa
-if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
-    $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
-    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO')");
-    if ($q_all && $q_all->num_rows > 0) {
-        while ($row = $q_all->fetch_assoc()) {
-            $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
-            if (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false) {
-                $telefonoID = $row['meta_app_id'];
-                $token = $row['meta_token'];
-                $id_linea = $row['id_linea'];
-                $id_empresa = $row['id_empresa'];
-                $crm_id_sede = $row['crm_id_sede'];
-                break;
-            }
+// 4. Intentar buscar por token de Meta (si se envió)
+if (empty($token) && !empty($meta_token_val)) {
+    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    if ($stmt_meta) {
+        $stmt_meta->bind_param("s", $meta_token_val);
+        $stmt_meta->execute();
+        $q_linea = $stmt_meta->get_result();
+        if ($q_linea && $q_linea->num_rows > 0) {
+            $row = $q_linea->fetch_assoc();
+            $telefonoID = $row['meta_app_id'];
+            $token = $row['meta_token'];
+            $id_linea = $row['id_linea'];
+            $id_empresa = $row['id_empresa'];
+            $crm_id_sede = $row['crm_id_sede'];
         }
+        $stmt_meta->close();
     }
 }
 
@@ -423,10 +423,11 @@ if($id_linea > 0) {
         $id_cliente = $con->insert_id;
     }
 
-    // 2. Buscar o crear conversación activa
-    $q_conv = $con->query("SELECT id FROM conversaciones WHERE id_linea = $id_linea AND id_cliente = $id_cliente AND estado != 'CERRADO' ORDER BY id DESC LIMIT 1");
+    // 2. Buscar o crear conversación activa (actualizando la id_linea a la sede emisora de la notificación)
+    $q_conv = $con->query("SELECT id FROM conversaciones WHERE id_cliente = $id_cliente AND estado != 'CERRADO' ORDER BY id DESC LIMIT 1");
     if($q_conv && $q_conv->num_rows > 0) {
         $id_conversacion = $q_conv->fetch_assoc()['id'];
+        $con->query("UPDATE conversaciones SET id_linea = $id_linea WHERE id = $id_conversacion");
     } else {
         $con->query("INSERT INTO conversaciones (id_linea, id_cliente, estado, fecha_inicio) VALUES ($id_linea, $id_cliente, 'RESUELTO', '$fecha_compra $hora_actual')");
         $id_conversacion = $con->insert_id;
