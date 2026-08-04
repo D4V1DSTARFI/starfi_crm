@@ -4,9 +4,6 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-// PAUSA COMPLETA DE EMERGENCIA DEL CRM SOLICITADA POR EL USUARIO
-echo json_encode(['status' => 'error', 'message' => 'El envío de notificaciones está pausado por emergencia.']);
-exit;
 
 // Check for remote sync command from Starfi 2.0 decentralized installations
 if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
@@ -253,18 +250,8 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
     }
 }
 
-// 5. Fallback por defecto si existe sólo una línea activa global en el sistema
-if (empty($token)) {
-    $q_active_global = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
-    if ($q_active_global && $q_active_global->num_rows > 0) {
-        $row_active = $q_active_global->fetch_assoc();
-        $telefonoID = $row_active['meta_app_id'];
-        $token = $row_active['meta_token'];
-        $id_linea = $row_active['id_linea'];
-        $id_empresa = $row_active['id_empresa'];
-        $crm_id_sede = $row_active['crm_id_sede'];
-    }
-}
+// 5. Fallback removido para evitar sedes cruzadas. Si no hay token exacto o id_sede correcto, se deniega el envío.
+
 
 // Si la Sede no posee una línea de WhatsApp activa configurada, DENEGAR el envío
 if (empty($token) || empty($telefonoID)) {
