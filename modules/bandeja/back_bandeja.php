@@ -741,35 +741,16 @@ switch ($action) {
                 $nombre_asignador = ($resAsignador && $rowAsig = $resAsignador->fetch_assoc()) ? $rowAsig['nombre_asignador'] : 'Administrador';
                 
                 $resCliente = $con->query("SELECT cl.nombre, cl.numero_whatsapp FROM conversaciones c JOIN clientes_contactos cl ON c.id_cliente = cl.id WHERE c.id = $conversacion_id LIMIT 1");
-                $infoCliente = ($resCliente && $rowCli = $resCliente->fetch_assoc()) ? ($rowCli['nombre'] ?: $rowCli['numero_whatsapp']) : 'Cliente';
+                $infoCliente = ($resCliente && $rowCli = $resCliente->fetch_assoc()) ? ($rowCli['nombre'] ? $rowCli['nombre'] . ' (' . $rowCli['numero_whatsapp'] . ')' : $rowCli['numero_whatsapp']) : 'Cliente';
                 
-                $texto_notif = "Tienes un mensaje por responder de $infoCliente (Asignado por $nombre_asignador a $nombre_agente)";
+                $texto_notif = "Hola $nombre_agente, tienes una conversación asignada por $nombre_asignador de $infoCliente. ¡Ingresa para atenderla!";
 
-                // Coleccionar teléfonos de destino: Operador asignado + Administradores
+                // Coleccionar teléfono de destino ÚNICAMENTE del vendedor/operador asignado (NO notificar al Administrador)
                 $telefonos_destinatarios = [];
                 if (!empty($telefono_agente) && $telefono_agente !== '-') {
                     $tel_clean = preg_replace('/[^0-9]/', '', $telefono_agente);
                     if (!empty($tel_clean)) {
                         $telefonos_destinatarios[] = $tel_clean;
-                    }
-                }
-                
-                // Obtener números de Administradores y Master
-                $qAdmin = $con->query("
-                    SELECT DISTINCT up.telefono 
-                    FROM usuario u 
-                    JOIN usuario_perfil up ON u.id = up.id_usuario 
-                    LEFT JOIN roles r ON u.rol = r.id 
-                    WHERE u.estado = 'ACTIVO' 
-                      AND (u.id_sede = $id_sede_notif OR u.id_sede IS NULL OR u.id_sede = 0 OR r.nombre = 'MASTER' OR r.nombre = 'ADMINISTRADOR' OR u.rol = 'ADMINISTRADOR' OR u.rol = 'MASTER')
-                      AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
-                ");
-                if ($qAdmin) {
-                    while ($rowAd = $qAdmin->fetch_assoc()) {
-                        $telAd = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
-                        if (!empty($telAd) && !in_array($telAd, $telefonos_destinatarios)) {
-                            $telefonos_destinatarios[] = $telAd;
-                        }
                     }
                 }
 
