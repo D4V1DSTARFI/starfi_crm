@@ -345,18 +345,26 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 }
             }
 
-            // Solo responde si el bot está activado en la sede, el remitente NO es un operador y la conversación no ha sido tomada por un agente
-            $bot_activo = (isset($linea_info['bot_activo']) && $linea_info['bot_activo'] == 1);
+            // ====== LÓGICA DE ROBOT / BOT DE SEDE Y ATENCIÓN IA ======
+            $bot_activo = (isset($linea_info['bot_activo']) && intval($linea_info['bot_activo']) === 1);
             $id_sede = intval($linea_info['id_sede']);
             $notificar_admin = false;
 
-            if ($bot_activo && !$es_operador && ($estado_conv === 'BOT_RECOPILANDO' || $estado_conv === 'ESPERA_ASIGNACION')) {
+            // Verificar si el chat ya fue asignado a un agente humano en el CRM
+            $q_agente_check = mysqli_query($con, "SELECT id_agente, estado FROM conversaciones WHERE id = $id_conversacion");
+            $id_agente_actual = 0;
+            if ($q_agente_check && $row_ag = mysqli_fetch_assoc($q_agente_check)) {
+                $id_agente_actual = intval($row_ag['id_agente'] ?? 0);
+            }
+
+            // Si el bot está ACTIVO, el remitente NO es un operador y el chat NO ha sido tomado por un vendedor humano:
+            if ($bot_activo && !$es_operador && $id_agente_actual === 0) {
                 $cuerpo_clean = trim($cuerpo_mensaje);
                 $cuerpo_lower = mb_strtolower($cuerpo_clean, 'UTF-8');
                 $bot_respondio = false;
 
-                // 1. DETECCIÓN PREVIA DE SOLICITUD DE AGENTE HUMANO (HANDOVER INMEDIATO)
-                $patrones_humano = ['asesor', 'humano', 'agente', 'hablar con alguien', 'atencion personal', 'soporte humano', 'persona', 'vendedor', 'comprar'];
+                // 1. DETECCIÓN PREVIA DE SOLICITUD DE ATENCIÓN HUMANA (HANDOVER)
+                $patrones_humano = ['asesor humano', 'hablar con persona', 'atencion personal', 'soporte humano', 'hablar con vendedor'];
                 $solicita_humano = false;
                 foreach ($patrones_humano as $patron) {
                     if (mb_strpos($cuerpo_lower, $patron) !== false) {
@@ -366,36 +374,34 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 }
 
                 if ($solicita_humano) {
-                    // Cambiar conversación a ESPERA_ASIGNACION
                     mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
                     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'El cliente solicitó atención por un agente humano (Handover).')");
                     
                     enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, "Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.", $id_conversacion);
                     enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
                     $bot_respondio = true;
-                    $notificar_admin = true;
+                    $notificar_admin = true; // Notificar al admin solo cuando hay transferencia a humano
                 }
 
-                // 2. ORQUESTACIÓN DE ASISTENTE VIRTUAL IA (SI LA IA ESTÁ ACTIVA PARA ESTA SEDE)
+                // 2. RESPUESTA DEL ASISTENTE VIRTUAL IA
                 if (!$bot_respondio) {
                     require_once __DIR__ . '/core/IaContextEngine.php';
                     require_once __DIR__ . '/core/IaConnector.php';
 
-                    $q_ia_config = mysqli_query($con, "SELECT * FROM configuraciones_ia WHERE id_sede = $id_sede AND estado_ia = 'ACTIVO' LIMIT 1");
+                    // Cargar configuración de la sede o fallback a la activa
+                    $q_ia_config = mysqli_query($con, "SELECT * FROM configuraciones_ia WHERE (id_sede = $id_sede OR id_sede = 0 OR id_sede IS NULL) AND estado_ia = 'ACTIVO' ORDER BY (id_sede = $id_sede) DESC LIMIT 1");
+                    if (!$q_ia_config || mysqli_num_rows($q_ia_config) == 0) {
+                        $q_ia_config = mysqli_query($con, "SELECT * FROM configuraciones_ia WHERE estado_ia = 'ACTIVO' LIMIT 1");
+                    }
+
                     if ($q_ia_config && mysqli_num_rows($q_ia_config) > 0) {
                         $configIa = mysqli_fetch_assoc($q_ia_config);
 
-                        // A) Contexto acotado
                         $contextoJIT = IaContextEngine::obtenerContextoInventario($con, $id_sede, $cuerpo_mensaje);
-
-                        // B) Historial reciente
                         $historial = IaConnector::recuperarHistorialMensajes($con, $id_conversacion, 12);
-
-                        // C) Generar respuesta con IA
                         $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT);
 
                         if (!empty($respuestaIa)) {
-                            // Verificar si la respuesta devuelta por la IA solicita Handover explícito
                             if (strpos($respuestaIa, '[SOLICITAR_AGENTE_HUMANO]') !== false) {
                                 $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
                                 mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
@@ -406,47 +412,31 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                                 }
                                 enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaLimpia, $id_conversacion);
                                 enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
-                                $notificar_admin = true;
+                                $notificar_admin = true; // Notificar al admin por transferencia humana
                             } else {
                                 enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaIa, $id_conversacion);
                             }
                             $bot_respondio = true;
-                        } else {
-                            $notificar_admin = true;
                         }
-                    } else {
-                        $notificar_admin = true;
                     }
                 }
 
-                // 3. FALLBACK TRADICIONAL
+                // 3. FALLBACK DE RESPUESTAS TRADICIONALES DE LA SEDE (SI LA IA NO RESPONDIÓ)
                 if (!$bot_respondio) {
                     $cuerpo_upper = strtoupper(trim($cuerpo_mensaje));
-                    if ($nueva_conversacion) {
-                        $q_bienvenida = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND (tipo = 'BIENVENIDA' OR disparador = 'HOLA') LIMIT 1");
-                        if ($q_bienvenida && mysqli_num_rows($q_bienvenida) > 0) {
-                            $row = mysqli_fetch_assoc($q_bienvenida);
-                            enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
-                            $bot_respondio = true;
-                        }
-                    } else {
-                        $q_match = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND UPPER(disparador) = '$cuerpo_upper' LIMIT 1");
-                        if ($q_match && mysqli_num_rows($q_match) > 0) {
-                            $row = mysqli_fetch_assoc($q_match);
-                            enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
-                            $bot_respondio = true;
-                        }
-                    }
-                    if (!$bot_respondio) {
-                        $notificar_admin = true;
+                    $q_match = mysqli_query($con, "SELECT tipo, mensaje FROM bot_respuestas WHERE id_sede = $id_sede AND estado = 'ACTIVO' AND UPPER(disparador) = '$cuerpo_upper' LIMIT 1");
+                    if ($q_match && mysqli_num_rows($q_match) > 0) {
+                        $row = mysqli_fetch_assoc($q_match);
+                        enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $row['mensaje'], $id_conversacion);
+                        $bot_respondio = true;
                     }
                 }
-            } else if (!$es_operador) {
-                // El bot está inactivo en la sede o la conversación ya requiere atención humana
+            } else if (!$es_operador && !$bot_activo) {
+                // El bot está DESACTIVADO en la sede: notificar al Administrador para atención manual
                 $notificar_admin = true;
             }
 
-            // Enviar notificación al Administrador únicamente si el bot está inactivo o se transfirió a atención humana
+            // Enviar plantilla de notificación al Administrador únicamente si el Bot está Inactivo o solicitó Transferencia Humana
             if ($notificar_admin) {
                 enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_db, $telefono_cliente);
             }
