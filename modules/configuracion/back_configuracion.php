@@ -911,7 +911,14 @@ switch ($action) {
             exit;
         }
 
+        @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS direccion_sede TEXT DEFAULT NULL");
+        @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
+        @mysqli_query($con, "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT NULL");
+        @mysqli_query($con, "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
+
         $agente_nombre = trim($_POST['agente_nombre'] ?? $_POST['nombre'] ?? 'Gema');
+        $direccion_sede = trim($_POST['direccion_sede'] ?? $_POST['direccion'] ?? '');
+        $link_gps = trim($_POST['link_gps'] ?? $_POST['gps'] ?? '');
         $agente_instrucciones = trim($_POST['agente_instrucciones'] ?? $_POST['prompt'] ?? '');
         $gemini_api_key = trim($_POST['gemini_api_key'] ?? $_POST['token'] ?? '');
         $modelo_ia = trim($_POST['modelo_ia'] ?? 'gemma-2-9b-it');
@@ -921,10 +928,12 @@ switch ($action) {
         $estado_ia = ($estado_raw === 'ACTIVO' || $estado_raw === '1' || $estado_raw === 1) ? 'ACTIVO' : 'INACTIVO';
 
         $stmt = $con->prepare("
-            INSERT INTO configuraciones_ia (id_empresa, id_sede, agente_nombre, agente_instrucciones, gemini_api_key, modelo_ia, temperatura, estado_ia)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO configuraciones_ia (id_empresa, id_sede, agente_nombre, direccion_sede, link_gps, agente_instrucciones, gemini_api_key, modelo_ia, temperatura, estado_ia)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE 
                 agente_nombre = VALUES(agente_nombre),
+                direccion_sede = VALUES(direccion_sede),
+                link_gps = VALUES(link_gps),
                 agente_instrucciones = VALUES(agente_instrucciones),
                 gemini_api_key = VALUES(gemini_api_key),
                 modelo_ia = VALUES(modelo_ia),
@@ -933,11 +942,16 @@ switch ($action) {
         ");
 
         if ($stmt) {
-            $stmt->bind_param("iissssds", $id_empresa, $id_sede, $agente_nombre, $agente_instrucciones, $gemini_api_key, $modelo_ia, $temperatura, $estado_ia);
+            $stmt->bind_param("iissssssds", $id_empresa, $id_sede, $agente_nombre, $direccion_sede, $link_gps, $agente_instrucciones, $gemini_api_key, $modelo_ia, $temperatura, $estado_ia);
             if ($stmt->execute()) {
-                // También actualizar bot_activo en la tabla sedes para sincro completa
+                // También actualizar bot_activo, direccion y link_gps en la tabla sedes para sincro completa
                 $bot_val = ($estado_ia === 'ACTIVO') ? 1 : 0;
-                $con->query("UPDATE sedes SET bot_activo = $bot_val WHERE id = $id_sede");
+                $stmt_s = $con->prepare("UPDATE sedes SET bot_activo = ?, direccion = ?, link_gps = ? WHERE id = ?");
+                if ($stmt_s) {
+                    $stmt_s->bind_param("issi", $bot_val, $direccion_sede, $link_gps, $id_sede);
+                    $stmt_s->execute();
+                    $stmt_s->close();
+                }
 
                 echo json_encode(['status' => 'success', 'message' => 'Configuración de Asistente IA guardada correctamente para la sede.']);
             } else {
@@ -961,7 +975,9 @@ switch ($action) {
         }
 
         if ($id_sede > 0) {
-            $stmt = $con->prepare("SELECT * FROM configuraciones_ia WHERE id_sede = ? LIMIT 1");
+            @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS direccion_sede TEXT DEFAULT NULL");
+            @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
+            $stmt = $con->prepare("SELECT c.*, s.direccion as sede_direccion, s.link_gps as sede_link_gps FROM configuraciones_ia c LEFT JOIN sedes s ON c.id_sede = s.id WHERE c.id_sede = ? LIMIT 1");
             $stmt->bind_param("i", $id_sede);
             $stmt->execute();
             $res = $stmt->get_result();
@@ -972,6 +988,8 @@ switch ($action) {
                     'data' => [
                         'id_sede' => $row['id_sede'],
                         'nombre' => $row['agente_nombre'],
+                        'direccion_sede' => $row['direccion_sede'] ?? $row['sede_direccion'] ?? '',
+                        'link_gps' => $row['link_gps'] ?? $row['sede_link_gps'] ?? '',
                         'prompt' => $row['agente_instrucciones'],
                         'token' => $row['gemini_api_key'],
                         'modelo_ia' => $row['modelo_ia'] ?? 'gemma-2-9b-it',

@@ -74,7 +74,19 @@ class IaConnector {
             $saludoTemporal = "¡Buenas noches!";
         }
 
+        $direccionSede = !empty($configIa['direccion_sede']) ? trim($configIa['direccion_sede']) : '';
+        $linkGps = !empty($configIa['link_gps']) ? trim($configIa['link_gps']) : '';
+
         $systemPrompt = "Tu nombre es " . $nombreAgente . ".\n" . $instruccionesBase;
+        if (!empty($direccionSede)) {
+            $systemPrompt .= "\n\nDIRECCIÓN FÍSICA DE ESTA SEDE: *" . $direccionSede . "*.";
+        }
+        if (!empty($linkGps)) {
+            $systemPrompt .= "\nUBICACIÓN GPS DIRECTA (GOOGLE MAPS): *" . $linkGps . "*.";
+        }
+        if (!empty($direccionSede) || !empty($linkGps)) {
+            $systemPrompt .= "\nREGLA DE UBICACIÓN: Si el cliente pregunta por la ubicación, dirección, dónde están o cómo llegar, envíale la dirección escrita e inclúyele obligatoriamente el enlace GPS de Google Maps para que pueda abrirlo en su teléfono con 1 clic.\n";
+        }
         $systemPrompt .= "\n\nHORA ACTUAL DEL SERVIDOR: Usar preferentemente el saludo de tiempo actual: *" . $saludoTemporal . "*.\n";
         $systemPrompt .= "\nREGLAS OBLIGATORIAS DE FLUJO DE ATENCIÓN Y CAPTURA DE NOMBRE (WHATSAPP):\n";
 
@@ -97,7 +109,7 @@ class IaConnector {
         $systemPrompt .= "3. FORMATO WHATSAPP: Usa negritas (*ejemplo*) para resaltar nombres de productos, precios y datos clave. Usa viñetas limpias (•) para listar artículos.\n";
         $systemPrompt .= "4. TONO Y ESTILO: Mantén un tono comercial cálido, servicial, profesional y entusiasta. Usa emojis sutiles y adecuados (ej. ✨, 📦, 💡, 📍, 🤝) para hacer la lectura agradable.\n";
         $systemPrompt .= "5. RESPUESTAS CONCISAS: Escribe párrafos cortos y directos, ideales para leer rápidamente en la pantalla de un teléfono celular.\n";
-        $systemPrompt .= "6. DATOS DE INVENTARIO: Si se incluye información de inventario en tiempo real y el cliente ya indicó su nombre, muestra el producto en *negrita*, el *precio* en USD ($) y confirma si hay stock disponible. No inventes precios ni existencias que no figuren en el contexto proporcionado.\n";
+        $systemPrompt .= "6. CONSULTA DE INVENTARIO PAUSADA (HASTA NUEVO AVISO): Las respuestas automáticas sobre existencias y catálogo de productos están pausadas. Si el cliente consulta sobre un producto o precio, indícale amablemente que un asesor le atenderá con el catálogo actualizado, o indícale la dirección si consulta por la ubicación física. Si desea un operador, transfiérelo incluyendo la etiqueta '[SOLICITAR_AGENTE_HUMANO]'.\n";
         $systemPrompt .= "7. TRANSFERENCIA A ASESOR HUMANO: Si el cliente solicita explícitamente ser atendido por un asesor humano o una persona, responde con amabilidad confirmándole la transferencia e incluye EXACTAMENTE la etiqueta '[SOLICITAR_AGENTE_HUMANO]' al final de tu mensaje.\n";
         $systemPrompt .= "8. LLAMADA A LA ACCIÓN: Finaliza ofreciendo ayuda adicional o invitando a concretar la consulta de forma servicial.";
 

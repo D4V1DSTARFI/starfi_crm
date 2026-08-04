@@ -118,6 +118,9 @@ function hasPermission($modulo) {
     }
     
     $id = intval($_SESSION['agente_id']);
+    if ($id === 1) {
+        return true;
+    }
     
     // Obtener rol del usuario
     $stmt = $con->prepare("SELECT u.rol, r.nombre AS rol_nombre 

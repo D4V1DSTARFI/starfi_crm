@@ -291,10 +291,12 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
         .profile-avatar-large {
             display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 20px;
-            text-align: left;
-            margin-bottom: 25px;
+            justify-content: center;
+            gap: 12px;
+            text-align: center;
+            margin-bottom: 20px;
             padding-bottom: 20px;
             border-bottom: 1px solid #E2E8F0;
         }
@@ -336,29 +338,44 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             font-size: 0.95rem;
             color: #1E293B;
             background-color: #F8FAFC;
-            transition: all 0.2s ease;
+            transition: all 0.3s ease;
+        }
+
+        /* Inputs Deshabilitados (Modo Lectura - Gris Suave) */
+        .form-control-custom:disabled,
+        .form-select:disabled {
+            background-color: #F1F5F9 !important;
+            border: 1px border-solid #CBD5E1 !important;
+            color: #64748B !important;
+            font-weight: 500;
+            cursor: not-allowed;
+            opacity: 0.85;
+            box-shadow: none !important;
+        }
+
+        /* Inputs Habilitados (Modo Edición Activo - Borde Naranja Destacado) */
+        .form-control-custom:not(:disabled),
+        .form-select:not(:disabled) {
+            background-color: #FFFFFF !important;
+            border: 2px solid var(--primary) !important;
+            color: #0F172A !important;
+            font-weight: 600;
+            box-shadow: 0 0 0 4px rgba(232, 91, 20, 0.15) !important;
         }
 
         .form-control-custom:focus {
             outline: none;
             border-color: var(--primary);
             background-color: #ffffff;
-            box-shadow: 0 0 0 3px rgba(232, 91, 20, 0.1);
+            box-shadow: 0 0 0 4px rgba(232, 91, 20, 0.25) !important;
         }
         
         /* Inputs Bootstrap en el modal */
         #profPhone, #profPrefix {
-            border: 1px solid #E2E8F0;
-            background-color: #F8FAFC;
             padding: 12px 16px;
             border-radius: 10px;
             font-size: 0.95rem;
-            color: #1E293B;
-        }
-        #profPhone:focus, #profPrefix:focus {
-            border-color: var(--primary);
-            box-shadow: none;
-            background-color: #fff;
+            transition: all 0.3s ease;
         }
 
         /* Columna Derecha: Timeline */
@@ -369,6 +386,22 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             display: flex;
             flex-direction: column;
             overflow-y: auto;
+        }
+
+        .profile-nav-tabs .nav-link {
+            border: 1px solid transparent;
+            color: #64748B !important;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            background-color: #E2E8F0;
+            border-radius: 8px 8px 0 0 !important;
+            margin-right: 4px;
+        }
+        .profile-nav-tabs .nav-link.active {
+            color: var(--primary) !important;
+            border-color: #CBD5E1 #CBD5E1 #ffffff #CBD5E1;
+            background-color: #ffffff !important;
         }
 
         .timeline-header {
@@ -524,74 +557,103 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             <div class="modal fade" id="profileModal" tabindex="-1" aria-hidden="true">
                 <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 1350px;">
                     <div class="modal-content overflow-hidden">
-                        <div class="modal-header border-0 bg-light">
-                            <h5 class="modal-title mb-0 brand-font fw-bold text-starfi-dark"><i class="fa-solid fa-id-card-clip me-2 text-starfi-primary"></i>Ficha de Cliente 360</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        <div class="modal-header border-0 bg-light position-relative text-center d-flex justify-content-center align-items-center">
+                            <h5 class="modal-title mb-0 brand-font fw-bold text-starfi-dark text-center w-100"><i class="fa-solid fa-id-card-clip me-2 text-starfi-primary"></i>Ficha de Cliente 360</h5>
+                            <button type="button" class="btn-close position-absolute end-0 me-3" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         
                         <div class="modal-body p-0">
                             <div class="profile-body-scroll d-flex flex-row" style="height: 780px;">
                     <!-- Columna Izquierda: Datos -->
-                    <div class="profile-data-col">
-                        <div class="profile-avatar-large">
-                            <img id="profAvatarImg" src="https://ui-avatars.com/api/?name=User&background=E85B14&color=fff" alt="Avatar">
-                            <div>
-                                <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #0F172A;">Nombre Cliente</h4>
-                                <span class="badge bg-light text-secondary border" id="profTitleId">ID: CLI-000</span>
+                    <div class="profile-data-col d-flex flex-column h-100 p-0" style="width: 45%; background-color: #ffffff; border-right: 1px solid rgba(0,0,0,0.06);">
+                        <div class="p-4 flex-grow-1 overflow-auto">
+                            <div class="profile-avatar-large">
+                                <img id="profAvatarImg" src="https://ui-avatars.com/api/?name=User&background=E85B14&color=fff" alt="Avatar">
+                                <div>
+                                    <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #0F172A;">Nombre Cliente</h4>
+                                    <span class="badge bg-light text-secondary border" id="profTitleId">ID: CLI-000</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group mt-3">
+                                <label>Nombre Comercial / Razón Social</label>
+                                <input type="text" id="profName" class="form-control-custom" placeholder="Ej. Empresa S.A.">
+                            </div>
+                            <div class="form-group">
+                                <label>Sede Asociada</label>
+                                <select id="profSede" class="form-control-custom">
+                                    <option value="">General / Central</option>
+                                    <!-- JS Inject Sedes -->
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Número de WhatsApp</label>
+                                <div class="d-flex gap-2">
+                                    <select class="form-select" id="profPrefix" style="max-width: 120px;">
+                                        <option value="58414">0414</option>
+                                        <option value="58424">0424</option>
+                                        <option value="58412">0412</option>
+                                        <option value="58416">0416</option>
+                                        <option value="58426">0426</option>
+                                    </select>
+                                    <input type="text" id="profPhone" class="form-control-custom" style="flex: 1;" placeholder="1234567">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Dirección</label>
+                                <textarea id="profAddress" class="form-control-custom" rows="2" placeholder="Ubicación física..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Etiquetas (Tags)</label>
+                                <div class="d-flex gap-2 flex-wrap mt-1">
+                                    <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill" style="cursor: pointer;">+ Añadir Etiqueta</span>
+                                </div>
+                            </div>
+                            <div class="form-group mb-2">
+                                <label>Notas Internas</label>
+                                <textarea id="profNotes" class="form-control-custom" rows="3" placeholder="Información relevante solo para agentes..."></textarea>
                             </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Nombre Comercial / Razón Social</label>
-                            <input type="text" id="profName" class="form-control-custom" placeholder="Ej. Empresa S.A.">
+                        <!-- Sticky Footer para Botones (Siempre Visible) -->
+                        <div class="p-3 border-top bg-white">
+                            <button id="btnEditProfile" type="button" class="btn btn-outline-primary w-100 py-2.5 fw-bold" style="border-radius: 10px;">
+                                <i class="fa-solid fa-pen-to-square me-2"></i>Editar Perfil
+                            </button>
+                            <button id="btnSaveProfile" type="button" class="btn btn-starfi-primary w-100 py-2.5 fw-bold" style="border-radius: 10px; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.2); display: none;">
+                                <i class="fa-solid fa-floppy-disk me-2"></i>Guardar Cambios
+                            </button>
                         </div>
-                        <div class="form-group">
-                            <label>Sede Asociada</label>
-                            <select id="profSede" class="form-control-custom">
-                                <option value="">General / Central</option>
-                                <!-- JS Inject Sedes -->
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Número de WhatsApp</label>
-                            <div class="d-flex gap-2">
-                                <select class="form-select" id="profPrefix" style="max-width: 120px;">
-                                    <option value="58414">0414</option>
-                                    <option value="58424">0424</option>
-                                    <option value="58412">0412</option>
-                                    <option value="58416">0416</option>
-                                    <option value="58426">0426</option>
-                                </select>
-                                <input type="text" id="profPhone" class="form-control-custom" style="flex: 1;" placeholder="1234567">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Dirección</label>
-                            <textarea id="profAddress" class="form-control-custom" rows="2" placeholder="Ubicación física..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Etiquetas (Tags)</label>
-                            <div class="d-flex gap-2 flex-wrap mt-1">
-                                <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill" style="cursor: pointer;">+ Añadir Etiqueta</span>
-                            </div>
-                        </div>
-                        <div class="form-group mb-4">
-                            <label>Notas Internas</label>
-                            <textarea id="profNotes" class="form-control-custom" rows="3" placeholder="Información relevante solo para agentes..."></textarea>
-                        </div>
-                        
-                        <button id="btnSaveProfile" class="btn btn-starfi-primary w-100 py-3" style="border-radius: 12px; font-weight: 600; box-shadow: 0 4px 12px rgba(232, 91, 20, 0.2);">Guardar Cambios</button>
                     </div>
 
-                    <!-- Columna Derecha: Línea de Tiempo (Eventos) -->
+                    <!-- Columna Derecha: Pestañas de Historial (Conversaciones y Ventas) -->
                     <div class="profile-timeline-col">
-                        <div class="timeline-header">
-                            <i class="fa-solid fa-clock-rotate-left me-2 text-starfi-primary"></i>Historial de Eventos
-                        </div>
-                        <div class="timeline-feed" id="profileTimeline">
-                            <!-- JS Inject Timeline -->
-                        </div>
+                        <ul class="nav nav-tabs profile-nav-tabs mb-3" id="profileTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="tab-conv-btn" data-bs-toggle="tab" data-bs-target="#tab-conv-pane" type="button" role="tab">
+                                    <i class="fa-solid fa-comments me-2 text-starfi-primary"></i>Conversaciones
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="tab-ventas-btn" data-bs-toggle="tab" data-bs-target="#tab-ventas-pane" type="button" role="tab">
+                                    <i class="fa-solid fa-cart-shopping me-2 text-success"></i>Historial de Ventas
+                                </button>
+                            </li>
+                        </ul>
+                        
+                        <div class="tab-content flex-grow-1 overflow-auto" id="profileTabsContent">
+                            <div class="tab-pane fade show active" id="tab-conv-pane" role="tabpanel">
+                                <div class="timeline-feed" id="profileConversationsFeed">
+                                    <!-- JS Inject Conversaciones -->
+                                </div>
                             </div>
+                            <div class="tab-pane fade" id="tab-ventas-pane" role="tabpanel">
+                                <div class="timeline-feed" id="profileSalesFeed">
+                                    <!-- JS Inject Ventas -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                         </div>
                     </div>
                 </div>

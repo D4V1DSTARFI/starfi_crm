@@ -179,6 +179,8 @@ $(document).ready(function() {
         const id_sede = $('#gema_id_sede').val();
         const prompt = $('#gema_prompt').val().trim();
         const nombre = $('#gema_nombre').val().trim();
+        const direccion = $('#gema_direccion').length ? ($('#gema_direccion').val() || '').trim() : '';
+        const link_gps = $('#gema_link_gps').val().trim();
         const token = $('#gema_token').val().trim();
         const modelo = $('#gema_modelo_ia').val();
         const temperatura = $('#gema_temperatura').val();
@@ -205,6 +207,8 @@ $(document).ready(function() {
                 action: 'save_gema',
                 id_sede: id_sede,
                 agente_nombre: nombre,
+                direccion_sede: direccion,
+                link_gps: link_gps,
                 agente_instrucciones: prompt,
                 gemini_api_key: token,
                 modelo_ia: modelo,
@@ -302,12 +306,161 @@ function loadGemaConfig(id_sede) {
             if(res.status === 'success' && res.data) {
                 if (res.data.prompt !== undefined) $('#gema_prompt').val(res.data.prompt);
                 if (res.data.nombre !== undefined) $('#gema_nombre').val(res.data.nombre);
+                if ($('#gema_direccion').length && res.data.direccion_sede !== undefined) $('#gema_direccion').val(res.data.direccion_sede);
+                if (res.data.link_gps !== undefined) $('#gema_link_gps').val(res.data.link_gps);
                 if (res.data.token !== undefined) $('#gema_token').val(res.data.token);
                 if (res.data.modelo_ia !== undefined) $('#gema_modelo_ia').val(res.data.modelo_ia);
                 if (res.data.temperatura !== undefined) $('#gema_temperatura').val(res.data.temperatura);
                 $('#gema_estado').prop('checked', res.data.estado == 1 || res.data.estado_ia === 'ACTIVO');
+                updateGemaLivePreview();
             }
         }
+    });
+}
+
+// Escuchadores de eventos para actualización en tiempo real de la vista previa de WhatsApp
+$(document).on('input change', '#gema_nombre, #gema_link_gps, #gema_id_sede, #gema_estado', function() {
+    updateGemaLivePreview();
+});
+
+function updateGemaLivePreview() {
+    const nombre = $('#gema_nombre').val().trim() || 'Gema';
+    const linkGps = $('#gema_link_gps').val().trim() || 'https://www.google.com/maps?q=10.48060,-66.90360';
+    const sedeNombre = $('#gema_id_sede option:selected').text() || 'Sede STARFI';
+    const isActivo = $('#gema_estado').is(':checked');
+
+    $('#prev_bot_name').text(nombre);
+    $('#preview_agent_name_display').text(nombre + ' (IA)');
+    $('#preview_bubble_name').text(nombre + ' Bot');
+    
+    let displayGps = linkGps;
+    if (displayGps.length > 55) {
+        displayGps = displayGps.substring(0, 52) + '...';
+    }
+    $('#prev_bot_gps').html(`<a href="${linkGps}" target="_blank" class="text-primary text-decoration-underline fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">${displayGps}</a>`);
+    
+    $('#prev_sede_name').text(sedeNombre);
+    $('#preview_sede_name_display').text(sedeNombre + ' • En línea');
+
+    if (isActivo) {
+        $('#gema_estado_badge').removeClass('bg-secondary bg-opacity-10 text-secondary').addClass('bg-success bg-opacity-10 text-success').html('<i class="fa-solid fa-circle-check me-1"></i> BOT ACTIVO');
+    } else {
+        $('#gema_estado_badge').removeClass('bg-success bg-opacity-10 text-success').addClass('bg-secondary bg-opacity-10 text-secondary').html('<i class="fa-solid fa-circle-xmark me-1"></i> BOT INACTIVO');
+    }
+}
+
+function togglePasswordVisibility(fieldId) {
+    const input = $('#' + fieldId);
+    const eye = $('#' + fieldId + '_eye');
+    if (input.attr('type') === 'password') {
+        input.attr('type', 'text');
+        eye.removeClass('fa-eye').addClass('fa-eye-slash');
+    } else {
+        input.attr('type', 'password');
+        eye.removeClass('fa-eye-slash').addClass('fa-eye');
+    }
+}
+
+// Variables y lógica para el Selector Interactivo de Mapa GPS
+let mapPicker = null;
+let mapMarker = null;
+let selectedLat = 10.4806;
+let selectedLng = -66.9036;
+
+function abrirModalMapaGPS() {
+    const existingUrl = $('#gema_link_gps').val().trim();
+    if (existingUrl) {
+        const match = existingUrl.match(/q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+        if (match && match[1] && match[2]) {
+            selectedLat = parseFloat(match[1]);
+            selectedLng = parseFloat(match[2]);
+        }
+    }
+
+    const modalEl = document.getElementById('modalMapPicker');
+    if (!modalEl) return;
+
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    $('#modalMapPicker').off('shown.bs.modal').on('shown.bs.modal', function () {
+        initLeafletMapPicker();
+    });
+}
+
+function initLeafletMapPicker() {
+    if (typeof L === 'undefined') {
+        Swal.fire('Error', 'No se pudo cargar la librería de mapas.', 'error');
+        return;
+    }
+
+    if (!mapPicker) {
+        mapPicker = L.map('leafletMapContainer').setView([selectedLat, selectedLng], 14);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(mapPicker);
+
+        mapMarker = L.marker([selectedLat, selectedLng], { draggable: true }).addTo(mapPicker);
+
+        mapMarker.on('dragend', function () {
+            const position = mapMarker.getLatLng();
+            updateSelectedCoords(position.lat, position.lng);
+        });
+
+        mapPicker.on('click', function (e) {
+            mapMarker.setLatLng(e.latlng);
+            updateSelectedCoords(e.latlng.lat, e.latlng.lng);
+        });
+    } else {
+        mapPicker.setView([selectedLat, selectedLng], 14);
+        mapMarker.setLatLng([selectedLat, selectedLng]);
+        setTimeout(() => mapPicker.invalidateSize(), 200);
+    }
+
+    updateSelectedCoords(selectedLat, selectedLng);
+}
+
+function updateSelectedCoords(lat, lng) {
+    selectedLat = lat;
+    selectedLng = lng;
+    $('#selectedCoordsText').text(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+}
+
+function buscarEnMapa() {
+    const query = $('#mapSearchInput').val().trim();
+    if (!query) return;
+
+    $('#reverseGeocodeText').text('Buscando en mapa...');
+    $.getJSON(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`, function (data) {
+        if (data && data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lon = parseFloat(data[0].lon);
+            mapPicker.setView([lat, lon], 15);
+            mapMarker.setLatLng([lat, lon]);
+            updateSelectedCoords(lat, lon);
+            $('#reverseGeocodeText').text(data[0].display_name);
+        } else {
+            Swal.fire('Sin resultados', 'No se encontró la zona o dirección especificada.', 'info');
+        }
+    });
+}
+
+function confirmarUbicacionMapa() {
+    const googleMapsUrl = `https://www.google.com/maps?q=${selectedLat.toFixed(5)},${selectedLng.toFixed(5)}`;
+    $('#gema_link_gps').val(googleMapsUrl).trigger('change');
+    
+    const modalEl = document.getElementById('modalMapPicker');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+
+    Swal.fire({
+        icon: 'success',
+        title: 'Ubicación GPS Seleccionada',
+        text: `Se ha vinculado el enlace Google Maps: ${googleMapsUrl}`,
+        timer: 2000,
+        showConfirmButton: false
     });
 }
 

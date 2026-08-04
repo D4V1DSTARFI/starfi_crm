@@ -703,57 +703,81 @@ switch ($action) {
 
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
 
-            // Enviar notificación por WhatsApp al operador si tiene teléfono
-            if (!empty($telefono_agente) && $telefono_agente !== '-') {
-                $telefono_clean = preg_replace('/[^0-9]/', '', $telefono_agente);
-                if (!empty($telefono_clean)) {
-                    // Obtener nombre del asignador
-                    $resAsignador = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_asignador FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $agente_id");
-                    $nombre_asignador = ($resAsignador && $rowAsig = $resAsignador->fetch_assoc()) ? $rowAsig['nombre_asignador'] : 'Administrador';
+            // Enviar notificación por WhatsApp al operador y a los administradores
+            $qLinea = $con->query("SELECT l.meta_token, l.meta_app_id, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
+            if (!$qLinea || $qLinea->num_rows == 0) {
+                $qLinea = $con->query("SELECT meta_token, meta_app_id, id_sede FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
+            }
+            if ($qLinea && $rowLinea = $qLinea->fetch_assoc()) {
+                $meta_token = $rowLinea['meta_token'];
+                $phone_number_id = $rowLinea['meta_app_id'];
+                $id_sede_notif = intval($rowLinea['id_sede'] ?? 1);
+                
+                // Obtener nombre del asignador y datos del cliente
+                $resAsignador = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_asignador FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $agente_id");
+                $nombre_asignador = ($resAsignador && $rowAsig = $resAsignador->fetch_assoc()) ? $rowAsig['nombre_asignador'] : 'Administrador';
+                
+                $resCliente = $con->query("SELECT cl.nombre, cl.numero_whatsapp FROM conversaciones c JOIN clientes_contactos cl ON c.id_cliente = cl.id WHERE c.id = $conversacion_id LIMIT 1");
+                $infoCliente = ($resCliente && $rowCli = $resCliente->fetch_assoc()) ? ($rowCli['nombre'] ?: $rowCli['numero_whatsapp']) : 'Cliente';
+                
+                $texto_notif = "Tienes un mensaje por responder de $infoCliente (Asignado por $nombre_asignador a $nombre_agente)";
 
-                    // Obtener línea de WhatsApp activa
-                    $qLinea = $con->query("SELECT l.meta_token, l.meta_app_id FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
-                    if (!$qLinea || $qLinea->num_rows == 0) {
-                        $qLinea = $con->query("SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
+                // Coleccionar teléfonos de destino: Operador asignado + Administradores
+                $telefonos_destinatarios = [];
+                if (!empty($telefono_agente) && $telefono_agente !== '-') {
+                    $tel_clean = preg_replace('/[^0-9]/', '', $telefono_agente);
+                    if (!empty($tel_clean)) {
+                        $telefonos_destinatarios[] = $tel_clean;
                     }
-                    if ($qLinea && $rowLinea = $qLinea->fetch_assoc()) {
-                        $meta_token = $rowLinea['meta_token'];
-                        $phone_number_id = $rowLinea['meta_app_id'];
-                        
-                        $texto_notif = "Hola {$nombre_agente}, tienes una nueva conversación asignada por {$nombre_asignador}.";
-                        
-                        $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
-                        $post_payload = [
-                            'messaging_product' => 'whatsapp',
-                            'to' => $telefono_clean,
-                            'type' => 'template',
-                            'template' => [
-                                'name' => 'starfi_notificacion_interna',
-                                'language' => ['code' => 'es'],
-                                'components' => [
-                                    [
-                                        'type' => 'body',
-                                        'parameters' => [
-                                            ['type' => 'text', 'text' => $texto_notif]
-                                        ]
+                }
+                
+                // Obtener números de Administradores y Master
+                $qAdmin = $con->query("
+                    SELECT DISTINCT up.telefono 
+                    FROM usuario u 
+                    JOIN usuario_perfil up ON u.id = up.id_usuario 
+                    LEFT JOIN roles r ON u.rol = r.id 
+                    WHERE u.estado = 'ACTIVO' 
+                      AND (u.id_sede = $id_sede_notif OR u.id_sede IS NULL OR u.id_sede = 0 OR r.nombre = 'MASTER' OR r.nombre = 'ADMINISTRADOR' OR u.rol = 'ADMINISTRADOR' OR u.rol = 'MASTER')
+                      AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
+                ");
+                if ($qAdmin) {
+                    while ($rowAd = $qAdmin->fetch_assoc()) {
+                        $telAd = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
+                        if (!empty($telAd) && !in_array($telAd, $telefonos_destinatarios)) {
+                            $telefonos_destinatarios[] = $telAd;
+                        }
+                    }
+                }
+
+                // Enviar la plantilla starfi_notificacion_interna a cada destinatario
+                $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                foreach ($telefonos_destinatarios as $tel_dest) {
+                    $post_payload = [
+                        'messaging_product' => 'whatsapp',
+                        'to' => $tel_dest,
+                        'type' => 'template',
+                        'template' => [
+                            'name' => 'starfi_notificacion_interna',
+                            'language' => ['code' => 'es'],
+                            'components' => [
+                                [
+                                    'type' => 'body',
+                                    'parameters' => [
+                                        ['type' => 'text', 'text' => $texto_notif]
                                     ]
                                 ]
                             ]
-                        ];
-                        
-                        $ch_notif = curl_init($msg_url);
-                        curl_setopt($ch_notif, CURLOPT_POST, 1);
-                        curl_setopt($ch_notif, CURLOPT_POSTFIELDS, json_encode($post_payload));
-                        curl_setopt($ch_notif, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
-                        curl_setopt($ch_notif, CURLOPT_RETURNTRANSFER, true);
-                        $res_notif = curl_exec($ch_notif);
-                        $http_code = curl_getinfo($ch_notif, CURLINFO_HTTP_CODE);
-                        curl_close($ch_notif);
-
-                        if ($http_code !== 200) {
-                            error_log("Error enviando notificacion por WhatsApp a operador ($telefono_clean): " . $res_notif);
-                        }
-                    }
+                        ]
+                    ];
+                    
+                    $ch_notif = curl_init($msg_url);
+                    curl_setopt($ch_notif, CURLOPT_POST, 1);
+                    curl_setopt($ch_notif, CURLOPT_POSTFIELDS, json_encode($post_payload));
+                    curl_setopt($ch_notif, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
+                    curl_setopt($ch_notif, CURLOPT_RETURNTRANSFER, true);
+                    curl_exec($ch_notif);
+                    curl_close($ch_notif);
                 }
             }
 

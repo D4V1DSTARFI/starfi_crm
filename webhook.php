@@ -823,3 +823,80 @@ function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente,
     
     enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $lista_contactos, $id_conversacion);
 }
+
+/**
+ * Enviar plantilla de notificación interna (starfi_notificacion_interna) ÚNICAMENTE al Administrador cuando un cliente escribe
+ */
+function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_cliente, $numero_cliente) {
+    if ($id_sede <= 0) return;
+    
+    // 1. Obtener línea de WhatsApp activa para la sede
+    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+    if (!$qLinea || mysqli_num_rows($qLinea) == 0) {
+        $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE estado = 'ACTIVO' LIMIT 1");
+    }
+    if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
+    
+    $rowLinea = mysqli_fetch_assoc($qLinea);
+    $meta_token = $rowLinea['meta_token'];
+    $phone_number_id = $rowLinea['meta_app_id'];
+    if (empty($meta_token) || empty($phone_number_id)) return;
+    
+    // 2. Colección de números de destino ÚNICAMENTE para Administradores y Master
+    $telefonos_destinatarios = [];
+    $qAdmin = mysqli_query($con, "
+        SELECT DISTINCT up.telefono 
+        FROM usuario u 
+        JOIN usuario_perfil up ON u.id = up.id_usuario 
+        LEFT JOIN roles r ON u.rol = r.id 
+        WHERE u.estado = 'ACTIVO' 
+          AND (u.id_sede = $id_sede OR u.id_sede IS NULL OR u.id_sede = 0 OR r.nombre = 'MASTER' OR r.nombre = 'ADMINISTRADOR' OR u.rol = 'ADMINISTRADOR' OR u.rol = 'MASTER')
+          AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
+    ");
+    if ($qAdmin) {
+        while ($rowAd = mysqli_fetch_assoc($qAdmin)) {
+            $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
+            if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
+                $telefonos_destinatarios[] = $tel;
+            }
+        }
+    }
+    
+    if (empty($telefonos_destinatarios)) return;
+    
+    // 3. Generar mensaje de plantilla: "Tienes un mensaje por responder de [Cliente]"
+    $cliente_nombre = (!empty($nombre_cliente) && strtolower($nombre_cliente) !== 'cliente') ? "$nombre_cliente ($numero_cliente)" : $numero_cliente;
+    $texto_notificacion = "Tienes un mensaje por responder de $cliente_nombre";
+    
+    // 4. Enviar plantilla 'starfi_notificacion_interna' vía API de Meta únicamente a Administradores
+    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+    
+    foreach ($telefonos_destinatarios as $tel_dest) {
+        $post_payload = [
+            'messaging_product' => 'whatsapp',
+            'to' => $tel_dest,
+            'type' => 'template',
+            'template' => [
+                'name' => 'starfi_notificacion_interna',
+                'language' => ['code' => 'es'],
+                'components' => [
+                    [
+                        'type' => 'body',
+                        'parameters' => [
+                            ['type' => 'text', 'text' => $texto_notificacion]
+                        ]
+                    ]
+                ]
+            ]
+        ];
+        
+        $ch = curl_init($msg_url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_payload));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        curl_exec($ch);
+        curl_close($ch);
+    }
+}

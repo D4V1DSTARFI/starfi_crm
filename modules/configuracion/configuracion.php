@@ -25,6 +25,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
+    <!-- Leaflet CSS for Interactive Map Picker -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
         .config-container {
@@ -314,125 +316,232 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                 <!-- GEMA AI -->
                 <div class="tab-pane fade" id="gema" role="tabpanel">
-                    <div class="config-card" style="padding: 0;">
-                        <div class="d-flex justify-content-between align-items-center" style="padding: 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.04);">
-                            <h4 class="config-card-title border-0 pb-0 mb-0"><i class="fa-solid fa-wand-magic-sparkles text-starfi-primary me-2"></i> Asistente de Inteligencia Artificial Multi-Sede (Gema)</h4>
+                    <div class="config-card" style="padding: 0; background: transparent; border: none; box-shadow: none; margin-bottom: 0;">
+                        <div class="card border-0 shadow-sm overflow-hidden" style="border-radius: 16px; background-color: #FFFFFF;">
+                        
+                        <!-- Header Banner Gradient -->
+                        <div class="p-4 text-white d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 52px; height: 52px; background: rgba(232, 91, 20, 0.15); border: 2px solid #E85B14;">
+                                    <i class="fa-solid fa-wand-magic-sparkles fs-4 text-warning"></i>
+                                </div>
+                                <div>
+                                    <h4 class="fw-bold mb-1 text-white" style="font-size: 1.25rem;">Asistente de Inteligencia Artificial (IA) Multi-Sede</h4>
+                                    <p class="text-white-50 small mb-0"><i class="fa-solid fa-shield-halved text-success me-1"></i> Configura la identidad, dirección física e instrucciones independientes por cada sede.</p>
+                                </div>
+                            </div>
+                            <!-- Sede Selector Top Bar -->
+                            <div class="d-flex align-items-center gap-2 bg-white bg-opacity-10 p-2 rounded-3" style="backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.15);">
+                                <label class="text-white small fw-bold text-nowrap mb-0 ps-1"><i class="fa-solid fa-building me-1 text-warning"></i> SEDE:</label>
+                                <select class="form-select form-select-sm fw-bold border-0 text-dark" id="gema_id_sede" style="min-width: 220px; border-radius: 6px;">
+                                    <option value="">Cargando sedes...</option>
+                                </select>
+                            </div>
                         </div>
 
-                        <div class="p-4" style="background-color: #F8FAFC; min-height: 400px;">
-                            <div class="row g-4">
-                                <!-- Columna Izquierda: Ajustes Principales -->
-                                <div class="col-md-7">
-                                    
-                                    <!-- Selección de Sede -->
-                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 8px; border: 1px solid #CBD5E1 !important; background-color: #F1F5F9;">
-                                        <div class="card-body p-3">
-                                            <label class="form-label text-dark fw-bold text-uppercase mb-1" style="font-size: 0.8rem;"><i class="fa-solid fa-building me-1 text-primary"></i> SELECCIONAR SEDE A CONFIGURAR</label>
-                                            <select class="form-select form-select-premium fw-bold" id="gema_id_sede" style="background-color: #ffffff;">
-                                                <option value="">Cargando sedes...</option>
-                                            </select>
-                                            <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-shield-halved me-1"></i> Cada sede posee su propia configuración, API Key e inventario de respuestas aislado.</small>
+                        <!-- Card Body Content -->
+                        <div class="p-4" style="background-color: #F8FAFC; min-height: 500px;">
+                            
+                            <!-- Banner Toggle Estado Activo -->
+                            <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px; border-left: 5px solid #E85B14 !important; background: #FFFFFF;">
+                                <div class="card-body p-3 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                                    <div class="d-flex align-items-center gap-3">
+                                        <div class="form-check form-switch ps-0 mb-0">
+                                            <input class="form-check-input mt-0 me-2 ms-0" type="checkbox" id="gema_estado" style="width: 3.2rem; height: 1.6rem; cursor: pointer;" checked>
+                                        </div>
+                                        <div>
+                                            <h6 class="fw-bold text-dark mb-0" style="font-size: 1rem;">Estado del Bot Conversacional para esta Sede</h6>
+                                            <p class="text-muted small mb-0">Habilita la atención automática por IA en las líneas de WhatsApp asociadas a esta tienda.</p>
                                         </div>
                                     </div>
+                                    <span id="gema_estado_badge" class="badge bg-success bg-opacity-10 text-success px-3 py-2 rounded-pill fw-bold fs-7">
+                                        <i class="fa-solid fa-circle-check me-1"></i> BOT ACTIVO
+                                    </span>
+                                </div>
+                            </div>
 
-                                    <!-- Toggle de activación -->
-                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 8px; border: 1px solid #E2E8F0 !important;">
-                                        <div class="card-body">
-                                            <div class="form-check form-switch d-flex align-items-start ps-0">
-                                                <input class="form-check-input mt-1 me-3 ms-0" type="checkbox" id="gema_estado" style="width: 2.8rem; height: 1.4rem; cursor: pointer; flex-shrink: 0;" checked>
-                                                <div>
-                                                    <label class="form-check-label fw-bold text-dark mb-1" for="gema_estado" style="font-size: 0.95rem;">Activar Agente Conversacional IA para esta Sede</label>
-                                                    <p class="text-muted mb-0" style="font-size: 0.8rem; line-height: 1.4;">Cuando esté activo, el chatbot responderá automáticamente usando la API de Gemma / Gemini en WhatsApp para las líneas de esta sede.</p>
+                            <div class="row g-4">
+                                <!-- Columna Izquierda: Formulario Principales (col-lg-7) -->
+                                <div class="col-lg-7">
+                                    
+                                    <!-- Card 1: Identidad y Ubicación -->
+                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px; border: 1px solid #E2E8F0 !important;">
+                                        <div class="card-header bg-white border-bottom border-light py-3 px-4">
+                                            <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-robot text-primary me-2"></i> 1. Identidad y Ubicación del Asistente</h6>
+                                        </div>
+                                        <div class="card-body p-4">
+                                            <div class="row g-3">
+                                                <!-- Nombre del Asistente -->
+                                                <div class="col-12">
+                                                    <label class="form-label text-dark fw-bold small text-uppercase mb-1">NOMBRE DE LA INTELIGENCIA ARTIFICIAL (IA)</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-id-badge"></i></span>
+                                                        <input type="text" class="form-control form-control-premium border-start-0" id="gema_nombre" placeholder="Ej: BB, Gema, Asistente STARFI" value="Gema">
+                                                    </div>
+                                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;">Nombre para su saludo inicial (ej: <i>'Hola, soy BB la asistente virtual...'</i>).</small>
+                                                </div>
+                                                <!-- Enlace de Ubicación GPS (Google Maps) -->
+                                                <div class="col-12 mt-2">
+                                                    <label class="form-label text-dark fw-bold small text-uppercase mb-1">ENLACE DE UBICACIÓN GPS (GOOGLE MAPS)</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-map-location-dot text-success fs-5" style="cursor: pointer;" onclick="abrirModalMapaGPS()" title="Abrir selector de mapa"></i></span>
+                                                        <input type="url" class="form-control form-control-premium border-start-0" id="gema_link_gps" placeholder="Ej: https://www.google.com/maps?q=10.4806,-66.9036">
+                                                        <button type="button" class="btn btn-primary fw-bold px-3" onclick="abrirModalMapaGPS()" style="border-top-right-radius: 8px; border-bottom-right-radius: 8px;">
+                                                            <i class="fa-solid fa-earth-americas me-1 text-warning"></i> Seleccionar en Mapa
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-hand-pointer text-primary me-1"></i> Haz clic en <strong>'Seleccionar en Mapa'</strong> para fijar la ubicación moviéndote libremente por el mapa GPS interactivo.</small>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div class="row g-3 mb-4">
-                                        <!-- Nombre del Asistente -->
-                                        <div class="col-md-6">
-                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">NOMBRE DEL AGENTE VIRTUAL</label>
-                                            <input type="text" class="form-control form-control-premium" id="gema_nombre" placeholder="Ej: Gema Altamira" value="Gema" style="background-color: #F8FAFC;">
+                                    <!-- Card 2: Motor de IA y API Keys -->
+                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px; border: 1px solid #E2E8F0 !important;">
+                                        <div class="card-header bg-white border-bottom border-light py-3 px-4">
+                                            <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-microchip text-warning me-2"></i> 2. Configuración del Motor de Inteligencia Artificial</h6>
                                         </div>
-                                        <!-- Modelo de IA -->
-                                        <div class="col-md-6">
-                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">MODELO DE IA</label>
-                                            <select class="form-select form-select-premium" id="gema_modelo_ia" style="background-color: #F8FAFC;">
-                                                <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash (Recomendado)</option>
-                                                <option value="gemini-flash-latest">Gemini Flash Latest</option>
-                                                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                                                <option value="gemma-4-31b-it">Gemma 4 31B IT</option>
-                                                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                                            </select>
+                                        <div class="card-body p-4">
+                                            <div class="row g-3">
+                                                <!-- Modelo de IA -->
+                                                <div class="col-md-6">
+                                                    <label class="form-label text-dark fw-bold small text-uppercase mb-1">MODELO DE IA</label>
+                                                    <select class="form-select form-select-premium" id="gema_modelo_ia">
+                                                        <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash (Recomendado)</option>
+                                                        <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                                                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                                        <option value="gemma-4-31b-it">Gemma 4 31B IT</option>
+                                                        <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                                    </select>
+                                                </div>
+
+                                                <!-- Temperatura -->
+                                                <div class="col-md-6">
+                                                    <label class="form-label text-dark fw-bold small text-uppercase mb-1">TEMPERATURA (0.0 - 1.0)</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-sliders"></i></span>
+                                                        <input type="number" class="form-control form-control-premium border-start-0" id="gema_temperatura" min="0.0" max="1.0" step="0.1" value="0.4">
+                                                    </div>
+                                                </div>
+
+                                                <!-- API Key Google Gemini -->
+                                                <div class="col-12 mt-3">
+                                                    <label class="form-label text-dark fw-bold small text-uppercase mb-1">GEMINI API KEY (GOOGLE AI STUDIO)</label>
+                                                    <div class="input-group">
+                                                        <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-key text-success"></i></span>
+                                                        <input type="password" class="form-control form-control-premium border-start-0 border-end-0" id="gema_token" placeholder="AIzaSy...................">
+                                                        <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('gema_token')">
+                                                            <i class="fa-solid fa-eye" id="gema_token_eye"></i>
+                                                        </button>
+                                                    </div>
+                                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-lock me-1"></i> Credencial encriptada. Temperatura 0.4 es óptima para respuestas precisas.</small>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div class="row g-3 mb-4">
-                                        <!-- API Key -->
-                                        <div class="col-md-8">
-                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">GEMINI API KEY</label>
-                                            <input type="password" class="form-control form-control-premium" id="gema_token" placeholder="AIzaSy..................." style="background-color: #F8FAFC;">
+                                    <!-- Card 3: Reglas de Comportamiento (Prompt de Sistema) -->
+                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 12px; border: 1px solid #E2E8F0 !important;">
+                                        <div class="card-header bg-white border-bottom border-light py-3 px-4 d-flex justify-content-between align-items-center">
+                                            <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-terminal text-info me-2"></i> 3. Reglas de Comportamiento (Prompt de Sistema)</h6>
                                         </div>
-                                        <!-- Temperatura -->
-                                        <div class="col-md-4">
-                                            <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">TEMPERATURA (0.0 - 1.0)</label>
-                                            <input type="number" class="form-control form-control-premium" id="gema_temperatura" min="0.0" max="1.0" step="0.1" value="0.4" style="background-color: #F8FAFC;">
-                                        </div>
-                                        <div class="col-12 mt-1">
-                                            <small class="text-muted d-block" style="font-size: 0.8rem;"><i class="fa-solid fa-key me-1"></i> Credencial de Google AI Studio. Temperatura 0.4 es ideal para precisión de inventario.</small>
+                                        <div class="card-body p-4">
+                                            <textarea class="form-control form-control-premium font-monospace" id="gema_prompt" rows="7" placeholder="Eres el asistente virtual inteligente de esta sede..." style="font-size: 0.88rem; line-height: 1.5; resize: vertical; background-color: #FAFAFA;"></textarea>
+                                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                                <small class="text-muted" style="font-size: 0.78rem;"><i class="fa-solid fa-circle-info me-1"></i> Define tono, saludos y políticas comerciales para las líneas de esta sede.</small>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <!-- Prompt -->
-                                    <div class="mb-4">
-                                        <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">INSTRUCCIONES DE COMPORTAMIENTO (PROMPT DE SISTEMA)</label>
-                                        <textarea class="form-control form-control-premium" id="gema_prompt" rows="8" placeholder="Eres Gema, la asistente virtual inteligente de STARFI CRM..." style="background-color: #F8FAFC; resize: vertical;"></textarea>
-                                        <small class="text-muted d-block mt-2" style="font-size: 0.8rem;"><i class="fa-solid fa-circle-info me-1"></i> Define el tono, personalidad, horarios y reglas comerciales de esta tienda.</small>
-                                    </div>
-                                    
-                                    <!-- Botones Guardar y Probar -->
-                                    <div class="d-flex gap-3">
-                                        <button id="btnSaveGema" class="btn btn-starfi-primary" style="border-radius: 8px; font-weight: 600; padding: 10px 24px; box-shadow: 0 4px 6px rgba(232, 91, 20, 0.2);">
-                                            <i class="fa-solid fa-save me-2"></i> Guardar Configuración IA
+                                    <!-- Botones de Acción principales -->
+                                    <div class="d-flex flex-wrap gap-3 p-3 bg-white shadow-sm rounded-3 border" style="border-color: #E2E8F0 !important;">
+                                        <button id="btnSaveGema" class="btn btn-starfi-primary fw-bold px-4 py-2" style="border-radius: 8px; box-shadow: 0 4px 10px rgba(232, 91, 20, 0.25);">
+                                            <i class="fa-solid fa-floppy-disk me-2"></i> Guardar Configuración IA
                                         </button>
-                                        <button id="btnTestGema" class="btn btn-outline-secondary" style="border-radius: 8px; font-weight: 600; padding: 10px 20px;">
-                                            <i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión IA
+                                        <button id="btnTestGema" class="btn btn-outline-secondary fw-bold px-3 py-2" style="border-radius: 8px;">
+                                            <i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión API
                                         </button>
                                     </div>
 
                                 </div>
                                 
-                                <!-- Columna Derecha: Consejos -->
-                                <div class="col-md-5">
-                                    <div class="card shadow-sm mb-3" style="border-radius: 12px; background-color: #F8FAFC; border: 1px dashed #CBD5E1 !important;">
+                                <!-- Columna Derecha: Vista Previa en Vivo WhatsApp + Ayuda (col-lg-5) -->
+                                <div class="col-lg-5">
+                                    
+                                    <!-- WhatsApp Live Preview Card -->
+                                    <div class="card border-0 shadow-sm mb-4" style="border-radius: 16px; overflow: hidden; border: 1px solid #CBD5E1 !important;">
+                                        <!-- WhatsApp Header Bar -->
+                                        <div class="p-3 d-flex align-items-center gap-3" style="background-color: #075E54; color: white;">
+                                            <div class="position-relative">
+                                                <div class="rounded-circle bg-white text-success fw-bold d-flex align-items-center justify-content-center" style="width: 42px; height: 42px; font-size: 1.1rem;">
+                                                    <i class="fa-solid fa-robot text-teal"></i>
+                                                </div>
+                                                <span class="position-absolute bottom-0 end-0 bg-success border border-white rounded-circle" style="width: 10px; height: 10px;"></span>
+                                            </div>
+                                            <div>
+                                                <h6 class="fw-bold mb-0 text-white" id="preview_agent_name_display" style="font-size: 0.95rem;">Gema (IA)</h6>
+                                                <small class="text-white-50" id="preview_sede_name_display" style="font-size: 0.75rem;">Sede STARFI CODE • En línea</small>
+                                            </div>
+                                        </div>
+
+                                        <!-- WhatsApp Chat Background & Bubbles -->
+                                        <div class="p-3" style="background-color: #E5DDD5; background-image: radial-gradient(#CBD5E1 1px, transparent 1px); background-size: 16px 16px; min-height: 280px;">
+                                            
+                                            <!-- Message 1: Customer -->
+                                            <div class="d-flex justify-content-start mb-3">
+                                                <div class="p-3 rounded-3 shadow-sm bg-white text-dark" style="max-width: 85%; border-top-left-radius: 0 !important; font-size: 0.85rem;">
+                                                    <span class="fw-bold text-primary d-block mb-1" style="font-size: 0.75rem;">Cliente</span>
+                                                    ¡Hola! ¿Dónde están ubicados?
+                                                    <span class="d-block text-end text-muted mt-1" style="font-size: 0.65rem;">10:42 AM</span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Message 2: IA Live Response Preview -->
+                                            <div class="d-flex justify-content-end mb-2">
+                                                <div class="p-3 rounded-3 shadow-sm text-dark" style="background-color: #DCF8C6; max-width: 90%; word-break: break-word; overflow-wrap: anywhere; border-top-right-radius: 0 !important; font-size: 0.85rem; line-height: 1.4;">
+                                                    <span class="fw-bold text-success d-block mb-1" style="font-size: 0.75rem;" id="preview_bubble_name">Gema Bot</span>
+                                                    <span id="preview_chat_response" style="word-break: break-word; overflow-wrap: anywhere;">
+                                                        ¡Buenas tardes! 🖐️✨ Soy <strong id="prev_bot_name">Gema</strong>, la asistente virtual de <strong id="prev_sede_name">STARFI CODE</strong>.<br><br>
+                                                        🗺️ <strong>Ubicación GPS (Google Maps):</strong> <span id="prev_bot_gps" class="text-primary fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">https://www.google.com/maps?q=10.48060,-66.90360</span><br><br>
+                                                        ¿En qué te puedo colaborar el día de hoy?
+                                                    </span>
+                                                    <span class="d-block text-end text-muted mt-1" style="font-size: 0.65rem;">10:42 AM <i class="fa-solid fa-check-double text-primary"></i></span>
+                                                </div>
+                                            </div>
+
+                                        </div>
+
+                                        <div class="p-2 text-center bg-light border-top">
+                                            <small class="text-muted fw-semibold" style="font-size: 0.72rem;"><i class="fa-solid fa-eye text-primary me-1"></i> Vista Previa en Vivo de la Respuesta de WhatsApp</small>
+                                        </div>
+                                    </div>
+
+                                    <!-- Card de Guía y Consejos -->
+                                    <div class="card shadow-sm border-0" style="border-radius: 12px; background-color: #FFFFFF; border: 1px solid #E2E8F0 !important;">
                                         <div class="card-body p-4">
-                                            <h6 class="fw-bold text-dark mb-4" style="font-size: 1.05rem;">
-                                                <i class="fa-regular fa-lightbulb text-warning me-2 fs-5"></i> Consejos para tu Agente de Sede
+                                            <h6 class="fw-bold text-dark mb-3" style="font-size: 0.95rem;">
+                                                <i class="fa-regular fa-lightbulb text-warning me-2 fs-5"></i> Consejos de Operación por Sede
                                             </h6>
                                             
-                                            <ul class="list-unstyled mb-0" style="font-size: 0.85rem; color: #475569; line-height: 1.6;">
-                                                <li class="mb-3 d-flex">
-                                                    <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Aislamiento por Sede:</strong> La IA de esta sede responderá consultas de productos usando solo el inventario de esta tienda.</div>
+                                            <ul class="list-unstyled mb-0" style="font-size: 0.83rem; color: #475569; line-height: 1.6;">
+                                                <li class="mb-3 d-flex align-items-start">
+                                                    <i class="fa-solid fa-circle-check text-success mt-1 me-2"></i>
+                                                    <div><strong>Aislamiento por Sede:</strong> Cada tienda funciona de forma independiente con sus propias líneas de WhatsApp.</div>
                                                 </li>
-                                                <li class="mb-3 d-flex">
-                                                    <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Handover a Humano:</strong> Si el cliente escribe palabras como <i>asesor</i> o <i>hablar con humano</i>, el bot transferirá el chat a la cola de atención.</div>
+                                                <li class="mb-3 d-flex align-items-start">
+                                                    <i class="fa-solid fa-headset text-primary mt-1 me-2"></i>
+                                                    <div><strong>Transferencia a Vendedor:</strong> Al solicitar atención humana, la IA detendrá el bot y transferirá el chat a la bandeja.</div>
                                                 </li>
-                                                <li class="mb-3 d-flex">
-                                                    <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Nombre Institucional:</strong> Personaliza el nombre por tienda (Ej. <i>Gema Altamira</i>, <i>Gema San Antonio</i>).</div>
-                                                </li>
-                                                <li class="d-flex">
-                                                    <span class="me-2 text-muted">•</span>
-                                                    <div><strong>Memoria Conversacional:</strong> El sistema mantiene una ventana deslizante con los últimos 12 mensajes del chat.</div>
+                                                <li class="d-flex align-items-start">
+                                                    <i class="fa-solid fa-bell text-warning mt-1 me-2"></i>
+                                                    <div><strong>Notificaciones al Administrador:</strong> Cuando un cliente escriba, la plantilla de notificación llegará directamente a tu WhatsApp.</div>
                                                 </li>
                                             </ul>
                                         </div>
                                     </div>
-                                    
+
                                     <!-- Log de respuesta de prueba -->
-                                    <div id="testGemaLog" class="card shadow-sm d-none" style="border-radius: 12px; background-color: #F0FDF4; border: 1px solid #BBF7D0 !important;">
+                                    <div id="testGemaLog" class="card shadow-sm d-none mt-3" style="border-radius: 12px; background-color: #F0FDF4; border: 1px solid #BBF7D0 !important;">
                                         <div class="card-body p-3">
                                             <h6 class="fw-bold text-success mb-2" style="font-size: 0.9rem;"><i class="fa-solid fa-circle-check me-1"></i> Respuesta de Prueba:</h6>
                                             <p id="testGemaContent" class="mb-0 text-dark" style="font-size: 0.85rem; white-space: pre-line;"></p>
@@ -443,6 +552,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                     </div>
                 </div>
+            </div>
 
                 <!-- PRUEBAS Y DIAGNÓSTICO -->
                 <div class="tab-pane fade" id="pruebas" role="tabpanel">
@@ -921,10 +1031,69 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
         </div>
     </div>
 
+    <!-- Modal Selector de Ubicación GPS en Mapa Interactivo -->
+    <div class="modal fade" id="modalMapPicker" tabindex="-1" aria-labelledby="modalMapPickerLabel" aria-hidden="true" style="z-index: 1060;">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg" style="border-radius: 16px; overflow: hidden;">
+                <!-- Modal Header -->
+                <div class="modal-header text-white p-3 px-4" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle bg-success text-white d-flex align-items-center justify-content-center" style="width: 38px; height: 38px;">
+                            <i class="fa-solid fa-map-location-dot fs-5"></i>
+                        </div>
+                        <div>
+                            <h5 class="modal-title fw-bold text-white mb-0" id="modalMapPickerLabel" style="font-size: 1.1rem;">Seleccionar Ubicación GPS en el Mapa</h5>
+                            <small class="text-white-50" style="font-size: 0.75rem;">Haz clic o arrastra el marcador en el mapa para fijar el punto exacto de la tienda.</small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="modal-body p-0 position-relative">
+                    <!-- Search bar inside map -->
+                    <div class="p-3 bg-light border-bottom">
+                        <div class="input-group">
+                            <span class="input-group-text bg-white text-muted border-end-0"><i class="fa-solid fa-search"></i></span>
+                            <input type="text" class="form-control border-start-0" id="mapSearchInput" placeholder="Buscar zona o ciudad (ej: Los Teques, Altamira, Maracay...)" onkeypress="if(event.key==='Enter'){ event.preventDefault(); buscarEnMapa(); }">
+                            <button class="btn btn-primary fw-bold px-3" type="button" onclick="buscarEnMapa()">
+                                <i class="fa-solid fa-magnifying-glass me-1"></i> Buscar
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Leaflet Map Container -->
+                    <div id="leafletMapContainer" style="height: 400px; width: 100%; z-index: 1;"></div>
+
+                    <!-- Coords Live Bar -->
+                    <div class="p-3 bg-white border-top d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2" style="font-size: 0.85rem;">
+                        <div>
+                            <span class="fw-bold text-dark"><i class="fa-solid fa-location-pin text-danger me-1"></i> Coordenadas GPS:</span>
+                            <span id="selectedCoordsText" class="badge bg-light text-dark border font-monospace ms-1" style="font-size: 0.85rem;">10.48060, -66.90360</span>
+                        </div>
+                        <div class="text-muted small text-truncate" style="max-width: 360px;">
+                            <i class="fa-solid fa-building me-1 text-primary"></i> <span id="reverseGeocodeText">Mueve el pin marcador para fijar la posición</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="modal-footer bg-light p-3">
+                    <button type="button" class="btn btn-outline-secondary fw-bold px-3" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-success fw-bold px-4" id="btnConfirmMapLocation" onclick="confirmarUbicacionMapa()">
+                        <i class="fa-solid fa-check me-2"></i> Usar esta Ubicación GPS
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- JavaScript Local Bootstrap -->
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
+    <!-- Leaflet JS for Interactive Map -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="funciones_configuracion.js?v=<?= time() ?>"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {

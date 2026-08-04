@@ -62,23 +62,56 @@ switch ($action) {
             $client = $stmt->get_result()->fetch_assoc();
 
             if ($client) {
-                // Get timeline events (Bot, System Events, API)
-                $stmt2 = $con->prepare("
-                    SELECT m.tipo, m.origen, m.contenido, m.timestamp 
-                    FROM mensajes_y_eventos m
-                    JOIN conversaciones c ON m.id_conversacion = c.id
-                    WHERE c.id_cliente = ? AND (m.origen = 'BOT' OR m.origen = 'EVENTO_SISTEMA' OR m.origen = 'API_TRANSACCIONAL')
-                    ORDER BY m.timestamp DESC LIMIT 20
+                // 1. Historial de Conversaciones
+                $stmt_conv = $con->prepare("
+                    SELECT conv.id, conv.estado, conv.fecha_inicio, conv.fecha_resolucion, conv.resultado_comercial,
+                           COALESCE(up.nombre, 'Sin Asesor') as agente_nombre,
+                           (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY timestamp DESC LIMIT 1) as ultimo_mensaje,
+                           (SELECT timestamp FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY timestamp DESC LIMIT 1) as ultimo_timestamp
+                    FROM conversaciones conv
+                    LEFT JOIN usuario_perfil up ON conv.id_agente = up.id_usuario
+                    WHERE conv.id_cliente = ?
+                    ORDER BY conv.fecha_inicio DESC
                 ");
-                $stmt2->bind_param("i", $id);
-                $stmt2->execute();
-                $events_res = $stmt2->get_result();
-                $events = [];
-                while ($ev = $events_res->fetch_assoc()) {
-                    $events[] = $ev;
+                $conversaciones = [];
+                if ($stmt_conv) {
+                    $stmt_conv->bind_param("i", $id);
+                    $stmt_conv->execute();
+                    $conv_res = $stmt_conv->get_result();
+                    while ($c = $conv_res->fetch_assoc()) {
+                        $conversaciones[] = $c;
+                    }
+                    $stmt_conv->close();
+                }
+
+                // 2. Historial de Ventas
+                $stmt_ventas = $con->prepare("
+                    SELECT m.tipo, m.origen, m.contenido, m.timestamp, conv.id as id_conversacion, conv.fecha_cierre_venta, conv.resultado_comercial
+                    FROM mensajes_y_eventos m
+                    JOIN conversaciones conv ON m.id_conversacion = conv.id
+                    WHERE conv.id_cliente = ? AND (m.origen = 'API_TRANSACCIONAL' OR m.tipo = 'VENTA' OR conv.resultado_comercial = 'VENTA_CERRADA' OR conv.resultado_comercial LIKE '%VENTA%')
+                    ORDER BY m.timestamp DESC LIMIT 30
+                ");
+                $ventas = [];
+                if ($stmt_ventas) {
+                    $stmt_ventas->bind_param("i", $id);
+                    $stmt_ventas->execute();
+                    $ventas_res = $stmt_ventas->get_result();
+                    while ($v = $ventas_res->fetch_assoc()) {
+                        $ventas[] = $v;
+                    }
+                    $stmt_ventas->close();
                 }
                 
-                echo json_encode(['status' => 'success', 'data' => ['client' => $client, 'events' => $events]]);
+                echo json_encode([
+                    'status' => 'success',
+                    'data' => [
+                        'client' => $client,
+                        'conversaciones' => $conversaciones,
+                        'ventas' => $ventas,
+                        'events' => $ventas
+                    ]
+                ]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado']);
             }
@@ -88,18 +121,31 @@ switch ($action) {
     case 'save_profile':
         $id = intval($_POST['id'] ?? 0);
         $nombre = $_POST['nombre'] ?? '';
+        $numero_whatsapp = preg_replace('/[^0-9]/', '', $_POST['numero_whatsapp'] ?? '');
         $direccion = $_POST['direccion'] ?? '';
         $notas = $_POST['notas'] ?? '';
         $id_sede = !empty($_POST['id_sede']) ? intval($_POST['id_sede']) : null;
 
         if ($id > 0) {
-            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
-            if ($stmt) {
-                $stmt->bind_param("sssii", $nombre, $direccion, $notas, $id_sede, $id);
-                if ($stmt->execute()) {
-                    echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
-                } else {
-                    echo json_encode(['status' => 'error', 'message' => 'Error al actualizar']);
+            if (!empty($numero_whatsapp)) {
+                $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, numero_whatsapp = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param("ssssii", $nombre, $numero_whatsapp, $direccion, $notas, $id_sede, $id);
+                    if ($stmt->execute()) {
+                        echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
+                    } else {
+                        echo json_encode(['status' => 'error', 'message' => 'Error al actualizar el perfil (posible número duplicado)']);
+                    }
+                }
+            } else {
+                $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param("sssii", $nombre, $direccion, $notas, $id_sede, $id);
+                    if ($stmt->execute()) {
+                        echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
+                    } else {
+                        echo json_encode(['status' => 'error', 'message' => 'Error al actualizar']);
+                    }
                 }
             }
         }

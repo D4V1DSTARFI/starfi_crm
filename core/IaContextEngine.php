@@ -42,44 +42,7 @@ class IaContextEngine {
      * Consulta el inventario en MySQL acotado estrictamente por id_sede.
      */
     public static function obtenerContextoInventario(mysqli $con, int $idSede, string $mensajeCliente): string {
-        if ($idSede <= 0 || empty(trim($mensajeCliente))) {
-            return "";
-        }
-        
-        $keywords = self::extraerPalabrasClave($mensajeCliente);
-        if (empty($keywords)) {
-            return "";
-        }
-        
-        // Armar condiciones LIKE preparadas de forma segura
-        $likeConditions = [];
-        foreach ($keywords as $kw) {
-            $kwEscaped = mysqli_real_escape_string($con, $kw);
-            $likeConditions[] = "(nombre_producto LIKE '%$kwEscaped%' OR codigo LIKE '%$kwEscaped%')";
-        }
-        
-        $whereKeywords = "(" . implode(" OR ", $likeConditions) . ")";
-        
-        // Consulta ESTRICTA acotada por id_sede
-        $sql = "SELECT codigo, nombre_producto, precio, stock, garantia 
-                FROM inventario_productos 
-                WHERE id_sede = $idSede AND stock > 0 AND $whereKeywords 
-                ORDER BY stock DESC 
-                LIMIT 5";
-        
-        $res = mysqli_query($con, $sql);
-        
-        if (!$res || mysqli_num_rows($res) === 0) {
-            return "[SISTEMA: No se encontraron productos coincidentes en el inventario de la Sede #$idSede.]";
-        }
-        
-        $contextoText = "[DATOS EN TIEMPO REAL - INVENTARIO SEDE #$idSede]:\n";
-        while ($p = mysqli_fetch_assoc($res)) {
-            $garantiaText = !empty($p['garantia']) ? " | Garantía: {$p['garantia']}" : "";
-            $codigoText = !empty($p['codigo']) ? " [Cód: {$p['codigo']}]" : "";
-            $contextoText .= "- {$p['nombre_producto']}$codigoText | Precio: $" . number_format($p['precio'], 2) . " | Stock disponible: {$p['stock']} un$garantiaText\n";
-        }
-        
-        return $contextoText;
+        // MÓDULO DE INVENTARIO PAUSADO TEMPORALMENTE HASTA NUEVO AVISO POR EL ADMINISTRADOR
+        return "[SISTEMA: La consulta automática de inventario y catálogo está temporalmente PAUSADA. Si el cliente consulta sobre productos o existencias, infórmale con amabilidad que un asesor comercial le atenderá personalmente para compartirle precios y catálogo. Si solicita la dirección o ubicación, proporciónala. Si solicita ser asignado a un operador, transfiérelo amablemente.]";
     }
 }

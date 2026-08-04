@@ -22,20 +22,32 @@ $(document).ready(function() {
         $('#profTitleName').text('Crear Ficha');
         $('#profAvatarImg').attr('src', 'https://ui-avatars.com/api/?name=Nuevo&background=E85B14&color=fff');
         
-        $('#profName').val('');
-        $('#profSede').val('');
+        $('#profName').val('').prop('disabled', false);
+        $('#profSede').val('').prop('disabled', false);
         $('#profPrefix').prop('disabled', false).val('58414');
         $('#profPhone').prop('disabled', false).val('');
-        $('#profAddress').val('');
-        $('#profNotes').val('');
+        $('#profAddress').val('').prop('disabled', false);
+        $('#profNotes').val('').prop('disabled', false);
         
-        $('#btnSaveProfile').text('Crear Cliente');
+        $('#btnEditProfile').hide();
+        $('#btnSaveProfile').html('<i class="fa-solid fa-user-plus me-2"></i>Crear Cliente').show();
         
-        // Empty timeline
-        $('#profileTimeline').html('<div class="empty-timeline"><div><i class="fa-solid fa-folder-open"></i></div><h5>Sin historial</h5><p>Este cliente aún no tiene eventos registrados.</p></div>');
+        // Empty feeds
+        $('#profileConversationsFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-comments"></i></div><h5>Sin conversaciones</h5><p>Este cliente aún no tiene conversaciones registradas.</p></div>');
+        $('#profileSalesFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-receipt"></i></div><h5>Sin ventas</h5><p>Este cliente aún no registra ventas ni compras.</p></div>');
         
         // Abrir panel (Modal)
         $('#profileModal').modal('show');
+    });
+
+    // Botón Editar Perfil
+    $('#btnEditProfile').on('click', function() {
+        $('#profName, #profSede, #profPrefix, #profPhone, #profAddress, #profNotes').prop('disabled', false);
+        $(this).hide();
+        $('#btnSaveProfile').html('<i class="fa-solid fa-floppy-disk me-2"></i>Guardar Cambios').show();
+        
+        // Enfocar el primer campo para llamar la atención del usuario
+        $('#profName').focus();
     });
 
     $('#btnSaveProfile').on('click', function() {
@@ -253,11 +265,11 @@ function loadProfile(id, rowElement) {
                 $('#profTitleId').text(`ID: CLI-${client.id}`);
                 $('#profAvatarImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(client.nombre)}&background=E85B14&color=fff`);
 
-                // Update Form Fields
-                $('#profName').val(client.nombre);
-                $('#profSede').val(client.id_sede || '');
-                $('#profAddress').val(client.direccion || '');
-                $('#profNotes').val(client.notas_internas || '');
+                // Update Form Fields (Deshabilitados por defecto)
+                $('#profName').val(client.nombre).prop('disabled', true);
+                $('#profSede').val(client.id_sede || '').prop('disabled', true);
+                $('#profAddress').val(client.direccion || '').prop('disabled', true);
+                $('#profNotes').val(client.notas_internas || '').prop('disabled', true);
                 
                 // Parse Phone Number
                 let phoneStr = client.numero_whatsapp || '';
@@ -270,35 +282,75 @@ function loadProfile(id, rowElement) {
                 $('#profPrefix').val(prefix).prop('disabled', true);
                 $('#profPhone').val(num).prop('disabled', true);
                 
-                $('#btnSaveProfile').text('Guardar Cambios');
+                // Visibilidad de botones: Mostrar 'Editar Perfil', ocultar 'Guardar'
+                $('#btnEditProfile').show();
+                $('#btnSaveProfile').hide();
                 
-                // Update Timeline
-                let timeline = $('#profileTimeline');
-                timeline.empty();
+                // 1. Render Historial de Conversaciones
+                let convFeed = $('#profileConversationsFeed');
+                convFeed.empty();
                 
-                if (res.data.events.length === 0) {
-                    timeline.append('<div class="empty-timeline"><div><i class="fa-solid fa-folder-open"></i></div><h5>Sin historial</h5><p>Este cliente aún no tiene eventos registrados.</p></div>');
+                let convs = res.data.conversaciones || [];
+                if (convs.length === 0) {
+                    convFeed.append('<div class="empty-timeline"><div><i class="fa-solid fa-comments"></i></div><h5>Sin conversaciones</h5><p>Este cliente aún no tiene conversaciones registradas.</p></div>');
                 } else {
-                    res.data.events.forEach(ev => {
-                        let iconClass = ev.origen === 'BOT' ? 'icon-bot' : (ev.origen === 'API_TRANSACCIONAL' ? 'icon-api' : 'icon-agent');
-                        let iconFa = ev.origen === 'BOT' ? 'fa-robot' : (ev.origen === 'API_TRANSACCIONAL' ? 'fa-bolt' : 'fa-info');
-                        
-                        let dateStr = new Date(ev.timestamp).toLocaleString();
+                    convs.forEach(c => {
+                        let dateStr = c.fecha_inicio ? new Date(c.fecha_inicio).toLocaleString() : 'Sin fecha';
+                        let badgeClass = c.estado === 'CERRADO' ? 'bg-secondary' : (c.estado === 'EN_CURSO' || c.estado === 'ATENDIENDO' ? 'bg-success' : 'bg-warning text-dark');
+                        let resultadoHtml = c.resultado_comercial ? `<span class="badge bg-primary ms-2">${c.resultado_comercial}</span>` : '';
+                        let msgPreview = c.ultimo_mensaje ? c.ultimo_mensaje : 'Sin mensajes';
 
                         let item = `
                             <div class="timeline-item">
-                                <div class="timeline-icon ${iconClass}"><i class="fa-solid ${iconFa}"></i></div>
+                                <div class="timeline-icon icon-agent"><i class="fa-solid fa-comments"></i></div>
                                 <div class="timeline-content">
                                     <span class="timeline-time">${dateStr}</span>
-                                    <p class="timeline-text fw-bold text-starfi-dark">${ev.origen}</p>
-                                    <p class="timeline-text text-muted">${ev.contenido}</p>
+                                    <div class="d-flex align-items-center gap-1 mb-1">
+                                        <span class="badge ${badgeClass}">${c.estado}</span>
+                                        ${resultadoHtml}
+                                    </div>
+                                    <p class="timeline-text fw-bold text-starfi-dark mb-1">Asesor: ${c.agente_nombre}</p>
+                                    <p class="timeline-text text-muted mb-2">${msgPreview}</p>
+                                    <a href="../bandeja/bandeja.php?chat=${c.id}" class="btn btn-sm btn-outline-primary py-1 px-2" style="font-size: 0.8rem; border-radius: 6px;">
+                                        <i class="fa-solid fa-arrow-up-right-from-square me-1"></i>Ir al Chat
+                                    </a>
                                 </div>
                             </div>
                         `;
-                        timeline.append(item);
+                        convFeed.append(item);
+                    });
+                }
+
+                // 2. Render Historial de Ventas
+                let salesFeed = $('#profileSalesFeed');
+                salesFeed.empty();
+                
+                let sales = res.data.ventas || [];
+                if (sales.length === 0) {
+                    salesFeed.append('<div class="empty-timeline"><div><i class="fa-solid fa-receipt"></i></div><h5>Sin ventas</h5><p>Este cliente aún no registra ventas ni compras.</p></div>');
+                } else {
+                    sales.forEach(v => {
+                        let dateStr = v.timestamp ? new Date(v.timestamp).toLocaleString() : (v.fecha_cierre_venta ? new Date(v.fecha_cierre_venta).toLocaleString() : '');
+                        let iconClass = 'icon-api';
+                        let iconFa = 'fa-bolt';
+                        
+                        let item = `
+                            <div class="timeline-item">
+                                <div class="timeline-icon ${iconClass}" style="background-color: rgba(16, 185, 129, 0.1); color: #10B981;"><i class="fa-solid ${iconFa}"></i></div>
+                                <div class="timeline-content">
+                                    <span class="timeline-time">${dateStr}</span>
+                                    <p class="timeline-text fw-bold text-success mb-1">${v.origen || 'VENTA'}</p>
+                                    <p class="timeline-text text-muted">${v.contenido}</p>
+                                </div>
+                            </div>
+                        `;
+                        salesFeed.append(item);
                     });
                 }
                 
+                // Reset tab to first tab (Conversaciones)
+                $('#tab-conv-btn').tab('show');
+
                 // Open Panel (Modal)
                 $('#profileModal').modal('show');
                 $('.profile-data-col').scrollTop(0);
@@ -312,20 +364,27 @@ function saveProfile() {
     const direccion = $('#profAddress').val().trim();
     const notas = $('#profNotes').val().trim();
     const id_sede = $('#profSede').val();
+    const prefix = $('#profPrefix').val();
+    const phone = $('#profPhone').val().trim();
     
+    if(!phone || !nombre) {
+        Swal.fire('Atención', 'El nombre y el número son obligatorios.', 'warning');
+        return;
+    }
+
+    const full_whatsapp = prefix + phone;
     let action = currentClientId ? 'save_profile' : 'create_profile';
-    let data = { action: action, nombre: nombre, direccion: direccion, notas: notas, id_sede: id_sede };
+    let data = { 
+        action: action, 
+        nombre: nombre, 
+        numero_whatsapp: full_whatsapp, 
+        direccion: direccion, 
+        notas: notas, 
+        id_sede: id_sede 
+    };
     
     if (currentClientId) {
         data.id = currentClientId;
-    } else {
-        const prefix = $('#profPrefix').val();
-        const phone = $('#profPhone').val().trim();
-        if(!phone || !nombre) {
-            Swal.fire('Atención', 'El nombre y el número son obligatorios.', 'warning');
-            return;
-        }
-        data.numero_whatsapp = prefix + phone;
     }
     
     if (currentClientId === null) {
