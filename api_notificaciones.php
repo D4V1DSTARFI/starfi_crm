@@ -348,7 +348,8 @@ $mensaje_payload = [
             [
                 'type' => 'body',
                 'parameters' => array_map(function($p) {
-                    return ['type' => 'text', 'text' => (string)$p];
+                    $str = trim((string)$p);
+                    return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
                 }, $params)
             ]
         ]
@@ -379,7 +380,8 @@ if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['
         if ($expected_count > 0 && $expected_count < count($params)) {
             $params_sliced = array_slice($params, 0, $expected_count);
             $mensaje_payload['template']['components'][0]['parameters'] = array_map(function($p) {
-                return ['type' => 'text', 'text' => (string)$p];
+                $str = trim((string)$p);
+                return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
             }, $params_sliced);
             
             $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
