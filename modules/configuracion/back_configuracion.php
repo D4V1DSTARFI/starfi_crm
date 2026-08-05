@@ -710,6 +710,61 @@ switch ($action) {
         }
         break;
 
+    case 'toggle_api_estado':
+        $id_api = intval($_POST['id_api'] ?? 0);
+        $nuevo_estado = $_POST['nuevo_estado'] ?? '';
+        
+        if (empty($id_api)) {
+            echo json_encode(['status' => 'error', 'message' => 'ID de API no válido.']);
+            exit;
+        }
+
+        // Si no se proporcionó nuevo_estado, consultamos el actual para alternarlo
+        if (empty($nuevo_estado)) {
+            $q_cur = $con->query("SELECT estado FROM lineas_whatsapp WHERE id = $id_api LIMIT 1");
+            if ($q_cur && $row_cur = $q_cur->fetch_assoc()) {
+                $nuevo_estado = ($row_cur['estado'] === 'ACTIVO') ? 'INACTIVO' : 'ACTIVO';
+            } else {
+                $nuevo_estado = 'INACTIVO';
+            }
+        } else {
+            $nuevo_estado = strtoupper($nuevo_estado);
+        }
+
+        // Obtener id_sede de la linea
+        $q_info = $con->query("SELECT id_sede FROM lineas_whatsapp WHERE id = $id_api LIMIT 1");
+        $id_sede = 0;
+        if ($q_info && $row_info = $q_info->fetch_assoc()) {
+            $id_sede = intval($row_info['id_sede']);
+        }
+
+        $stmt = $con->prepare("UPDATE lineas_whatsapp SET estado = ? WHERE id = ?");
+        $stmt->bind_param("si", $nuevo_estado, $id_api);
+        
+        if ($stmt->execute()) {
+            // Sincronizar con starfi_ventas.config_api_wsap
+            if ($id_sede > 0) {
+                $legacy_id = ($id_sede == 23) ? 23 : ($id_sede - 2);
+                $activo_val = ($nuevo_estado === 'ACTIVO') ? 1 : 0;
+                $con_ventas = getExternalDbConnection('ventas');
+                if ($con_ventas) {
+                    $stmt_sync = $con_ventas->prepare("UPDATE config_api_wsap SET activo = ? WHERE id_sede = ?");
+                    if ($stmt_sync) {
+                        $stmt_sync->bind_param("ii", $activo_val, $legacy_id);
+                        $stmt_sync->execute();
+                        $stmt_sync->close();
+                    }
+                    mysqli_close($con_ventas);
+                }
+            }
+
+            $msg = ($nuevo_estado === 'ACTIVO') ? 'Sede / API de WhatsApp activada exitosamente.' : 'Sede / API de WhatsApp desactivada exitosamente (no enviará mensajes).';
+            echo json_encode(['status' => 'success', 'message' => $msg, 'nuevo_estado' => $nuevo_estado]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Error al cambiar el estado de la API.']);
+        }
+        break;
+
     case 'test_api':
         $id_api = $_POST['id_api'] ?? '';
         $numero = $_POST['numero'] ?? '';

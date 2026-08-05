@@ -341,7 +341,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
     
     // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS
     if ($id_linea) {
-        $q_token = mysqli_query($con, "SELECT l.meta_app_id, l.meta_token, l.id_sede, s.bot_activo FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id = $id_linea");
+        $q_token = mysqli_query($con, "SELECT l.meta_app_id, l.meta_token, l.id_sede, s.bot_activo FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id = $id_linea AND l.estado = 'ACTIVO'");
         if($q_token && mysqli_num_rows($q_token) > 0) {
             $linea_info = mysqli_fetch_assoc($q_token);
             
@@ -843,7 +843,7 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     }
 
     // 2. Obtener línea de WhatsApp activa EXCLUSIVAMENTE para la sede
-    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
     
     $rowLinea = mysqli_fetch_assoc($qLinea);

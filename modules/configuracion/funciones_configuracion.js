@@ -960,18 +960,19 @@ function loadAPIs() {
                         }
                         if (a.id_sede) sedesConAPI.add(a.id_sede);
                         
-                        let badge = a.estado === 'ACTIVO' ? '<span class="badge bg-secondary">Inactivo</span>' : '<span class="badge bg-success">Activo</span>';
-                        // Fix logic based on state: 
-                        badge = a.estado === 'ACTIVO' ? '<span class="badge bg-success">Activo</span>' : '<span class="badge bg-secondary">Inactivo</span>';
+                        let badge = a.estado === 'ACTIVO' ? '<span class="badge bg-success" style="cursor: pointer;" title="Haz clic para desactivar sede"><i class="fa-solid fa-circle-check me-1"></i>Activo</span>' : '<span class="badge bg-secondary" style="cursor: pointer;" title="Haz clic para activar sede"><i class="fa-solid fa-circle-xmark me-1"></i>Inactivo</span>';
                         
                         let token_trunc = a.meta_token ? a.meta_token.substring(0, 20) + '...' : 'N/A';
+                        let nombreSedeEscaped = (a.nombre_sede || a.descripcion || '').replace(/'/g, "\\'");
                         
                         let card = `
                         <div class="col-md-4">
                             <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
                                 <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
                                     <h6 class="mb-0 fw-bold text-muted"><i class="fa-solid fa-circle ${a.estado === 'ACTIVO' ? 'text-success' : 'text-secondary'} me-2" style="font-size: 0.6rem;"></i>${a.descripcion || 'Sin descripción'}</h6>
-                                    ${badge}
+                                    <div onclick="toggleEstadoAPI(${a.id}, '${a.estado}', '${nombreSedeEscaped}')">
+                                        ${badge}
+                                    </div>
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3 text-muted" style="font-size: 0.85rem;"><i class="fa-solid fa-building me-2"></i>${a.nombre_sede || 'Sin sede asignada'}</div>
@@ -987,6 +988,7 @@ function loadAPIs() {
                                     <div class="d-flex border-top">
                                         <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar API" onclick="editarAPI(${a.id})"><i class="fa-solid fa-pen"></i></button>
                                         <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Probar API" onclick="abrirPruebaAPI(${a.id}, '${a.numero_telefono}')"><i class="fa-solid fa-bolt"></i></button>
+                                        <button class="btn btn-link ${a.estado === 'ACTIVO' ? 'text-warning' : 'text-success'} text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="${a.estado === 'ACTIVO' ? 'Desactivar Sede (No enviar mensajes)' : 'Activar Sede'}" onclick="toggleEstadoAPI(${a.id}, '${a.estado}', '${nombreSedeEscaped}')"><i class="fa-solid fa-power-off"></i></button>
                                         <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar API" onclick="borrarAPI(${a.id})"><i class="fa-solid fa-trash"></i></button>
                                     </div>
                                 </div>
@@ -1057,6 +1059,47 @@ function borrarAPI(id) {
                     } else {
                         Swal.fire('Error', res.message, 'error');
                     }
+                }
+            });
+        }
+    });
+}
+
+function toggleEstadoAPI(id_api, estado_actual, nombre_sede) {
+    const esActivo = estado_actual === 'ACTIVO';
+    const nuevoEstado = esActivo ? 'INACTIVO' : 'ACTIVO';
+    const titulo = esActivo ? '¿Desactivar esta sede?' : '¿Activar esta sede?';
+    const texto = esActivo 
+        ? `Al desactivar ${nombre_sede || 'esta sede'}, no se enviarán más mensajes automáticos ni notificaciones.`
+        : `Al activar ${nombre_sede || 'esta sede'}, se reanudará el envío de mensajes de WhatsApp.`;
+    const btnTexto = esActivo ? 'Sí, desactivar' : 'Sí, activar';
+    const btnColor = esActivo ? '#ffc107' : '#198754';
+
+    Swal.fire({
+        title: titulo,
+        text: texto,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: btnColor,
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: btnTexto,
+        cancelButtonText: 'Cancelar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            $.ajax({
+                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                data: { action: 'toggle_api_estado', id_api: id_api, nuevo_estado: nuevoEstado },
+                success: function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire('Estado actualizado', res.message, 'success');
+                        loadAPIs();
+                        loadSedes();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                },
+                error: function() {
+                    Swal.fire('Error', 'No se pudo procesar la solicitud.', 'error');
                 }
             });
         }

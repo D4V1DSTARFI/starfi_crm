@@ -186,7 +186,7 @@ $crm_id_sede = null;
 
 // 1. Intentar buscar por token de verificación único (api_token de sedes)
 if (!empty($verify_token)) {
-    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
     if ($stmt_token) {
         $stmt_token->bind_param("s", $verify_token);
         $stmt_token->execute();
@@ -206,7 +206,7 @@ if (!empty($verify_token)) {
 // 2. Intentar coincidencia por nombre explícito de empresa/sede si se envió en los datos
 if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
     $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
-    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO')");
+    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO'");
     if ($q_all && $q_all->num_rows > 0) {
         while ($row = $q_all->fetch_assoc()) {
             $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
@@ -226,7 +226,7 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
 if (empty($token) && !empty($id_sede)) {
     $raw_id = intval($id_sede);
     $target_crm_id = ($raw_id == 23) ? 24 : ($raw_id > 23 ? $raw_id : $raw_id + 2);
-    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) AND l.estado = 'ACTIVO' LIMIT 1");
     if ($q_linea && $q_linea->num_rows > 0) {
         $row = $q_linea->fetch_assoc();
         $telefonoID = $row['meta_app_id'];
@@ -239,7 +239,7 @@ if (empty($token) && !empty($id_sede)) {
 
 // 4. Intentar buscar por token de Meta (si se envió)
 if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') LIMIT 1");
+    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
     if ($stmt_meta) {
         $stmt_meta->bind_param("s", $meta_token_val);
         $stmt_meta->execute();
@@ -258,7 +258,7 @@ if (empty($token) && !empty($meta_token_val)) {
 
 // 5. Fallback a la primera línea activa del CRM si no se encontró coincidencia por sede
 if (empty($token)) {
-    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.estado = 'ACTIVO' OR l.estado_conexion = 'CONECTADO' OR l.estado = 'CONECTADO') ORDER BY l.id ASC LIMIT 1");
+    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' ORDER BY l.id ASC LIMIT 1");
     if ($q_active && $q_active->num_rows > 0) {
         $row = $q_active->fetch_assoc();
         $telefonoID = $row['meta_app_id'];
