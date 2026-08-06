@@ -458,10 +458,38 @@ if($id_linea > 0) {
     }
     
     $contenido_esc = $con->real_escape_string($contenido);
-    $estado_envio = ($status_code == 200) ? 'ENVIADO' : 'FALLIDO';
     
-    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, estado_envio, timestamp) 
-                 VALUES ($id_conversacion, '$id_mensaje_meta', 'EVENTO_SISTEMA', 'API_TRANSACCIONAL', '$contenido_esc', '$estado_envio', '$fecha_compra $hora_actual')");
+    $estado_envio = ($status_code == 200 && isset($estado['messages'][0]['id'])) ? 'ENVIADO' : 'FALLIDO';
+    $error_detalle = null;
+    
+    if ($estado_envio === 'FALLIDO') {
+        if (isset($estado['error'])) {
+            $code = $estado['error']['code'] ?? '';
+            $msg = $estado['error']['message'] ?? '';
+            $details = $estado['error']['error_data']['details'] ?? '';
+            
+            if ($code == 131047) {
+                $error_detalle = "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o utilizar una plantilla aprobada.";
+            } elseif ($code == 131026) {
+                $error_detalle = "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
+            } elseif ($code == 131049) {
+                $error_detalle = "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
+            } elseif ($code == 132000) {
+                $error_detalle = "Incompatibilidad de parámetros en plantilla (Error Meta 132000): " . ($details ? $details : $msg);
+            } elseif ($code == 130472) {
+                $error_detalle = "Restricción de Meta (Error 130472). El número forma parte de una prueba o restricción.";
+            } else {
+                $error_detalle = "Rechazado por Meta (Error $code): " . ($details ? $details : $msg);
+            }
+        } else {
+            $error_detalle = "Fallo de conexión o error HTTP $status_code con la API de Meta WhatsApp.";
+        }
+    }
+    
+    $error_det_sql = !empty($error_detalle) ? "'" . $con->real_escape_string($error_detalle) . "'" : "NULL";
+
+    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, estado_envio, error_detalle, timestamp) 
+                 VALUES ($id_conversacion, '$id_mensaje_meta', 'EVENTO_SISTEMA', 'API_TRANSACCIONAL', '$contenido_esc', '$estado_envio', $error_det_sql, '$fecha_compra $hora_actual')");
 }
 
 $response['meta_response'] = $estado;
