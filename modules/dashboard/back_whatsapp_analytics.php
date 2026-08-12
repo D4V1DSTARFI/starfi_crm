@@ -111,6 +111,19 @@ if ($action === 'get_analytics') {
             }
         }
 
+        // Obtener configuración de tarifa de la sede
+        $tarifa_config = ['tipo_tarifa' => 'PORCENTAJE', 'valor' => 10.00];
+        if ($id_sede > 0) {
+            $stmt = $con->prepare("SELECT tipo_tarifa, valor FROM waba_tarifas_sede WHERE id_sede = ?");
+            $stmt->bind_param("i", $id_sede);
+            $stmt->execute();
+            $res_t = $stmt->get_result();
+            if ($row = $res_t->fetch_assoc()) {
+                $tarifa_config = $row;
+            }
+            $stmt->close();
+        }
+
         echo json_encode(['status' => 'success', 'data' => $resp, 'local_audit' => $local_audit, 'tarifa_config' => $tarifa_config]);
     } else {
         echo json_encode(['status' => 'error', 'message' => 'No hay líneas de WhatsApp configuradas']);
