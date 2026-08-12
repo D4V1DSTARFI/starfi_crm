@@ -54,20 +54,64 @@ if ($action === 'get_analytics') {
         $resp = json_decode($raw_exec, true);
         curl_close($curl);
         
-        // Obtener configuración de tarifa de la sede
-        $tarifa_config = ['tipo_tarifa' => 'PORCENTAJE', 'valor' => 10.00];
+        // Consultar también la auditoría local de la BD para conciliar los conteos por categoría y facturabilidad
+        $local_audit = [
+            'enviados' => 0,
+            'entregados' => 0,
+            'leidos' => 0,
+            'recibidos' => 0,
+            'por_categoria' => [
+                'MARKETING' => 0,
+                'UTILITY' => 0,
+                'AUTHENTICATION' => 0,
+                'SERVICE' => 0
+            ],
+            'gratuitos' => 0,
+            'pagados' => 0
+        ];
+
+        $where_sede = "";
         if ($id_sede > 0) {
-            $stmt = $con->prepare("SELECT tipo_tarifa, valor FROM waba_tarifas_sede WHERE id_sede = ?");
-            $stmt->bind_param("i", $id_sede);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            if ($row = $res->fetch_assoc()) {
-                $tarifa_config = $row;
-            }
-            $stmt->close();
+            $where_sede = " AND c.id_linea IN (SELECT id FROM lineas_whatsapp WHERE id_sede = $id_sede) ";
         }
 
-        echo json_encode(['status' => 'success', 'data' => $resp, 'tarifa_config' => $tarifa_config]);
+        $query_audit = "SELECT 
+            m.origen, m.estado_envio, m.categoria_meta, m.es_pagado, COUNT(*) as total 
+            FROM mensajes_y_eventos m 
+            JOIN conversaciones c ON m.id_conversacion = c.id 
+            WHERE m.timestamp >= '$fecha_desde 00:00:00' AND m.timestamp <= '$fecha_hasta 23:59:59' $where_sede 
+            GROUP BY m.origen, m.estado_envio, m.categoria_meta, m.es_pagado";
+        
+        $res_audit = $con->query($query_audit);
+        if ($res_audit) {
+            while ($r = $res_audit->fetch_assoc()) {
+                $tot = intval($r['total']);
+                if ($r['origen'] === 'CLIENTE') {
+                    $local_audit['recibidos'] += $tot;
+                } else {
+                    $local_audit['enviados'] += $tot;
+                    if ($r['estado_envio'] === 'ENTREGADO' || $r['estado_envio'] === 'LEIDO') {
+                        $local_audit['entregados'] += $tot;
+                    }
+                    if ($r['estado_envio'] === 'LEIDO') {
+                        $local_audit['leidos'] += $tot;
+                    }
+                }
+
+                $cat = strtoupper($r['categoria_meta'] ?? '');
+                if (array_key_exists($cat, $local_audit['por_categoria'])) {
+                    $local_audit['por_categoria'][$cat] += $tot;
+                }
+
+                if ($r['es_pagado'] == 1) {
+                    $local_audit['pagados'] += $tot;
+                } else if ($r['es_pagado'] === '0') {
+                    $local_audit['gratuitos'] += $tot;
+                }
+            }
+        }
+
+        echo json_encode(['status' => 'success', 'data' => $resp, 'local_audit' => $local_audit, 'tarifa_config' => $tarifa_config]);
     } else {
         echo json_encode(['status' => 'error', 'message' => 'No hay líneas de WhatsApp configuradas']);
     }

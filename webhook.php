@@ -78,8 +78,9 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
 
     // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído, fallido)
     if (isset($value['statuses'][0])) {
-        $estado = $value['statuses'][0]['status']; // sent, delivered, read, failed
-        $id_mensaje_meta_status = $value['statuses'][0]['id'];
+        $status_obj = $value['statuses'][0];
+        $estado = $status_obj['status']; // sent, delivered, read, failed
+        $id_mensaje_meta_status = $status_obj['id'];
         
         $estado_sql = null;
         if ($estado == 'sent') $estado_sql = 'ENVIADO';
@@ -87,9 +88,17 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         else if ($estado == 'read') $estado_sql = 'LEIDO';
         else if ($estado == 'failed') $estado_sql = 'FALLIDO';
 
+        // Extraer metadatos de facturación / conversación de Meta
+        $pricing_cat = isset($status_obj['pricing']['category']) ? strtoupper($status_obj['pricing']['category']) : null;
+        if (!$pricing_cat && isset($status_obj['conversation']['origin']['type'])) {
+            $pricing_cat = strtoupper($status_obj['conversation']['origin']['type']);
+        }
+        $is_billable = isset($status_obj['pricing']['billable']) ? ($status_obj['pricing']['billable'] ? 1 : 0) : null;
+        $conv_id_meta = $status_obj['conversation']['id'] ?? null;
+
         $error_detalle_meta = null;
-        if ($estado == 'failed' && isset($value['statuses'][0]['errors'][0])) {
-            $err = $value['statuses'][0]['errors'][0];
+        if ($estado == 'failed' && isset($status_obj['errors'][0])) {
+            $err = $status_obj['errors'][0];
             $err_code = $err['code'] ?? '';
             $err_title = $err['title'] ?? '';
             $err_data = $err['error_data']['details'] ?? ($err['message'] ?? '');
@@ -109,12 +118,26 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
         
         if ($con && $estado_sql) {
             $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
+            $updates = ["estado_envio = '$estado_sql'"];
+            
             if (!empty($error_detalle_meta)) {
                 $err_esc = mysqli_real_escape_string($con, $error_detalle_meta);
-                mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql', error_detalle = '$err_esc' WHERE id_mensaje_meta = '$id_msg_esc'");
-            } else {
-                mysqli_query($con, "UPDATE mensajes_y_eventos SET estado_envio = '$estado_sql' WHERE id_mensaje_meta = '$id_msg_esc'");
+                $updates[] = "error_detalle = '$err_esc'";
             }
+            if ($pricing_cat !== null) {
+                $p_cat_esc = mysqli_real_escape_string($con, $pricing_cat);
+                $updates[] = "categoria_meta = '$p_cat_esc'";
+            }
+            if ($is_billable !== null) {
+                $updates[] = "es_pagado = $is_billable";
+            }
+            if ($conv_id_meta !== null) {
+                $c_id_esc = mysqli_real_escape_string($con, $conv_id_meta);
+                $updates[] = "conversation_id_meta = '$c_id_esc'";
+            }
+
+            $update_sql = "UPDATE mensajes_y_eventos SET " . implode(", ", $updates) . " WHERE id_mensaje_meta = '$id_msg_esc'";
+            mysqli_query($con, $update_sql);
         }
         exit;
     }

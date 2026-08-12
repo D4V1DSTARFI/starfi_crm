@@ -215,11 +215,71 @@ if ($action === 'generate_order') {
         $new_order_id = $stmt->insert_id;
         $stmt->close();
         
-        // Registrar desglose genérico ya que Meta API V23+ no permite template_analytics global sin IDs
-        $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, costo_base, volumen) VALUES ($new_order_id, 'Mensajería Consolidada Meta', $costo_meta, $mensajes_totales)");
-        
+        // Registrar desglose por categoría consultando la BD de auditoría local y Meta
+        $cat_details = [
+            'MARKETING' => ['nombre' => 'Mensajes de Marketing', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+            'UTILITY' => ['nombre' => 'Mensajes de Utilidad', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+            'AUTHENTICATION' => ['nombre' => 'Mensajes de Autenticación', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+            'SERVICE' => ['nombre' => 'Mensajes de Servicio', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0]
+        ];
+
+        // Consultar categorías de la BD local
+        $q_cat = "SELECT 
+            UPPER(COALESCE(NULLIF(m.categoria_meta, ''), 'MARKETING')) as cat,
+            COUNT(*) as vol,
+            SUM(CASE WHEN m.es_pagado = 1 THEN 1 ELSE 0 END) as pag,
+            SUM(CASE WHEN m.es_pagado = 0 THEN 1 ELSE 0 END) as grat
+            FROM mensajes_y_eventos m
+            JOIN conversaciones c ON m.id_conversacion = c.id
+            JOIN lineas_whatsapp l ON c.id_linea = l.id
+            WHERE l.id_sede = $id_sede AND m.origen != 'CLIENTE'
+              AND m.timestamp >= '$fecha_desde 00:00:00' AND m.timestamp <= '$fecha_hasta 23:59:59'
+            GROUP BY cat";
+        $res_c = $con->query($q_cat);
+        $total_vol_local = 0;
+        if ($res_c) {
+            while ($rc = $res_c->fetch_assoc()) {
+                $cname = $rc['cat'];
+                $v = intval($rc['vol']);
+                $total_vol_local += $v;
+                if (!isset($cat_details[$cname])) {
+                    $cat_details[$cname] = ['nombre' => 'Mensajes ' . ucfirst(strtolower($cname)), 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0];
+                }
+                $cat_details[$cname]['volumen'] += $v;
+                $cat_details[$cname]['pagados'] += intval($rc['pag']);
+                $cat_details[$cname]['gratuitos'] += intval($rc['grat']);
+            }
+        }
+
+        // Si no hay detalle local, asignar todo a Marketing por defecto
+        if ($total_vol_local === 0) {
+            $cat_details['MARKETING']['volumen'] = $mensajes_totales;
+            $cat_details['MARKETING']['costo'] = $costo_meta;
+            $cat_details['MARKETING']['pagados'] = $mensajes_totales;
+        } else {
+            // Prorratear costo Meta proporcionalmente a los volúmenes
+            foreach ($cat_details as $cname => &$cd) {
+                if ($cd['volumen'] > 0 && $total_vol_local > 0) {
+                    $cd['costo'] = round(($cd['volumen'] / $total_vol_local) * $costo_meta, 4);
+                }
+            }
+        }
+
+        // Insertar cada categoría en waba_ordenes_detalles
+        foreach ($cat_details as $cname => $cd) {
+            if ($cd['volumen'] > 0 || $cd['costo'] > 0) {
+                $n_esc = mysqli_real_escape_string($con, $cd['nombre']);
+                $c_esc = mysqli_real_escape_string($con, $cname);
+                $vol = intval($cd['volumen']);
+                $c_base = floatval($cd['costo']);
+                $grat = intval($cd['gratuitos']);
+                $pag = intval($cd['pagados']);
+                $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, categoria, costo_base, volumen, mensajes_gratuitos, mensajes_pagados) VALUES ($new_order_id, '$n_esc', '$c_esc', $c_base, $vol, $grat, $pag)");
+            }
+        }
+
         if ($margen > 0) {
-            $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, costo_base, volumen) VALUES ($new_order_id, 'Margen Administrativo (CRM)', $margen, 1)");
+            $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, categoria, costo_base, volumen, mensajes_gratuitos, mensajes_pagados) VALUES ($new_order_id, 'Margen Administrativo (CRM)', 'ADMIN', $margen, 1, 0, 0)");
         }
         
         $con->commit();

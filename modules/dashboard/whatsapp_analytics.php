@@ -151,30 +151,136 @@ if ($res_sedes) {
             <!-- Dashboard Content -->
             <div id="contentData" style="display: none;">
                 
-                <!-- Caja Resumen Financiero -->
-                <div class="meta-card">
-                    <div class="cost-row">
-                        <div class="cost-box">
-                            <div class="cost-label">Importe gastado <i class="fa-solid fa-circle-info text-muted ms-1" title="Costo total de conversaciones en el periodo"></i></div>
-                            <div class="cost-value" id="kpiImporteGastado" style="color: #1877f2;">0,00 USD</div>
-                            <?php if ($agente['rol'] === 'MASTER'): ?>
-                            <div class="mt-2" style="font-size: 0.8rem; border-top: 1px dashed #dadde1; padding-top: 8px;">
-                                <div class="d-flex justify-content-between text-muted mb-1">
-                                    <span>Costo Meta:</span> <span id="kpiCostoMeta" class="fw-bold text-dark">0,00 USD</span>
+                <!-- Nota de ayuda -->
+                <div class="mb-3 p-2 text-muted" style="font-size: 0.8rem; background-color: #fff; border-radius: 6px; border: 1px solid #dadde1;">
+                    <i class="fa-solid fa-info-circle text-primary me-1"></i> Nota: Todos los datos de estadísticas son aproximados y consolidados entre la API de Meta y las métricas locales de CRM.
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <!-- Tarjeta 1: Todos los mensajes -->
+                    <div class="col-md-4 col-lg">
+                        <div class="card h-100 shadow-sm border-1" style="border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="fw-bold border-bottom pb-2 mb-2 text-dark" style="font-size: 0.9rem;">
+                                    <i class="fa-solid fa-comments me-1 text-primary"></i> Todos los mensajes
                                 </div>
-                                <div class="d-flex justify-content-between text-muted">
-                                    <span>Margen (10%):</span> <span id="kpiMargenGanancia" class="fw-bold text-success">0,00 USD</span>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Mensajes enviados</span>
+                                    <span class="fw-bold text-dark" id="metaValEnviados">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Mensajes entregados</span>
+                                    <span class="fw-bold text-dark" id="metaValEntregados">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Mensajes recibidos</span>
+                                    <span class="fw-bold text-dark" id="metaValRecibidos">0</span>
                                 </div>
                             </div>
-                            <?php endif; ?>
                         </div>
-                        <div class="cost-box">
-                            <div class="cost-label">Costo por mensaje entregado <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
-                            <div class="cost-value" id="kpiCostoMensaje">--</div>
+                    </div>
+
+                    <!-- Tarjeta 2: Mensajes entregados por categoría -->
+                    <div class="col-md-4 col-lg">
+                        <div class="card h-100 shadow-sm border-1" style="border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2 text-dark" style="font-size: 0.9rem;">
+                                    <span class="fw-bold"><i class="fa-solid fa-paper-plane me-1 text-success"></i> Entregados</span>
+                                    <span class="fw-bold fs-6" id="metaTotalEntregadosCat">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Marketing</span>
+                                    <span class="fw-semibold" id="metaEntMkt">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Utilidad</span>
+                                    <span class="fw-semibold" id="metaEntUtil">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Autenticación</span>
+                                    <span class="fw-semibold" id="metaEntAuth">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Servicio</span>
+                                    <span class="fw-semibold" id="metaEntServ">0</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="cost-box">
-                            <div class="cost-label">Conversaciones (MKT / UTL) <i class="fa-solid fa-circle-info text-muted ms-1"></i></div>
-                            <div class="cost-value" id="kpiConversaciones">0 / 0</div>
+                    </div>
+
+                    <!-- Tarjeta 3: Mensajes gratuitos entregados -->
+                    <div class="col-md-4 col-lg">
+                        <div class="card h-100 shadow-sm border-1" style="border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2 text-dark" style="font-size: 0.9rem;">
+                                    <span class="fw-bold"><i class="fa-solid fa-gift me-1 text-info"></i> Gratuitos</span>
+                                    <span class="fw-bold fs-6" id="metaTotalGratuitos">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Atención al cliente</span>
+                                    <span class="fw-semibold" id="metaGratAtencion">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Punto de acceso</span>
+                                    <span class="fw-semibold" id="metaGratAcceso">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tarjeta 4: Mensajes pagados entregados -->
+                    <div class="col-md-4 col-lg">
+                        <div class="card h-100 shadow-sm border-1" style="border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2 text-dark" style="font-size: 0.9rem;">
+                                    <span class="fw-bold"><i class="fa-solid fa-receipt me-1 text-warning"></i> Pagados</span>
+                                    <span class="fw-bold fs-6" id="metaTotalPagados">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Marketing</span>
+                                    <span class="fw-semibold" id="metaPagMkt">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Utilidad</span>
+                                    <span class="fw-semibold" id="metaPagUtil">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Autenticación</span>
+                                    <span class="fw-semibold" id="metaPagAuth">0</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Servicio</span>
+                                    <span class="fw-semibold" id="metaPagServ">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tarjeta 5: Cargos totales aproximados -->
+                    <div class="col-md-4 col-lg">
+                        <div class="card h-100 shadow-sm border-1" style="border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2 text-dark" style="font-size: 0.9rem;">
+                                    <span class="fw-bold"><i class="fa-solid fa-dollar-sign me-1 text-primary"></i> Cargos aprox.</span>
+                                    <span class="fw-bold fs-6 text-primary" id="metaCargosTotales">$0,00</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Marketing</span>
+                                    <span class="fw-semibold" id="metaCargoMkt">$0,00</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Utilidad</span>
+                                    <span class="fw-semibold" id="metaCargoUtil">$0,00</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Autenticación</span>
+                                    <span class="fw-semibold" id="metaCargoAuth">$0,00</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center py-1" style="font-size: 0.85rem;">
+                                    <span class="text-muted">Servicio</span>
+                                    <span class="fw-semibold" id="metaCargoServ">$0,00</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -512,7 +618,7 @@ if ($res_sedes) {
                             templatesLoaded = true;
                         }
 
-                        procesarYGraficar(res.data, desde, hasta, id_plantilla, res.tarifa_config);
+                        procesarYGraficar(res.data, desde, hasta, id_plantilla, res.tarifa_config, res.local_audit);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
                         $('#contentData').show();
@@ -525,23 +631,37 @@ if ($res_sedes) {
             });
         }
 
-        function procesarYGraficar(data, desde, hasta, id_plantilla, tarifaConfig) {
+        function procesarYGraficar(data, desde, hasta, id_plantilla, tarifaConfig, localAudit) {
             let totalCost = 0;
-            let mktCount = 0;
-            let utilCount = 0;
+            let mktCost = 0, utilCost = 0, authCost = 0, servCost = 0;
+            let mktCount = 0, utilCount = 0, authCount = 0, servCount = 0;
             
-            // Analizar Costos (pricing_analytics y conversation_analytics)
+            // Analizar Costos de Meta (pricing_analytics y conversation_analytics)
             if(data.pricing_analytics && data.pricing_analytics.data) {
                 let pricing = data.pricing_analytics.data[0]?.data_points || [];
                 pricing.forEach(dp => {
-                    if (dp.cost) totalCost += parseFloat(dp.cost);
+                    if (dp.cost) {
+                        let c = parseFloat(dp.cost);
+                        totalCost += c;
+                        let cat = (dp.category || dp.conversation_category || '').toUpperCase();
+                        if (cat === 'MARKETING') mktCost += c;
+                        else if (cat === 'UTILITY') utilCost += c;
+                        else if (cat === 'AUTHENTICATION') authCost += c;
+                        else if (cat === 'SERVICE') servCost += c;
+                        else mktCost += c; // fallback
+                    }
                 });
             }
+
             if(data.conversation_analytics && data.conversation_analytics.data) {
                 let convs = data.conversation_analytics.data[0]?.data_points || [];
                 convs.forEach(dp => {
-                    if (dp.conversation_category === 'MARKETING' && dp.conversation) mktCount += parseInt(dp.conversation);
-                    if (dp.conversation_category === 'UTILITY' && dp.conversation) utilCount += parseInt(dp.conversation);
+                    let cat = (dp.conversation_category || '').toUpperCase();
+                    let cnt = parseInt(dp.conversation || 0);
+                    if (cat === 'MARKETING') mktCount += cnt;
+                    else if (cat === 'UTILITY') utilCount += cnt;
+                    else if (cat === 'AUTHENTICATION') authCount += cnt;
+                    else if (cat === 'SERVICE') servCount += cnt;
                 });
             }
 
@@ -559,18 +679,15 @@ if ($res_sedes) {
 
             if(dataSource && dataSource.length > 0) {
                 let msgs = dataSource;
-                // Ordenar por timestamp
                 msgs.sort((a,b) => a.start - b.start);
                 
                 msgs.forEach(dp => {
-                    // Start es Unix Timestamp. Convertirlo a fecha local
                     let d = new Date(dp.start * 1000);
                     labels.push(d.getDate() + ' de ' + d.toLocaleString('es-ES', { month: 'short' }));
                     
                     let env = dp.sent || 0;
                     let ent = dp.delivered || 0;
                     let lei = dp.read || 0;
-                    // Respuestas únicas no viene por defecto tan fácil, lo simulamos para el dashboard o si existe dp.replies
                     let resps = dp.replies || 0;
 
                     enviados += parseInt(env);
@@ -584,49 +701,89 @@ if ($res_sedes) {
                     dsRespuestas.push(resps);
                 });
             } else {
-                // Si no hay array 'analytics', Meta devolvió vacío. Ponemos un dummy para que el Chart no quede feo
                 labels = [desde, hasta];
                 dsEnviados = [0,0]; dsEntregados = [0,0]; dsLeidos = [0,0]; dsRespuestas = [0,0];
             }
 
-            // Aplicar Modelo de Negocio (Tarifas Dinámicas)
-            let costoFinalFacturado = 0;
-            let ganancia = 0;
+            // Usar auditoría local si Meta devuelve ceros por falta de permisos o desfase
+            if (localAudit) {
+                if (enviados === 0 && localAudit.enviados > 0) enviados = localAudit.enviados;
+                if (entregados === 0 && localAudit.entregados > 0) entregados = localAudit.entregados;
+                if (leidos === 0 && localAudit.leidos > 0) leidos = localAudit.leidos;
+                
+                if (mktCount === 0) mktCount = localAudit.por_categoria?.MARKETING || 0;
+                if (utilCount === 0) utilCount = localAudit.por_categoria?.UTILITY || 0;
+                if (authCount === 0) authCount = localAudit.por_categoria?.AUTHENTICATION || 0;
+                if (servCount === 0) servCount = localAudit.por_categoria?.SERVICE || 0;
+            }
+
+            // Aplicar Modelo de Negocio CRM (Margen)
             let valorTarifa = parseFloat(tarifaConfig ? tarifaConfig.valor : 10.00);
             let tipoTarifa = tarifaConfig ? tarifaConfig.tipo_tarifa : 'PORCENTAJE';
             
+            let factorMarkup = 1.10;
             if (tipoTarifa === 'PORCENTAJE') {
-                costoFinalFacturado = totalCost * (1 + (valorTarifa / 100));
-                ganancia = costoFinalFacturado - totalCost;
-            } else if (tipoTarifa === 'FIJA') {
-                ganancia = enviados * valorTarifa;
-                costoFinalFacturado = totalCost + ganancia;
-            } else if (tipoTarifa === 'PORCENTAJE_VOLUMEN') {
-                // Logica hipotética: a mayor volumen, menor %
-                let p = enviados > 1000 ? (valorTarifa / 2) : valorTarifa;
-                costoFinalFacturado = totalCost * (1 + (p / 100));
-                ganancia = costoFinalFacturado - totalCost;
+                factorMarkup = 1 + (valorTarifa / 100);
             }
 
-            // Actualizar UI Textos
-            $('#kpiImporteGastado').text(costoFinalFacturado.toFixed(2).replace('.', ',') + ' USD');
-            
-            if (userRole === 'MASTER') {
-                $('#kpiCostoMeta').text(totalCost.toFixed(2).replace('.', ',') + ' USD');
-                $('#kpiMargenGanancia').text(ganancia.toFixed(2).replace('.', ',') + ' USD');
+            let costoFinalFacturado = totalCost * factorMarkup;
+            let mktCargoFinal = mktCost * factorMarkup;
+            let utilCargoFinal = utilCost * factorMarkup;
+            let authCargoFinal = authCost * factorMarkup;
+            let servCargoFinal = servCost * factorMarkup;
+
+            // Si Meta no reportó desglose exacto de costos pero hay entregados, prorratear el costo total
+            let totalEntregadosCat = mktCount + utilCount + authCount + servCount;
+            if (totalEntregadosCat === 0 && entregados > 0) {
+                mktCount = entregados;
+                totalEntregadosCat = entregados;
+            }
+            if (mktCost === 0 && utilCost === 0 && authCost === 0 && servCost === 0 && totalCost > 0) {
+                mktCargoFinal = costoFinalFacturado;
             }
 
-            $('#kpiConversaciones').text(`${mktCount} / ${utilCount}`);
-            
-            let costoPorMsj = entregados > 0 ? (costoFinalFacturado / entregados) : 0;
-            $('#kpiCostoMensaje').text(costoPorMsj > 0 ? costoPorMsj.toFixed(4) + ' USD' : '--');
+            let recibidos = localAudit ? localAudit.recibidos : 0;
+            let gratuitos = localAudit ? localAudit.gratuitos : 0;
+            let pagados = localAudit ? localAudit.pagados : (totalEntregadosCat - gratuitos);
+            if (pagados < 0) pagados = totalEntregadosCat;
 
+            // Poblado de Tarjeta 1: Todos los mensajes
+            $('#metaValEnviados').text(enviados);
+            $('#metaValEntregados').text(entregados);
+            $('#metaValRecibidos').text(recibidos);
+
+            // Poblado de Tarjeta 2: Mensajes entregados por categoría
+            $('#metaTotalEntregadosCat').text(totalEntregadosCat);
+            $('#metaEntMkt').text(mktCount);
+            $('#metaEntUtil').text(utilCount);
+            $('#metaEntAuth').text(authCount);
+            $('#metaEntServ').text(servCount);
+
+            // Poblado de Tarjeta 3: Mensajes gratuitos
+            $('#metaTotalGratuitos').text(gratuitos);
+            $('#metaGratAtencion').text(gratuitos);
+            $('#metaGratAcceso').text(0);
+
+            // Poblado de Tarjeta 4: Mensajes pagados
+            $('#metaTotalPagados').text(pagados);
+            $('#metaPagMkt').text(mktCount);
+            $('#metaPagUtil').text(utilCount);
+            $('#metaPagAuth').text(authCount);
+            $('#metaPagServ').text(servCount);
+
+            // Poblado de Tarjeta 5: Cargos totales aproximados
+            $('#metaCargosTotales').text('$' + costoFinalFacturado.toFixed(2).replace('.', ','));
+            $('#metaCargoMkt').text('$' + mktCargoFinal.toFixed(2).replace('.', ','));
+            $('#metaCargoUtil').text('$' + utilCargoFinal.toFixed(2).replace('.', ','));
+            $('#metaCargoAuth').text('$' + authCargoFinal.toFixed(2).replace('.', ','));
+            $('#metaCargoServ').text('$' + servCargoFinal.toFixed(2).replace('.', ','));
+
+            // Actualizar KPIs de la sección Rendimiento
             $('#kpiEnviados').text(enviados);
             $('#kpiEntregados').text(entregados);
             $('#kpiLeidos').text(leidos);
             $('#kpiRespuestas').text(respuestas);
 
-            // Calcular porcentajes
             if (enviados > 0) {
                 let pctEnt = ((entregados/enviados)*100).toFixed(1);
                 $('#trendEntregados').html(`<i class="fa-solid fa-arrow-right"></i> ${pctEnt}%`).removeClass('trend-neutral').addClass('trend-up');

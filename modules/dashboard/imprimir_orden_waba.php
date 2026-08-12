@@ -204,22 +204,41 @@ $fecha_vencimiento = date('Y-m-d', strtotime($o['created_at'] . ' + 5 days')); /
     <table class="items-table">
         <thead>
             <tr>
-                <th>Descripción del Servicio / Concepto</th>
-                <th style="text-align: center; width: 100px;">Volumen</th>
-                <th style="text-align: right; width: 120px;">Precio Ref.</th>
-                <th style="text-align: right; width: 120px;">Total</th>
+                <th>Descripción del Servicio / Categoría</th>
+                <th style="text-align: center; width: 90px;">Volumen</th>
+                <th style="text-align: center; width: 90px;">Gratuitos</th>
+                <th style="text-align: center; width: 90px;">Pagados</th>
+                <th style="text-align: right; width: 120px;">Monto</th>
             </tr>
         </thead>
         <tbody>
-            <tr>
-                <td>
-                    <strong>Servicios de Mensajería Consolidada Meta (API)</strong><br>
-                    <small style="color: #718096;">Incluye consumo Meta, infraestructura y costos operativos.</small>
-                </td>
-                <td style="text-align: center;"><?= $o['mensajes_totales'] ?></td>
-                <td style="text-align: right;">$<?= number_format( ($o['mensajes_totales'] > 0 ? $subtotal / $o['mensajes_totales'] : $subtotal), 4) ?></td>
-                <td style="text-align: right;">$<?= number_format($subtotal, 2) ?></td>
-            </tr>
+            <?php if (!empty($detalles)): ?>
+                <?php foreach ($detalles as $d): ?>
+                    <tr>
+                        <td>
+                            <strong><?= htmlspecialchars($d['nombre_plantilla']) ?></strong>
+                            <?php if (!empty($d['categoria']) && $d['categoria'] !== 'ADMIN'): ?>
+                                <br><small style="color: #718096;">Categoría WhatsApp API Meta: <?= htmlspecialchars($d['categoria']) ?></small>
+                            <?php endif; ?>
+                        </td>
+                        <td style="text-align: center;"><?= number_format($d['volumen']) ?></td>
+                        <td style="text-align: center;"><?= number_format($d['mensajes_gratuitos'] ?? 0) ?></td>
+                        <td style="text-align: center;"><?= number_format($d['mensajes_pagados'] ?? 0) ?></td>
+                        <td style="text-align: right;">$<?= number_format($d['costo_base'], 2) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <tr>
+                    <td>
+                        <strong>Servicios de Mensajería Consolidada Meta (API)</strong><br>
+                        <small style="color: #718096;">Incluye consumo Meta, infraestructura y costos operativos.</small>
+                    </td>
+                    <td style="text-align: center;"><?= $o['mensajes_totales'] ?></td>
+                    <td style="text-align: center;">0</td>
+                    <td style="text-align: center;"><?= $o['mensajes_totales'] ?></td>
+                    <td style="text-align: right;">$<?= number_format($subtotal, 2) ?></td>
+                </tr>
+            <?php endif; ?>
         </tbody>
     </table>
 
