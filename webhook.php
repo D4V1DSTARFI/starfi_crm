@@ -136,6 +136,20 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
                 $updates[] = "conversation_id_meta = '$c_id_esc'";
             }
 
+            // Calcular costo estimado en USD según categoría si el mensaje es facturable
+            if ($is_billable == 1 || ($is_billable === null && $pricing_cat !== null)) {
+                $cat_check = $pricing_cat ?? 'MARKETING';
+                $costo_estimado = 0.0700; // Tarifas base aproximadas Meta
+                if ($cat_check === 'UTILITY' || $cat_check === 'AUTHENTICATION') {
+                    $costo_estimado = 0.0150;
+                } else if ($cat_check === 'SERVICE') {
+                    $costo_estimado = 0.0120;
+                }
+                $updates[] = "costo_meta_estimado = $costo_estimado";
+            } else if ($is_billable === 0) {
+                $updates[] = "costo_meta_estimado = 0.0000";
+            }
+
             $update_sql = "UPDATE mensajes_y_eventos SET " . implode(", ", $updates) . " WHERE id_mensaje_meta = '$id_msg_esc'";
             mysqli_query($con, $update_sql);
         }
