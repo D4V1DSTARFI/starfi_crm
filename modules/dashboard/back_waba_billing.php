@@ -11,6 +11,28 @@ if ($agente['rol'] !== 'MASTER') {
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 
+if ($action === 'install_cron') {
+    $php_bin = PHP_BINARY;
+    $script_path = realpath(__DIR__ . '/../../cron_waba_billing.php');
+    $task_name = "Starfi_Waba_Billing_Cron";
+    
+    if (!$script_path) {
+        echo json_encode(['status' => 'error', 'message' => 'No se encontró el script cron_waba_billing.php.']);
+        exit;
+    }
+    
+    // Comando para crear la tarea programada en Windows (Diario a las 01:00 AM)
+    $cmd = "schtasks /create /tn \"$task_name\" /tr \"$php_bin -f $script_path\" /sc daily /st 01:00 /f 2>&1";
+    $output = shell_exec($cmd);
+    
+    if (strpos(strtolower($output), 'success') !== false || strpos(strtolower($output), 'correcto') !== false || strpos(strtolower($output), 'éxito') !== false) {
+        echo json_encode(['status' => 'success', 'message' => 'Instalado correctamente.']);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => "Respuesta de Windows: $output"]);
+    }
+    exit;
+}
+
 if ($action === 'get_sede_config') {
     $id_sede = intval($_POST['id_sede'] ?? 0);
     
@@ -22,7 +44,7 @@ if ($action === 'get_sede_config') {
     $stmt->close();
     
     // Obtener tarifa
-    $stmt = $con->prepare("SELECT tipo_tarifa, valor, notas_negociacion FROM waba_tarifas_sede WHERE id_sede = ?");
+    $stmt = $con->prepare("SELECT tipo_tarifa, valor, notas_negociacion, limite_facturacion FROM waba_tarifas_sede WHERE id_sede = ?");
     $stmt->bind_param("i", $id_sede);
     $stmt->execute();
     $tarifa_info = $stmt->get_result()->fetch_assoc();
@@ -32,7 +54,8 @@ if ($action === 'get_sede_config') {
         $tarifa_info = [
             'tipo_tarifa' => 'PORCENTAJE',
             'valor' => 10.00,
-            'notas_negociacion' => ''
+            'notas_negociacion' => '',
+            'limite_facturacion' => 0.00
         ];
     }
     
@@ -49,6 +72,7 @@ if ($action === 'save_sede_config') {
     
     $tipo_tarifa = $_POST['tipo_tarifa'] ?? 'PORCENTAJE';
     $valor = floatval($_POST['valor'] ?? 10.00);
+    $limite_facturacion = floatval($_POST['limite_facturacion'] ?? 0.00);
     $notas = $_POST['notas'] ?? '';
     
     // Update sedes
@@ -65,13 +89,13 @@ if ($action === 'save_sede_config') {
     $stmt->close();
     
     if ($res->num_rows > 0) {
-        $stmt = $con->prepare("UPDATE waba_tarifas_sede SET tipo_tarifa = ?, valor = ?, notas_negociacion = ? WHERE id_sede = ?");
-        $stmt->bind_param("sdsi", $tipo_tarifa, $valor, $notas, $id_sede);
+        $stmt = $con->prepare("UPDATE waba_tarifas_sede SET tipo_tarifa = ?, valor = ?, notas_negociacion = ?, limite_facturacion = ? WHERE id_sede = ?");
+        $stmt->bind_param("sdsdi", $tipo_tarifa, $valor, $notas, $limite_facturacion, $id_sede);
         $stmt->execute();
         $stmt->close();
     } else {
-        $stmt = $con->prepare("INSERT INTO waba_tarifas_sede (id_sede, tipo_tarifa, valor, notas_negociacion) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("isds", $id_sede, $tipo_tarifa, $valor, $notas);
+        $stmt = $con->prepare("INSERT INTO waba_tarifas_sede (id_sede, tipo_tarifa, valor, notas_negociacion, limite_facturacion) VALUES (?, ?, ?, ?, ?)");
+        $stmt->bind_param("isdsd", $id_sede, $tipo_tarifa, $valor, $notas, $limite_facturacion);
         $stmt->execute();
         $stmt->close();
     }
@@ -112,15 +136,9 @@ if ($action === 'check_last_order') {
     exit;
 }
 
-if ($action === 'generate_order') {
-    $id_sede = intval($_POST['id_sede'] ?? 0);
-    $fecha_desde = $_POST['fecha_desde'] ?? '';
-    $fecha_hasta = $_POST['fecha_hasta'] ?? '';
-    $orden_pendiente_id = $_POST['orden_pendiente_id'] ?? null;
-    
+function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pendiente_id) {
     if (!$id_sede || !$fecha_desde || !$fecha_hasta) {
-        echo json_encode(['status' => 'error', 'message' => 'Faltan parámetros']);
-        exit;
+        return ['status' => 'error', 'message' => 'Faltan parámetros'];
     }
 
     $start_ts = strtotime($fecha_desde . " 00:00:00");
@@ -129,8 +147,7 @@ if ($action === 'generate_order') {
     // Obtener WABA ID
     $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
     if (!$res || !($row = $res->fetch_assoc()) || empty($row['id_negocio'])) {
-        echo json_encode(['status' => 'error', 'message' => 'Sede sin WABA configurada']);
-        exit;
+        return ['status' => 'error', 'message' => 'Sede sin WABA configurada'];
     }
     $waba_id = $row['id_negocio'];
 
@@ -144,7 +161,7 @@ if ($action === 'generate_order') {
     }
     
     // API Call
-    $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
+    $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
     $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
     
     $curl = curl_init();
@@ -156,14 +173,26 @@ if ($action === 'generate_order') {
     curl_close($curl);
     
     if (isset($resp['error'])) {
-        echo json_encode(['status' => 'error', 'message' => 'Error de Meta API: ' . $resp['error']['message']]);
-        exit;
+        return ['status' => 'error', 'message' => 'Error de Meta API: ' . $resp['error']['message']];
     }
     
     $costo_meta = 0;
+    $costo_meta_por_categoria = [
+        'MARKETING' => 0.0,
+        'UTILITY' => 0.0,
+        'AUTHENTICATION' => 0.0,
+        'SERVICE' => 0.0
+    ];
+
     if(isset($resp['pricing_analytics']['data'][0]['data_points'])) {
         foreach($resp['pricing_analytics']['data'][0]['data_points'] as $dp) {
-            if (isset($dp['cost'])) $costo_meta += floatval($dp['cost']);
+            $cat = strtoupper($dp['pricing_category'] ?? 'MARKETING');
+            $c = floatval($dp['cost'] ?? 0);
+            if (!isset($costo_meta_por_categoria[$cat])) {
+                $costo_meta_por_categoria[$cat] = 0.0;
+            }
+            $costo_meta_por_categoria[$cat] += $c;
+            $costo_meta += $c;
         }
     }
     
@@ -251,18 +280,15 @@ if ($action === 'generate_order') {
             }
         }
 
-        // Si no hay detalle local, asignar todo a Marketing por defecto
+        // Asignar el costo real extraído de Meta en lugar de prorratearlo ciegamente
+        foreach ($cat_details as $cname => &$cd) {
+            $cd['costo'] = round($costo_meta_por_categoria[$cname] ?? 0.0, 4);
+        }
+
+        // Si no hay detalle local, asignar volumen total a Marketing por defecto, pero usando su costo real
         if ($total_vol_local === 0) {
             $cat_details['MARKETING']['volumen'] = $mensajes_totales;
-            $cat_details['MARKETING']['costo'] = $costo_meta;
             $cat_details['MARKETING']['pagados'] = $mensajes_totales;
-        } else {
-            // Prorratear costo Meta proporcionalmente a los volúmenes
-            foreach ($cat_details as $cname => &$cd) {
-                if ($cd['volumen'] > 0 && $total_vol_local > 0) {
-                    $cd['costo'] = round(($cd['volumen'] / $total_vol_local) * $costo_meta, 4);
-                }
-            }
         }
 
         // Insertar cada categoría en waba_ordenes_detalles
@@ -435,26 +461,133 @@ if ($action === 'generate_order') {
             }
         }
         
-        echo json_encode(['status' => 'success', 'id_orden' => $new_order_id, 'monto_total' => round($costo_final, 2)]);
+        return ['status' => 'success', 'id_orden' => $new_order_id, 'monto_total' => round($costo_final, 2)];
     } catch (Exception $e) {
         $con->rollback();
-        echo json_encode(['status' => 'error', 'message' => 'Error BD: ' . $e->getMessage()]);
+        return ['status' => 'error', 'message' => 'Error BD: ' . $e->getMessage()];
+    }
+}
+
+if ($action === 'generate_order') {
+    $id_sede = intval($_POST['id_sede'] ?? 0);
+    $fecha_desde = $_POST['fecha_desde'] ?? '';
+    $fecha_hasta = $_POST['fecha_hasta'] ?? '';
+    $orden_pendiente_id = $_POST['orden_pendiente_id'] ?? null;
+    
+    $res = emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pendiente_id);
+    echo json_encode($res);
+    exit;
+}
+
+if ($action === 'generate_massive_orders') {
+    $sedes = $_POST['sedes'] ?? [];
+    $fecha_desde = $_POST['fecha_desde'] ?? '';
+    $fecha_hasta = $_POST['fecha_hasta'] ?? '';
+    
+    if (empty($sedes) || !$fecha_desde || !$fecha_hasta) {
+        echo json_encode(['status' => 'error', 'message' => 'Faltan parámetros para la emisión masiva.']);
+        exit;
+    }
+    
+    $exitos = 0;
+    $errores = 0;
+    $mensajes_error = [];
+    
+    foreach ($sedes as $id_sede) {
+        $id = intval($id_sede);
+        // Generar nueva independiente ignorando lo anterior, por petición del usuario
+        $res = emitir_orden_sede($con, $id, $fecha_desde, $fecha_hasta, null);
+        
+        if ($res['status'] === 'success') {
+            $exitos++;
+        } else {
+            $errores++;
+            $mensajes_error[] = "Sede $id: " . $res['message'];
+        }
+    }
+    
+    if ($exitos > 0 && $errores === 0) {
+        echo json_encode(['status' => 'success', 'message' => "Se generaron $exitos órdenes exitosamente."]);
+    } else if ($exitos > 0 && $errores > 0) {
+        echo json_encode(['status' => 'success', 'message' => "Se generaron $exitos órdenes, pero hubo $errores errores.<br>" . implode("<br>", $mensajes_error)]);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => "Error al generar órdenes:<br>" . implode("<br>", $mensajes_error)]);
     }
     exit;
 }
 
 if ($action === 'get_orders') {
-    $res = $con->query("
-        SELECT o.*, s.nombre_sede 
-        FROM waba_ordenes_cobro o 
-        JOIN sedes s ON o.id_sede = s.id 
-        ORDER BY o.id DESC
-    ");
+    $page = intval($_POST['page'] ?? 1);
+    $limit = 10;
+    $offset = ($page - 1) * $limit;
+    
+    $id_sede = intval($_POST['id_sede'] ?? 0);
+    $fecha_desde = $_POST['fecha_desde'] ?? '';
+    $fecha_hasta = $_POST['fecha_hasta'] ?? '';
+
+    $where = ["1=1"];
+    $types = "";
+    $params = [];
+
+    if ($id_sede > 0) {
+        $where[] = "o.id_sede = ?";
+        $types .= "i";
+        $params[] = $id_sede;
+    }
+    if (!empty($fecha_desde)) {
+        $where[] = "o.fecha_desde >= ?";
+        $types .= "s";
+        $params[] = $fecha_desde;
+    }
+    if (!empty($fecha_hasta)) {
+        $where[] = "o.fecha_hasta <= ?";
+        $types .= "s";
+        $params[] = $fecha_hasta;
+    }
+
+    $whereClause = implode(" AND ", $where);
+
+    // Get total records for pagination
+    $qTotal = "SELECT COUNT(*) as total FROM waba_ordenes_cobro o WHERE $whereClause";
+    $stmtTotal = $con->prepare($qTotal);
+    if (!empty($params)) {
+        $stmtTotal->bind_param($types, ...$params);
+    }
+    $stmtTotal->execute();
+    $total_records = $stmtTotal->get_result()->fetch_assoc()['total'];
+    $stmtTotal->close();
+
+    $total_pages = ceil($total_records / $limit);
+
+    // Get actual data
+    $qData = "SELECT o.*, s.nombre_sede 
+              FROM waba_ordenes_cobro o 
+              JOIN sedes s ON o.id_sede = s.id 
+              WHERE $whereClause 
+              ORDER BY o.id DESC 
+              LIMIT ? OFFSET ?";
+    
+    $stmtData = $con->prepare($qData);
+    $types .= "ii";
+    $params[] = $limit;
+    $params[] = $offset;
+    $stmtData->bind_param($types, ...$params);
+    $stmtData->execute();
+    
+    $res = $stmtData->get_result();
     $data = [];
     while ($row = $res->fetch_assoc()) {
         $data[] = $row;
     }
-    echo json_encode(['status' => 'success', 'data' => $data]);
+    $stmtData->close();
+    
+    echo json_encode([
+        'status' => 'success', 
+        'data' => $data,
+        'total_pages' => $total_pages,
+        'current_page' => $page,
+        'total_records' => $total_records
+    ]);
     exit;
 }
 
@@ -605,6 +738,19 @@ if ($action === 'delete_order') {
     $con->query("DELETE FROM waba_ordenes_detalles WHERE id_orden = $id_orden");
     $con->query("DELETE FROM waba_ordenes_cobro WHERE id = $id_orden");
     echo json_encode(['status' => 'success', 'message' => 'Orden eliminada correctamente.']);
+    exit;
+}
+
+if ($action === 'mark_paid') {
+    $id_orden = intval($_POST['id_orden'] ?? 0);
+    $stmt = $con->prepare("UPDATE waba_ordenes_cobro SET estado = 'PAGADO' WHERE id = ?");
+    $stmt->bind_param("i", $id_orden);
+    if ($stmt->execute()) {
+        echo json_encode(['status' => 'success', 'message' => 'La orden ha sido registrada como PAGADO.']);
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Error al actualizar el estado de la orden.']);
+    }
+    $stmt->close();
     exit;
 }
 

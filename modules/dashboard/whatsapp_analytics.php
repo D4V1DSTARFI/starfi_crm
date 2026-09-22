@@ -96,6 +96,12 @@ if ($res_sedes) {
                     <button class="btn btn-success shadow-sm me-2" id="btnEmitirOrden">
                         <i class="fa-solid fa-file-invoice me-2"></i>Emitir Orden de Cobro
                     </button>
+                    <button class="btn btn-warning shadow-sm me-2 text-dark" data-bs-toggle="modal" data-bs-target="#modalEmisionMasiva">
+                        <i class="fa-solid fa-layer-group me-2"></i>Emisión Masiva
+                    </button>
+                    <button class="btn btn-info shadow-sm me-2 text-white" id="btnInstalarCron" title="Instalar tarea programada en Windows">
+                        <i class="fa-solid fa-robot me-2"></i>Instalar Auto-Facturación
+                    </button>
                     <button class="btn btn-primary bg-primary border-primary me-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTarifasSede">
                         <i class="fa-solid fa-file-invoice-dollar me-2"></i>Configurar Tarifas
                     </button>
@@ -352,6 +358,54 @@ if ($res_sedes) {
         </div>
     </main>
 
+    <!-- Modal Emisión Masiva -->
+    <div class="modal fade" id="modalEmisionMasiva" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title fw-bold text-dark"><i class="fa-solid fa-layer-group me-2"></i>Emisión Masiva de Órdenes</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fa-solid fa-circle-info me-2"></i> Esta acción generará una orden de cobro nueva e independiente para cada sede seleccionada, ignorando las órdenes pendientes anteriores.
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Fecha Desde</label>
+                            <input type="date" id="masivaFechaDesde" class="form-control" value="<?= date('Y-m-01') ?>">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Fecha Hasta</label>
+                            <input type="date" id="masivaFechaHasta" class="form-control" value="<?= date('Y-m-d') ?>">
+                        </div>
+                    </div>
+
+                    <div class="mb-2 d-flex justify-content-between align-items-center">
+                        <label class="form-label fw-bold mb-0">Seleccionar Sedes:</label>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="btnSelTodasSedes">Seleccionar Todas</button>
+                    </div>
+                    
+                    <div class="border rounded p-3" style="max-height: 250px; overflow-y: auto;">
+                        <?php foreach ($sedes as $s): ?>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input chk-sede-masiva" type="checkbox" value="<?= $s['id'] ?>" id="chkMasiva_<?= $s['id'] ?>">
+                            <label class="form-check-label" for="chkMasiva_<?= $s['id'] ?>">
+                                <?= htmlspecialchars($s['nombre_sede']) ?>
+                            </label>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-warning text-dark fw-bold" id="btnGenerarMasiva"><i class="fa-solid fa-bolt me-2"></i>Generar Masivamente</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Tarifas -->
     <div class="modal fade" id="modalTarifasSede" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -385,6 +439,13 @@ if ($res_sedes) {
                             <div class="col-md-6">
                                 <label class="form-label">Valor Numérico</label>
                                 <input type="number" id="configValorTarifa" class="form-control" step="0.01" value="10.00">
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Límite Facturación Automática (USD)</label>
+                                <input type="number" id="configLimiteFacturacion" class="form-control" step="0.01" value="0.00" title="Si se supera este costo Meta, se factura automáticamente.">
+                                <small class="text-muted">0 = Desactivado</small>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -460,6 +521,7 @@ if ($res_sedes) {
                     if(res.status === 'success') {
                         $('#configTipoTarifa').val(res.tarifa.tipo_tarifa);
                         $('#configValorTarifa').val(res.tarifa.valor);
+                        $('#configLimiteFacturacion').val(res.tarifa.limite_facturacion || '0.00');
                         $('#configNotas').val(res.tarifa.notas_negociacion);
                         $('#configNombreGerente').val(res.sede.gerente_nombre || '');
                         $('#configTelGerente').val(res.sede.gerente_telefono || '');
@@ -481,6 +543,7 @@ if ($res_sedes) {
                     id_sede: id_sede,
                     tipo_tarifa: $('#configTipoTarifa').val(),
                     valor: $('#configValorTarifa').val(),
+                    limite_facturacion: $('#configLimiteFacturacion').val(),
                     notas: $('#configNotas').val(),
                     gerente_nombre: $('#configNombreGerente').val(),
                     gerente_telefono: $('#configTelGerente').val(),
@@ -528,7 +591,9 @@ if ($res_sedes) {
                             html: msg,
                             icon: 'question',
                             showCancelButton: true,
+                            showDenyButton: res.tiene_pendiente,
                             confirmButtonText: btnText,
+                            denyButtonText: 'Generar Nueva (Ignorar pendiente)',
                             cancelButtonText: 'Cancelar'
                         }).then((result) => {
                             if (result.isConfirmed) {
@@ -547,12 +612,88 @@ if ($res_sedes) {
                                         Swal.fire('Error', orderRes.message, 'error');
                                     }
                                 }, 'json');
+                            } else if (result.isDenied) {
+                                Swal.fire({ title: 'Procesando...', text: 'Consultando a Meta y emitiendo factura', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                                
+                                $.post('back_waba_billing.php', { 
+                                    action: 'generate_order', 
+                                    id_sede: id_sede, 
+                                    fecha_desde: res.fecha_desde, 
+                                    fecha_hasta: res.fecha_hasta,
+                                    orden_pendiente_id: null
+                                }, function(orderRes) {
+                                    if (orderRes.status === 'success') {
+                                        Swal.fire('Orden Creada', `Monto Total: ${orderRes.monto_total} USD<br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`, 'success');
+                                    } else {
+                                        Swal.fire('Error', orderRes.message, 'error');
+                                    }
+                                }, 'json');
                             }
                         });
                     } else {
                         Swal.fire('Error', res.message, 'error');
                     }
                 }, 'json');
+            });
+
+            // Lógica Emisión Masiva
+            $('#btnSelTodasSedes').click(function() {
+                $('.chk-sede-masiva').prop('checked', true);
+            });
+
+            $('#btnGenerarMasiva').click(function() {
+                let sedes = [];
+                $('.chk-sede-masiva:checked').each(function() {
+                    sedes.push($(this).val());
+                });
+
+                if (sedes.length === 0) {
+                    Swal.fire('Atención', 'Debe seleccionar al menos una sede para la emisión masiva.', 'warning');
+                    return;
+                }
+
+                let fecha_desde = $('#masivaFechaDesde').val();
+                let fecha_hasta = $('#masivaFechaHasta').val();
+
+                if (!fecha_desde || !fecha_hasta) {
+                    Swal.fire('Atención', 'Debe seleccionar las fechas desde y hasta.', 'warning');
+                    return;
+                }
+
+                Swal.fire({
+                    title: 'Confirmar Emisión Masiva',
+                    html: `¿Está seguro de generar órdenes de cobro para <b>${sedes.length}</b> sede(s)?<br><br>Se ignorarán las órdenes pendientes (se crearán como nuevas independientes).<br>El proceso puede tardar un momento mientras se notifica a cada sede.`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, Generar Todas',
+                    cancelButtonText: 'Cancelar'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        $('#modalEmisionMasiva').modal('hide');
+                        Swal.fire({ title: 'Procesando...', html: 'Generando órdenes y enviando notificaciones.<br>Por favor espere...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                        
+                        $.post('back_waba_billing.php', {
+                            action: 'generate_massive_orders',
+                            sedes: sedes,
+                            fecha_desde: fecha_desde,
+                            fecha_hasta: fecha_hasta
+                        }, function(res) {
+                            if (res.status === 'success') {
+                                Swal.fire({
+                                    title: 'Proceso Completado',
+                                    html: res.message,
+                                    icon: 'success'
+                                }).then(() => {
+                                    location.reload(); // Recargar para ver los cambios
+                                });
+                            } else {
+                                Swal.fire('Atención', res.message, 'info');
+                            }
+                        }, 'json').fail(function() {
+                            Swal.fire('Error', 'Ocurrió un error en la conexión con el servidor.', 'error');
+                        });
+                    }
+                });
             });
 
             // Recargar plantillas al cambiar de sede

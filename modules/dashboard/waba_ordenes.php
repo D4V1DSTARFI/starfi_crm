@@ -3,6 +3,15 @@ require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
 requirePermission('waba_ordenes');
 $agente = getAgenteInfo();
+
+$con = getDbConnection();
+$res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+$sedes = [];
+if ($res_sedes) {
+    while ($row = $res_sedes->fetch_assoc()) {
+        $sedes[] = $row;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -33,6 +42,35 @@ $agente = getAgenteInfo();
         </a>
     </div>
 
+    <!-- Filtros -->
+    <div class="card shadow-sm mb-3">
+        <div class="card-body py-3">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label mb-1">Filtrar por Sede</label>
+                    <select id="filter_sede" class="form-select">
+                        <option value="">Todas las Sedes</option>
+                        <?php foreach ($sedes as $s): ?>
+                            <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label mb-1">Fecha Desde</label>
+                    <input type="date" id="filter_fecha_desde" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label mb-1">Fecha Hasta</label>
+                    <input type="date" id="filter_fecha_hasta" class="form-control">
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button id="btnFiltrar" class="btn btn-primary w-100"><i class="fas fa-search me-1"></i>Buscar</button>
+                    <button id="btnLimpiar" class="btn btn-outline-secondary w-100"><i class="fas fa-eraser me-1"></i>Limpiar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="card shadow-sm">
         <div class="card-body">
             <div class="table-responsive">
@@ -51,9 +89,18 @@ $agente = getAgenteInfo();
                         </tr>
                     </thead>
                     <tbody>
-                        <!-- Filled via AJAX -->
                     </tbody>
                 </table>
+            </div>
+            
+            <!-- Paginación -->
+            <div class="d-flex justify-content-between align-items-center mt-3" id="paginationContainer" style="display:none !important;">
+                <span class="text-muted" id="lblTotalRegistros">Mostrando 0 registros</span>
+                <nav>
+                    <ul class="pagination pagination-sm mb-0" id="ulPagination">
+                        <!-- Filled via AJAX -->
+                    </ul>
+                </nav>
             </div>
         </div>
     </div>
@@ -96,10 +143,41 @@ $agente = getAgenteInfo();
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script>
 $(document).ready(function() {
-    cargarOrdenes();
+    let currentPage = 1;
 
-    function cargarOrdenes() {
-        $.post('back_waba_billing.php', { action: 'get_orders' }, function(res) {
+    cargarOrdenes(1);
+
+    $('#btnFiltrar').click(function() {
+        cargarOrdenes(1);
+    });
+
+    $('#btnLimpiar').click(function() {
+        $('#filter_sede').val('');
+        $('#filter_fecha_desde').val('');
+        $('#filter_fecha_hasta').val('');
+        cargarOrdenes(1);
+    });
+
+    $(document).on('click', '.page-link-btn', function(e) {
+        e.preventDefault();
+        let page = $(this).data('page');
+        if (page) {
+            cargarOrdenes(page);
+        }
+    });
+
+    function cargarOrdenes(page = 1) {
+        currentPage = page;
+        
+        let reqData = {
+            action: 'get_orders',
+            page: page,
+            id_sede: $('#filter_sede').val(),
+            fecha_desde: $('#filter_fecha_desde').val(),
+            fecha_hasta: $('#filter_fecha_hasta').val()
+        };
+
+        $.post('back_waba_billing.php', reqData, function(res) {
             if (res.status === 'success') {
                 let tbody = $('#tablaOrdenes tbody');
                 tbody.empty();
@@ -139,6 +217,30 @@ $(document).ready(function() {
                     </tr>`;
                     tbody.append(tr);
                 });
+
+                // Construir Paginación
+                if (res.total_pages > 1) {
+                    $('#paginationContainer').attr('style', 'display: flex !important;');
+                    let totalItems = res.total_records || 0;
+                    $('#lblTotalRegistros').text(`Mostrando pág ${res.current_page} de ${res.total_pages} (${totalItems} registros)`);
+                    
+                    let ul = $('#ulPagination');
+                    ul.empty();
+                    
+                    let prevDisabled = (res.current_page == 1) ? 'disabled' : '';
+                    ul.append(`<li class="page-item ${prevDisabled}"><a class="page-link page-link-btn" href="#" data-page="${res.current_page - 1}">Anterior</a></li>`);
+                    
+                    for (let i = 1; i <= res.total_pages; i++) {
+                        let active = (i == res.current_page) ? 'active' : '';
+                        ul.append(`<li class="page-item ${active}"><a class="page-link page-link-btn" href="#" data-page="${i}">${i}</a></li>`);
+                    }
+                    
+                    let nextDisabled = (res.current_page == res.total_pages) ? 'disabled' : '';
+                    ul.append(`<li class="page-item ${nextDisabled}"><a class="page-link page-link-btn" href="#" data-page="${res.current_page + 1}">Siguiente</a></li>`);
+                } else {
+                    $('#paginationContainer').attr('style', 'display: none !important;');
+                }
+
             } else {
                 Swal.fire('Error', 'No se pudieron cargar las órdenes', 'error');
             }
@@ -198,11 +300,25 @@ $(document).ready(function() {
 
     $(document).on('click', '.btn-pagar', function() {
         let id_orden = $(this).data('id');
-        // A placeholder for the Mark as Paid functionality
         Swal.fire({
-            title: 'Marcar como Pagado',
-            text: "Esta acción marcará la orden #" + id_orden + " como PAGADA. (Funcionalidad en desarrollo).",
-            icon: 'info'
+            title: '¿Marcar como Pagado?',
+            text: "Esta acción marcará la orden #" + id_orden + " como PAGADA de forma definitiva.",
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, marcar pagado',
+            cancelButtonText: 'Cancelar'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                Swal.fire({ title: 'Procesando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                $.post('back_waba_billing.php', { action: 'mark_paid', id_orden: id_orden }, function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire('¡Éxito!', res.message, 'success');
+                        cargarOrdenes();
+                    } else {
+                        Swal.fire('Error', res.message || 'Error al procesar el pago', 'error');
+                    }
+                }, 'json');
+            }
         });
     });
 
