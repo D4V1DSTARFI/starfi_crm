@@ -335,6 +335,73 @@ if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
     ];
 }
 
+// CONSTRUCCION INTELIGENTE DE COMPONENTES (Header Documento + Body)
+$components = [];
+
+// 1. Manejo del encabezado de tipo DOCUMENTO (Header)
+$document_url = $_POST['documento_url'] ?? $_POST['document_url'] ?? $_POST['url_documento'] ?? ($raw_json['documento_url'] ?? $raw_json['document_url'] ?? '');
+$media_id = $_POST['media_id'] ?? ($raw_json['media_id'] ?? '');
+$filename = $_POST['archivo_nombre'] ?? $_POST['filename'] ?? ($raw_json['archivo_nombre'] ?? 'Reporte_Oficial.pdf');
+
+// Si se recibe un archivo adjunto vía $_FILES
+if (empty($media_id) && empty($document_url) && isset($_FILES['documento']) && $_FILES['documento']['error'] === UPLOAD_ERR_OK) {
+    $upload_name = !empty($_FILES['documento']['name']) ? $_FILES['documento']['name'] : $filename;
+    $upload_mime = !empty($_FILES['documento']['type']) ? $_FILES['documento']['type'] : 'application/pdf';
+    $upload_path = $_FILES['documento']['tmp_name'];
+
+    // Subir a Meta Graph API /media para obtener el media_id oficial
+    $media_url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/media';
+    $ch_media = curl_init($media_url);
+    $cfile = new CURLFile($upload_path, $upload_mime, $upload_name);
+    curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch_media, CURLOPT_POST, true);
+    curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
+    curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
+        'messaging_product' => 'whatsapp',
+        'type' => $upload_mime,
+        'file' => $cfile
+    ]);
+    $res_media = curl_exec($ch_media);
+    curl_close($ch_media);
+
+    $json_media = json_decode($res_media, true);
+    if (!empty($json_media['id'])) {
+        $media_id = $json_media['id'];
+        $filename = $upload_name;
+    }
+}
+
+// Si tenemos media_id o document_url, construir el componente HEADER DOCUMENT
+if (!empty($media_id) || !empty($document_url)) {
+    $doc_obj = [
+        'filename' => $filename
+    ];
+    if (!empty($media_id)) {
+        $doc_obj['id'] = $media_id;
+    } else {
+        $doc_obj['link'] = $document_url;
+    }
+
+    $components[] = [
+        'type' => 'header',
+        'parameters' => [
+            [
+                'type' => 'document',
+                'document' => $doc_obj
+            ]
+        ]
+    ];
+}
+
+// 2. Componente BODY
+$components[] = [
+    'type' => 'body',
+    'parameters' => array_map(function($p) {
+        $str = trim((string)$p);
+        return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
+    }, $params)
+];
+
 $mensaje_payload = [
     'messaging_product' => 'whatsapp',
     'to' => $telefono,
@@ -344,15 +411,7 @@ $mensaje_payload = [
         'language' => [
             'code' => 'es'
         ],
-        'components' => [
-            [
-                'type' => 'body',
-                'parameters' => array_map(function($p) {
-                    $str = trim((string)$p);
-                    return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
-                }, $params)
-            ]
-        ]
+        'components' => $components
     ]
 ];
 $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
@@ -379,10 +438,16 @@ if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['
         $expected_count = intval($matches[1]);
         if ($expected_count > 0 && $expected_count < count($params)) {
             $params_sliced = array_slice($params, 0, $expected_count);
-            $mensaje_payload['template']['components'][0]['parameters'] = array_map(function($p) {
-                $str = trim((string)$p);
-                return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
-            }, $params_sliced);
+            foreach ($mensaje_payload['template']['components'] as &$comp_item) {
+                if ($comp_item['type'] === 'body') {
+                    $comp_item['parameters'] = array_map(function($p) {
+                        $str = trim((string)$p);
+                        return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
+                    }, $params_sliced);
+                    break;
+                }
+            }
+            unset($comp_item);
             
             $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
             
