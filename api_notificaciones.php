@@ -335,19 +335,67 @@ if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
     ];
 }
 
-// CONSTRUCCION INTELIGENTE DE COMPONENTES (Header Documento + Body)
+// CONSTRUCCION INTELIGENTE DE COMPONENTES (Header Documento / Imagen / Video + Body)
 $components = [];
 
-// 1. Manejo del encabezado de tipo DOCUMENTO (Header)
+// 1. Manejo del encabezado multimedia / documento (Header)
 $document_url = $_POST['documento_url'] ?? $_POST['document_url'] ?? $_POST['url_documento'] ?? ($raw_json['documento_url'] ?? $raw_json['document_url'] ?? '');
 $media_id = $_POST['media_id'] ?? ($raw_json['media_id'] ?? '');
-$filename = $_POST['archivo_nombre'] ?? $_POST['filename'] ?? ($raw_json['archivo_nombre'] ?? 'Reporte_Oficial.pdf');
+$filename = $_POST['archivo_nombre'] ?? $_POST['filename'] ?? ($raw_json['archivo_nombre'] ?? 'Documento.pdf');
+$upload_mime = 'application/pdf';
+$url_archivo_local = '';
 
-// Si se recibe un archivo adjunto vía $_FILES
-if (empty($media_id) && empty($document_url) && isset($_FILES['documento']) && $_FILES['documento']['error'] === UPLOAD_ERR_OK) {
-    $upload_name = !empty($_FILES['documento']['name']) ? $_FILES['documento']['name'] : $filename;
-    $upload_mime = !empty($_FILES['documento']['type']) ? $_FILES['documento']['type'] : 'application/pdf';
-    $upload_path = $_FILES['documento']['tmp_name'];
+// Si viene documento en base64 (REST JSON clients)
+$doc_b64 = $_POST['documento_base64'] ?? $raw_json['documento_base64'] ?? ($raw_json['pdf_base64'] ?? '');
+if (empty($media_id) && empty($document_url) && !empty($doc_b64)) {
+    $decoded_bin = base64_decode($doc_b64);
+    if ($decoded_bin !== false && strlen($decoded_bin) > 0) {
+        $tmp_b64_file = tempnam(sys_get_temp_dir(), 'wsap_doc_');
+        file_put_contents($tmp_b64_file, $decoded_bin);
+        
+        // Guardar copia local en uploads/documentos para la bandeja del CRM
+        $save_dir = __DIR__ . '/uploads/documentos';
+        if (!is_dir($save_dir)) @mkdir($save_dir, 0777, true);
+        $local_name = time() . '_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $filename);
+        @copy($tmp_b64_file, $save_dir . '/' . $local_name);
+        $url_archivo_local = 'uploads/documentos/' . $local_name;
+
+        // Subir a Meta Graph API /media para obtener el media_id oficial
+        $media_url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/media';
+        $ch_media = curl_init($media_url);
+        $cfile = new CURLFile($tmp_b64_file, 'application/pdf', $filename);
+        curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch_media, CURLOPT_POST, true);
+        curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
+        curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
+            'messaging_product' => 'whatsapp',
+            'type' => 'application/pdf',
+            'file' => $cfile
+        ]);
+        $res_media = curl_exec($ch_media);
+        curl_close($ch_media);
+        @unlink($tmp_b64_file);
+
+        $json_media = json_decode($res_media, true);
+        if (!empty($json_media['id'])) {
+            $media_id = $json_media['id'];
+        }
+    }
+}
+
+// Si se recibe un archivo adjunto vía $_FILES (multipart/form-data)
+$file_key = isset($_FILES['documento']) ? 'documento' : (isset($_FILES['file']) ? 'file' : (isset($_FILES['archivo']) ? 'archivo' : null));
+if (empty($media_id) && empty($document_url) && $file_key && $_FILES[$file_key]['error'] === UPLOAD_ERR_OK) {
+    $upload_name = !empty($_FILES[$file_key]['name']) ? $_FILES[$file_key]['name'] : $filename;
+    $upload_mime = !empty($_FILES[$file_key]['type']) ? $_FILES[$file_key]['type'] : 'application/pdf';
+    $upload_path = $_FILES[$file_key]['tmp_name'];
+
+    // Guardar copia local en uploads/documentos para la bandeja del CRM
+    $save_dir = __DIR__ . '/uploads/documentos';
+    if (!is_dir($save_dir)) @mkdir($save_dir, 0777, true);
+    $local_name = time() . '_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $upload_name);
+    @copy($upload_path, $save_dir . '/' . $local_name);
+    $url_archivo_local = 'uploads/documentos/' . $local_name;
 
     // Subir a Meta Graph API /media para obtener el media_id oficial
     $media_url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/media';
@@ -371,26 +419,36 @@ if (empty($media_id) && empty($document_url) && isset($_FILES['documento']) && $
     }
 }
 
-// Si tenemos media_id o document_url, construir el componente HEADER DOCUMENT
+// Si tenemos media_id o document_url, construir el componente HEADER (soporta DOCUMENT, IMAGE, VIDEO)
 if (!empty($media_id) || !empty($document_url)) {
-    $doc_obj = [
-        'filename' => $filename
-    ];
-    if (!empty($media_id)) {
-        $doc_obj['id'] = $media_id;
-    } else {
-        $doc_obj['link'] = $document_url;
-    }
+    $is_image = (strpos($upload_mime, 'image/') === 0);
+    $is_video = (strpos($upload_mime, 'video/') === 0);
 
-    $components[] = [
-        'type' => 'header',
-        'parameters' => [
-            [
-                'type' => 'document',
-                'document' => $doc_obj
-            ]
-        ]
-    ];
+    if ($is_image) {
+        $img_obj = [];
+        if (!empty($media_id)) $img_obj['id'] = $media_id;
+        else $img_obj['link'] = $document_url;
+        $components[] = [
+            'type' => 'header',
+            'parameters' => [['type' => 'image', 'image' => $img_obj]]
+        ];
+    } elseif ($is_video) {
+        $vid_obj = [];
+        if (!empty($media_id)) $vid_obj['id'] = $media_id;
+        else $vid_obj['link'] = $document_url;
+        $components[] = [
+            'type' => 'header',
+            'parameters' => [['type' => 'video', 'video' => $vid_obj]]
+        ];
+    } else {
+        $doc_obj = ['filename' => $filename];
+        if (!empty($media_id)) $doc_obj['id'] = $media_id;
+        else $doc_obj['link'] = $document_url;
+        $components[] = [
+            'type' => 'header',
+            'parameters' => [['type' => 'document', 'document' => $doc_obj]]
+        ];
+    }
 }
 
 // 2. Componente BODY
@@ -541,6 +599,8 @@ if($id_linea > 0) {
                 $error_detalle = "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
             } elseif ($code == 132000) {
                 $error_detalle = "Incompatibilidad de parámetros en plantilla (Error Meta 132000): " . ($details ? $details : $msg);
+            } elseif ($code == 132012) {
+                $error_detalle = "Incompatibilidad de formato en plantilla (Error Meta 132012): El encabezado de la plantilla requiere un documento o medio compatible. " . ($details ? $details : $msg);
             } elseif ($code == 130472) {
                 $error_detalle = "Restricción de Meta (Error 130472). El número forma parte de una prueba o restricción.";
             } else {
@@ -553,8 +613,13 @@ if($id_linea > 0) {
     
     $error_det_sql = !empty($error_detalle) ? "'" . $con->real_escape_string($error_detalle) . "'" : "NULL";
 
-    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, estado_envio, error_detalle, timestamp) 
-                 VALUES ($id_conversacion, '$id_mensaje_meta', 'EVENTO_SISTEMA', 'API_TRANSACCIONAL', '$contenido_esc', '$estado_envio', $error_det_sql, '$fecha_compra $hora_actual')");
+    $tipo_msg = (!empty($media_id) || !empty($document_url)) ? 'DOCUMENTO' : 'EVENTO_SISTEMA';
+    $url_archivo_val = !empty($url_archivo_local) ? $url_archivo_local : (!empty($document_url) ? $document_url : '');
+    $url_archivo_sql = !empty($url_archivo_val) ? "'" . $con->real_escape_string($url_archivo_val) . "'" : "NULL";
+    $mime_type_sql = (!empty($media_id) || !empty($document_url)) ? "'" . $con->real_escape_string($upload_mime) . "'" : "NULL";
+
+    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, url_archivo, mime_type, estado_envio, error_detalle, timestamp) 
+                 VALUES ($id_conversacion, '$id_mensaje_meta', '$tipo_msg', 'API_TRANSACCIONAL', '$contenido_esc', $url_archivo_sql, $mime_type_sql, '$estado_envio', $error_det_sql, '$fecha_compra $hora_actual')");
 }
 
 $response['meta_response'] = $estado;
