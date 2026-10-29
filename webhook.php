@@ -493,8 +493,8 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 $notificar_admin = true;
             }
 
-            // Enviar plantilla de notificación al Administrador únicamente si el Bot está Inactivo o solicitó Transferencia Humana
-            if ($notificar_admin) {
+            // Enviar plantilla de notificación interna ÚNICAMENTE si es STARFI CODE (id_sede = 15) para avisar a los técnicos de starfi_soporte
+            if ($notificar_admin && intval($id_sede) === 15) {
                 enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_db, $telefono_cliente);
             }
         }
@@ -870,17 +870,11 @@ function enviar_mensaje_contactos_sede_api($con, $linea_info, $telefono_cliente,
  */
 function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversacion, $nombre_cliente, $numero_cliente) {
 
-    if ($id_sede <= 0) return;
-    
-    // 1. Obtener id_empresa de la sede
-    $id_empresa = 0;
-    $qSedeInfo = mysqli_query($con, "SELECT id_empresa FROM sedes WHERE id = $id_sede LIMIT 1");
-    if ($qSedeInfo && $rowSede = mysqli_fetch_assoc($qSedeInfo)) {
-        $id_empresa = intval($rowSede['id_empresa']);
-    }
+    // DESHABILITADA para todas las sedes comerciales: solo activa para STARFI CODE (id_sede = 15) que avisa a los técnicos de starfi_soporte
+    if (intval($id_sede) !== 15) return;
 
-    // 2. Obtener línea de WhatsApp activa EXCLUSIVAMENTE para la sede
-    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+    // 1. Obtener línea de WhatsApp activa EXCLUSIVAMENTE para STARFI CODE (id_sede = 15)
+    $qLinea = mysqli_query($con, "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id_sede = 15 AND estado = 'ACTIVO' LIMIT 1");
     if (!$qLinea || mysqli_num_rows($qLinea) == 0) return;
     
     $rowLinea = mysqli_fetch_assoc($qLinea);
@@ -888,43 +882,50 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     $phone_number_id = $rowLinea['meta_app_id'];
     if (empty($meta_token) || empty($phone_number_id)) return;
 
-    // 3. Colección de números de destino ÚNICAMENTE para Administradores/Gerentes de ESTA SEDE o EMPRESA
-    $telefonos_destinatarios = [];
-    
-    // Primero: buscar administradores asignados específicamente a ESTA SEDE
-    $qAdmin = mysqli_query($con, "
-        SELECT DISTINCT up.telefono 
-        FROM usuario u 
-        JOIN usuario_perfil up ON u.id = up.id_usuario 
-        LEFT JOIN roles r ON u.rol = r.id 
-        WHERE u.estado = 'ACTIVO' 
-          AND u.id_sede = $id_sede
-          AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN', 'GERENTE') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN', 'GERENTE'))
-    ");
+    $normalizar_tel = function($raw) {
+        $t = preg_replace('/[^0-9]/', '', $raw ?? '');
+        if (strlen($t) == 11 && strpos($t, '0') === 0) {
+            $t = '58' . substr($t, 1);
+        } elseif (strlen($t) == 13 && strpos($t, '580') === 0) {
+            $t = '58' . substr($t, 3);
+        } elseif (strlen($t) == 10) {
+            $t = '58' . $t;
+        }
+        return (strlen($t) === 12) ? $t : '';
+    };
 
-    if ($qAdmin && mysqli_num_rows($qAdmin) > 0) {
-        while ($rowAd = mysqli_fetch_assoc($qAdmin)) {
-            $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
+    // 2. Colección de números de destino: Técnicos y Administradores de starfi_soporte
+    $telefonos_destinatarios = [];
+
+    $qSoporte = @mysqli_query($con, "
+        SELECT DISTINCT telefono 
+        FROM starfi_soporte.usuarios 
+        WHERE estado = 1 
+          AND rol IN ('tecnico', 'admin', 'master') 
+          AND telefono IS NOT NULL 
+          AND telefono != ''
+    ");
+    if ($qSoporte && mysqli_num_rows($qSoporte) > 0) {
+        while ($rowSop = mysqli_fetch_assoc($qSoporte)) {
+            $tel = $normalizar_tel($rowSop['telefono'] ?? '');
             if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
                 $telefonos_destinatarios[] = $tel;
             }
         }
     }
 
-    // Segundo: si no hay admin en esa sede específica, buscar administradores asignados a la MISMA EMPRESA (id_empresa)
-    if (empty($telefonos_destinatarios) && $id_empresa > 0) {
-        $qAdminEmpresa = mysqli_query($con, "
+    // Fallback a usuarios de STARFI CODE (id_sede = 15) en starfi_crm si no pudo consultar starfi_soporte
+    if (empty($telefonos_destinatarios)) {
+        $qAdmin = mysqli_query($con, "
             SELECT DISTINCT up.telefono 
             FROM usuario u 
             JOIN usuario_perfil up ON u.id = up.id_usuario 
-            LEFT JOIN roles r ON u.rol = r.id 
             WHERE u.estado = 'ACTIVO' 
-              AND u.id_empresa = $id_empresa
-              AND (r.nombre IN ('MASTER', 'ADMINISTRADOR', 'ADMIN') OR u.rol IN ('MASTER', 'ADMINISTRADOR', 'ADMIN'))
+              AND u.id_sede = 15
         ");
-        if ($qAdminEmpresa) {
-            while ($rowAd = mysqli_fetch_assoc($qAdminEmpresa)) {
-                $tel = preg_replace('/[^0-9]/', '', $rowAd['telefono'] ?? '');
+        if ($qAdmin && mysqli_num_rows($qAdmin) > 0) {
+            while ($rowAd = mysqli_fetch_assoc($qAdmin)) {
+                $tel = $normalizar_tel($rowAd['telefono'] ?? '');
                 if (!empty($tel) && !in_array($tel, $telefonos_destinatarios)) {
                     $telefonos_destinatarios[] = $tel;
                 }
@@ -938,7 +939,7 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     $cliente_nombre = (!empty($nombre_cliente) && strtolower($nombre_cliente) !== 'cliente') ? "$nombre_cliente ($numero_cliente)" : $numero_cliente;
     $texto_notificacion = "Tienes un mensaje por responder de $cliente_nombre";
     
-    // 4. Enviar plantilla 'starfi_notificacion_interna' vía API de Meta únicamente a Administradores
+    // 4. Enviar plantilla 'starfi_notificacion_interna' vía API de Meta a los técnicos de starfi_soporte
     $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
     
     foreach ($telefonos_destinatarios as $tel_dest) {

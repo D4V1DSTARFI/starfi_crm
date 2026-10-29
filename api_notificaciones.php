@@ -11,36 +11,63 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     $con = getDbConnection();
     
     $id_sede = $_POST['id_sede'] ?? '';
-    $token = $_POST['token'] ?? '';
-    $instance_id = $_POST['instance_id'] ?? '';
-    $phone_number = $_POST['phone_number'] ?? '';
+    $token = trim($_POST['token'] ?? '');
+    $instance_id = trim($_POST['instance_id'] ?? '');
+    $phone_number = preg_replace('/[^0-9]/', '', $_POST['phone_number'] ?? '');
     $activo = isset($_POST['activo']) ? intval($_POST['activo']) : 1;
     
-    if (empty($id_sede)) {
+    if (empty($id_sede) && empty($token)) {
         echo json_encode(['status' => 'error', 'message' => 'Falta id_sede para sincronizar']);
         exit;
     }
     
-    $getCrmSedeId = function($legacy_id) {
-        if ($legacy_id == 23) { return 24; }
-        return intval($legacy_id) + 2;
-    };
-    $crm_sede_id = $getCrmSedeId($id_sede);
-    $crm_token = $con->real_escape_string($token);
+    $crm_token_esc = $con->real_escape_string($token);
+    $crm_sede_id = 0;
+
+    // 1. Priorizar identificar la sede por su api_token real de 64 caracteres
+    if (!empty($token) && strpos($token, 'EAA') !== 0) {
+        $q_sede_tok = $con->query("SELECT id FROM sedes WHERE api_token = '$crm_token_esc' LIMIT 1");
+        if ($q_sede_tok && $q_sede_tok->num_rows > 0) {
+            $crm_sede_id = intval($q_sede_tok->fetch_assoc()['id']);
+        }
+    }
+
+    // 2. Fallback a mapeo de id_sede únicamente si no se identificó por api_token y la sede existe
+    if ($crm_sede_id <= 0 && !empty($id_sede)) {
+        $getCrmSedeId = function($legacy_id) {
+            if ($legacy_id == 23) { return 24; }
+            return intval($legacy_id) + 2;
+        };
+        $candidate_id = $getCrmSedeId($id_sede);
+        $check_sede_crm = $con->query("SELECT id FROM sedes WHERE id = $candidate_id LIMIT 1");
+        if ($check_sede_crm && $check_sede_crm->num_rows > 0) {
+            $crm_sede_id = $candidate_id;
+        }
+    }
+
+    if ($crm_sede_id <= 0) {
+        echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada en el CRM']);
+        $con->close();
+        exit;
+    }
+
+    // Nunca sobrescribir meta_token con un api_token de 64 caracteres; usar META_GLOBAL_TOKEN
+    $valid_meta_token = (strpos($token, 'EAA') === 0) ? $token : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+    $crm_meta_token = $con->real_escape_string($valid_meta_token);
     $crm_instance_id = $con->real_escape_string($instance_id);
     $crm_phone_number = $con->real_escape_string($phone_number);
     $crm_estado = ($activo === 1) ? 'ACTIVO' : 'INACTIVO';
-    
-    $check_sede_crm = $con->query("SELECT id FROM sedes WHERE id = $crm_sede_id");
-    if ($check_sede_crm && $check_sede_crm->num_rows === 0) {
-        $con->query("INSERT INTO sedes (id, id_empresa, nombre_sede, estado) VALUES ($crm_sede_id, 1, 'SEDE $crm_sede_id', 'ACTIVO')");
-    }
 
-    $check_crm = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $crm_sede_id");
+    $check_crm = $con->query("SELECT id, id_negocio, meta_app_id, numero_telefono FROM lineas_whatsapp WHERE id_sede = $crm_sede_id LIMIT 1");
     if ($check_crm && $check_crm->num_rows > 0) {
-        $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_token', meta_app_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
+        $existing = $check_crm->fetch_assoc();
+        if (!empty($existing['id_negocio']) && !empty($existing['meta_app_id'])) {
+            $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_meta_token', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
+        } else {
+            $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_meta_token', meta_app_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
+        }
     } else {
-        $q = "INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, estado) VALUES ($crm_sede_id, 'API WSAP AUTO SYNCED', '$crm_phone_number', '$crm_instance_id', '$crm_token', '$crm_estado')";
+        $q = "INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, estado) VALUES ($crm_sede_id, 'API WSAP AUTO SYNCED', '$crm_phone_number', '$crm_instance_id', '$crm_meta_token', '$crm_estado')";
     }
     
     if ($con->query($q)) {
@@ -184,38 +211,68 @@ $id_linea = 0;
 $id_empresa = 1;
 $crm_id_sede = null;
 
+// Bloqueo explícito de sedes pausadas (MADETEK y MADEPEG)
+$empresa_upper = strtoupper(trim($nombre_empresa));
+$tokens_pausados = [
+    'cdaeb739d625bb8321f3054e596e4ae585241023409fa84c8249b507c9253550', // MADETEK CRM
+    '876350aeb378b4429dd158b031564cc0fdaa845adda5b70c6be8092b09128fff', // MADETEK Legacy
+    'adfe3e0937e268c21014a374cb7613fb2d2a61b4205ba85a8f5f304eceda0e8b'  // MADEPEG Legacy
+];
+if (
+    strpos($empresa_upper, 'MADETEK') !== false ||
+    strpos($empresa_upper, 'MADEPEG') !== false ||
+    (!empty($verify_token) && in_array(strtolower(trim($verify_token)), $tokens_pausados, true))
+) {
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Envío denegado: La sede (MADETEK / MADEPEG) se encuentra pausada y deshabilitada para enviar mensajes.'
+    ]);
+    $con->close();
+    exit;
+}
+
+$sede_inactiva_detectada = false;
+
 // 1. Intentar buscar por token de verificación único (api_token de sedes)
 if (!empty($verify_token)) {
-    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.id as crm_id_sede FROM sedes s JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
+    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, s.estado as estado_sede, s.id_empresa, s.id as crm_id_sede FROM sedes s LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? LIMIT 1");
     if ($stmt_token) {
         $stmt_token->bind_param("s", $verify_token);
         $stmt_token->execute();
         $q_linea = $stmt_token->get_result();
         if ($q_linea && $q_linea->num_rows > 0) {
             $row = $q_linea->fetch_assoc();
-            $telefonoID = $row['meta_app_id'];
-            $token = $row['meta_token'];
-            $id_linea = $row['id_linea'];
-            $id_empresa = $row['id_empresa'];
-            $crm_id_sede = $row['crm_id_sede'];
+            if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
+                $sede_inactiva_detectada = true;
+            } else {
+                $telefonoID = $row['meta_app_id'];
+                $token = $row['meta_token'];
+                $id_linea = $row['id_linea'];
+                $id_empresa = $row['id_empresa'];
+                $crm_id_sede = $row['crm_id_sede'];
+            }
         }
         $stmt_token->close();
     }
 }
 
 // 2. Intentar coincidencia por nombre explícito de empresa/sede si se envió en los datos
-if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
+if (empty($token) && !$sede_inactiva_detectada && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
     $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
-    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM lineas_whatsapp l JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO'");
+    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, s.estado as estado_sede, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id");
     if ($q_all && $q_all->num_rows > 0) {
         while ($row = $q_all->fetch_assoc()) {
             $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
-            if (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false) {
-                $telefonoID = $row['meta_app_id'];
-                $token = $row['meta_token'];
-                $id_linea = $row['id_linea'];
-                $id_empresa = $row['id_empresa'];
-                $crm_id_sede = $row['crm_id_sede'];
+            if (!empty($clean_db) && (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false)) {
+                if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
+                    $sede_inactiva_detectada = true;
+                } else {
+                    $telefonoID = $row['meta_app_id'];
+                    $token = $row['meta_token'];
+                    $id_linea = $row['id_linea'];
+                    $id_empresa = $row['id_empresa'];
+                    $crm_id_sede = $row['crm_id_sede'];
+                }
                 break;
             }
         }
@@ -223,23 +280,37 @@ if (empty($token) && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Emp
 }
 
 // 3. Intentar buscar por ID de Sede preciso
-if (empty($token) && !empty($id_sede)) {
+if (empty($token) && !$sede_inactiva_detectada && !empty($id_sede)) {
     $raw_id = intval($id_sede);
     $target_crm_id = ($raw_id == 23) ? 24 : ($raw_id > 23 ? $raw_id : $raw_id + 2);
-    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) AND l.estado = 'ACTIVO' LIMIT 1");
+    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, COALESCE(s.estado, 'ACTIVO') as estado_sede, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) LIMIT 1");
     if ($q_linea && $q_linea->num_rows > 0) {
         $row = $q_linea->fetch_assoc();
-        $telefonoID = $row['meta_app_id'];
-        $token = $row['meta_token'];
-        $id_linea = $row['id_linea'];
-        $id_empresa = $row['id_empresa'];
-        $crm_id_sede = $row['crm_id_sede'];
+        if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
+            $sede_inactiva_detectada = true;
+        } else {
+            $telefonoID = $row['meta_app_id'];
+            $token = $row['meta_token'];
+            $id_linea = $row['id_linea'];
+            $id_empresa = $row['id_empresa'];
+            $crm_id_sede = $row['crm_id_sede'];
+        }
     }
+}
+
+// Si la sede fue identificada pero está INACTIVA/PAUSADA, rechazar inmediatamente sin usar fallback
+if ($sede_inactiva_detectada) {
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'La sede solicitada se encuentra pausada o inactiva para el envío de mensajes.'
+    ]);
+    $con->close();
+    exit;
 }
 
 // 4. Intentar buscar por token de Meta (si se envió)
 if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' LIMIT 1");
+    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' AND COALESCE(s.estado, 'ACTIVO') = 'ACTIVO' LIMIT 1");
     if ($stmt_meta) {
         $stmt_meta->bind_param("s", $meta_token_val);
         $stmt_meta->execute();
@@ -256,9 +327,9 @@ if (empty($token) && !empty($meta_token_val)) {
     }
 }
 
-// 5. Fallback a la primera línea activa del CRM si no se encontró coincidencia por sede
-if (empty($token)) {
-    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' ORDER BY l.id ASC LIMIT 1");
+// 5. Fallback a la primera línea activa del CRM solo si no se especificó sede/empresa alguna
+if (empty($token) && empty($verify_token) && empty($id_sede) && (empty($nombre_empresa) || $nombre_empresa === 'Nuestra Empresa')) {
+    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' AND COALESCE(s.estado, 'ACTIVO') = 'ACTIVO' ORDER BY l.id ASC LIMIT 1");
     if ($q_active && $q_active->num_rows > 0) {
         $row = $q_active->fetch_assoc();
         $telefonoID = $row['meta_app_id'];
@@ -268,7 +339,6 @@ if (empty($token)) {
         $crm_id_sede = $row['crm_id_sede'];
     }
 }
-
 
 // Si la Sede no posee una línea de WhatsApp activa configurada, DENEGAR el envío
 if (empty($token) || empty($telefonoID)) {
