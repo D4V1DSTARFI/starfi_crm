@@ -133,9 +133,9 @@ switch ($action) {
 
         // 1.1 Cargar sedes y su línea de WhatsApp asignada + configuración de flujo diario
         $where_sede = (!$es_global && $id_sede_usuario > 0) ? "WHERE s.id = $id_sede_usuario" : "";
-        $sql_sedes = "SELECT s.id, s.nombre_sede, s.ciudad, s.bot_activo,
-                             l.id AS id_linea, l.numero_telefono, l.meta_app_id, l.waba_id, l.meta_token, l.estado AS estado_linea,
-                             IFNULL(q.limite_diario_mensajes, 250) AS limite_diario_mensajes,
+        $sql_sedes = "SELECT s.id, s.nombre_sede, s.ciudad, s.bot_activo, s.estado AS estado_sede,
+                             l.id AS id_linea, l.descripcion AS descripcion_linea, l.numero_telefono, l.meta_app_id, l.id_negocio, l.meta_token, l.estado AS estado_linea, l.limite_solicitudes,
+                             IFNULL(q.limite_diario_mensajes, IFNULL(l.limite_solicitudes, 250)) AS limite_diario_mensajes,
                              IFNULL(q.cadencia_ms, 1000) AS cadencia_ms,
                              IFNULL(q.costo_marketing_usd, 0.0700) AS costo_marketing_usd,
                              IFNULL(q.costo_utility_usd, 0.0150) AS costo_utility_usd,
@@ -151,7 +151,7 @@ switch ($action) {
                       LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id AND l.estado = 'ACTIVO'
                       LEFT JOIN campanas_cuotas_sede q ON q.id_sede = s.id
                       $where_sede
-                      ORDER BY s.nombre_sede ASC";
+                      ORDER BY (l.id IS NULL) ASC, s.nombre_sede ASC";
         $res_sedes = mysqli_query($con, $sql_sedes);
         $sedes = [];
         if ($res_sedes) {
@@ -160,15 +160,17 @@ switch ($action) {
                 $hoy = intval($row['enviados_hoy']);
                 $disp = max(0, $lim - $hoy);
                 $pct = min(100, round(($hoy / $lim) * 100, 1));
+                $token_efectivo = !empty($row['meta_token']) ? $row['meta_token'] : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
                 $sedes[] = [
                     'id' => intval($row['id']),
                     'nombre_sede' => $row['nombre_sede'],
                     'ciudad' => $row['ciudad'] ?? '',
                     'bot_activo' => intval($row['bot_activo'] ?? 0) === 1,
                     'id_linea' => intval($row['id_linea'] ?? 0),
-                    'numero_telefono' => $row['numero_telefono'] ?? 'Sin número asignado',
-                    'tiene_linea_activa' => (!empty($row['id_linea']) && !empty($row['meta_app_id']) && !empty($row['meta_token'])),
-                    'tiene_waba' => !empty($row['waba_id']),
+                    'descripcion_linea' => $row['descripcion_linea'] ?? '',
+                    'numero_telefono' => !empty($row['numero_telefono']) ? $row['numero_telefono'] : 'Sin número asignado',
+                    'tiene_linea_activa' => (!empty($row['id_linea']) && !empty($row['meta_app_id']) && !empty($token_efectivo)),
+                    'tiene_waba' => !empty($row['id_negocio']),
                     'limite_diario_mensajes' => $lim,
                     'cadencia_ms' => intval($row['cadencia_ms']),
                     'costo_marketing_usd' => floatval($row['costo_marketing_usd']),
@@ -351,14 +353,14 @@ switch ($action) {
             exit;
         }
 
-        $res_l = mysqli_query($con, "SELECT waba_id, meta_token, numero_telefono FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+        $res_l = mysqli_query($con, "SELECT id_negocio, meta_token, numero_telefono FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
         $templates = [];
         $tiene_starfi_directa = false;
 
         if ($res_l && mysqli_num_rows($res_l) > 0) {
             $lin = mysqli_fetch_assoc($res_l);
-            $waba_id = trim($lin['waba_id'] ?? '');
-            $token = trim($lin['meta_token'] ?? '');
+            $waba_id = trim($lin['id_negocio'] ?? '');
+            $token = !empty($lin['meta_token']) ? trim($lin['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
 
             if (!empty($waba_id) && !empty($token)) {
                 $url = "https://graph.facebook.com/v23.0/{$waba_id}/message_templates?fields=name,status,language,category,components&limit=100";
@@ -448,20 +450,21 @@ switch ($action) {
         }
 
         // Verificar que la sede tenga línea activa
-        $res_lin = mysqli_query($con, "SELECT id, numero_telefono, meta_app_id, meta_token FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
+        $res_lin = mysqli_query($con, "SELECT id, numero_telefono, meta_app_id, meta_token, limite_solicitudes FROM lineas_whatsapp WHERE id_sede = $id_sede AND estado = 'ACTIVO' LIMIT 1");
         if (!$res_lin || mysqli_num_rows($res_lin) === 0) {
             echo json_encode(['status' => 'error', 'message' => 'La sede seleccionada no posee una línea oficial de WhatsApp activa.']);
             exit;
         }
         $linea = mysqli_fetch_assoc($res_lin);
-        if (empty($linea['meta_app_id']) || empty($linea['meta_token'])) {
+        $token_efectivo = !empty($linea['meta_token']) ? trim($linea['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+        if (empty($linea['meta_app_id']) || empty($token_efectivo)) {
             echo json_encode(['status' => 'error', 'message' => 'La línea de WhatsApp de esta sede no tiene configurado el Phone Number ID o Token de Meta.']);
             exit;
         }
 
         // Obtener cuota diaria de la sede
         $res_q = mysqli_query($con, "SELECT limite_diario_mensajes, cadencia_ms FROM campanas_cuotas_sede WHERE id_sede = $id_sede LIMIT 1");
-        $limite_diario = 250;
+        $limite_diario = max(1, intval($linea['limite_solicitudes'] ?? 250));
         $cadencia_ms = 1000;
         if ($res_q && mysqli_num_rows($res_q) > 0) {
             $rq = mysqli_fetch_assoc($res_q);
@@ -642,7 +645,7 @@ switch ($action) {
         $linea = mysqli_fetch_assoc($res_lin);
         $id_linea = intval($linea['id']);
         $phone_id = trim($linea['meta_app_id']);
-        $token = trim($linea['meta_token']);
+        $token = !empty($linea['meta_token']) ? trim($linea['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
 
         // Formatear teléfono destino (normalizar 04xx Venezuela a 584xx)
         $telefono_limpio = preg_replace('/[^0-9]/', '', $dest['telefono']);
