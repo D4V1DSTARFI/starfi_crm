@@ -846,6 +846,42 @@ function crearPlantillaNotificacionInterna() {
     });
 }
 
+function crearPlantillaDifusionDirecta() {
+    let id_sede = $('#plantillas_id_sede').val();
+
+    Swal.fire({
+        title: '¿Auto-Crear Plantilla de Difusión (starfi_difusion_directa)?',
+        text: "Se enviará a Meta la plantilla oficial 'starfi_difusion_directa' con 3 variables ({{1}} Nombre, {{2}} Cuerpo, {{3}} Eslogan) y el pie de página 'Servicio de mensajería inteligente de STARFI CRM'.",
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#E85B14',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Sí, crear en Meta'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            Swal.fire({ title: 'Enviando a Meta...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'create_broadcast_template', id_sede: id_sede },
+                success: function(res) {
+                    if (res.status === 'success') {
+                        Swal.fire('¡Plantilla Creada!', 'La plantilla starfi_difusion_directa fue registrada en Meta y sincronizada exitosamente.', 'success');
+                        sincronizarPlantillasMeta();
+                    } else {
+                        Swal.fire('Error', res.message, 'error');
+                    }
+                },
+                error: function() {
+                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+                }
+            });
+        }
+    });
+}
+
 function eliminarPlantilla(name) {
     Swal.fire({
         title: '¿Eliminar Plantilla?',

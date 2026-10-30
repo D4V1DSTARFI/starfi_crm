@@ -14,7 +14,7 @@ class IaConnector {
 
         $sql = "SELECT origen, contenido, tipo 
                 FROM mensajes_y_eventos 
-                WHERE id_conversacion = $idConversacion AND tipo IN ('TEXTO', 'IMAGEN')
+                WHERE id_conversacion = $idConversacion AND tipo IN ('TEXTO', 'IMAGEN', 'EVENTO_SISTEMA')
                 ORDER BY id DESC 
                 LIMIT $limite";
 
@@ -32,15 +32,34 @@ class IaConnector {
         $historial = [];
         foreach ($filas as $msg) {
             $origenUpper = strtoupper($msg['origen']);
-            $role = ($origenUpper === 'CLIENTE') ? 'user' : 'model';
             $texto = trim($msg['contenido'] ?? '');
-            
-            if (!empty($texto)) {
-                $historial[] = [
-                    'role' => $role,
-                    'parts' => [['text' => $texto]]
-                ];
+            if (empty($texto)) continue;
+
+            // Ignorar eventos internos de sistema que no sean plantillas enviadas al cliente
+            if ($msg['tipo'] === 'EVENTO_SISTEMA' && strpos($texto, 'Envío dinámico de plantilla:') === false && strpos($texto, 'Difusión enviada:') === false) {
+                continue;
             }
+
+            // Si es una plantilla de difusión enviada al cliente, reconstruir el texto legible para que la IA tenga contexto total
+            if (strpos($texto, 'Envío dinámico de plantilla:') === 0) {
+                if (preg_match('/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*\])/s', $texto, $m)) {
+                    $tplName = trim($m[1]);
+                    $params = json_decode($m[2], true);
+                    if (is_array($params)) {
+                        if ($tplName === 'starfi_difusion_directa' && count($params) >= 3) {
+                            $texto = "👋¡Hola {$params[0]}!\nHoy queremos {$params[1]}.\nRecuerda que en {$params[2]}.\n📲 Responde a este mensaje para obtener más información👇";
+                        } else {
+                            $texto = "Mensaje de plantilla ($tplName) enviado al cliente: " . implode(' | ', $params);
+                        }
+                    }
+                }
+            }
+
+            $role = ($origenUpper === 'CLIENTE') ? 'user' : 'model';
+            $historial[] = [
+                'role' => $role,
+                'parts' => [['text' => $texto]]
+            ];
         }
 
         return $historial;
@@ -49,7 +68,7 @@ class IaConnector {
     /**
      * Construye el payload JSON estándar compatible con Google Gemini / Gemma REST API.
      */
-    public static function construirPayload(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT): array {
+    public static function construirPayload(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT, string $nombreCliente = ''): array {
         $nombreAgente = !empty($configIa['agente_nombre']) ? $configIa['agente_nombre'] : 'Gema';
         $instruccionesBase = !empty($configIa['agente_instrucciones']) 
             ? $configIa['agente_instrucciones'] 
@@ -93,7 +112,7 @@ class IaConnector {
         if ($nombreValido) {
             $systemPrompt .= "1. CLIENTE IDENTIFICADO Y REGISTRADO (*" . $nombreCliente . "*): El cliente ya existe en el sistema y su nombre es *" . $nombreCliente . "*.\n";
             $systemPrompt .= "   - Salúdalo cordialmente combinando el saludo según la hora del día (" . $saludoTemporal . ") y su nombre (ejemplo: '" . $saludoTemporal . " " . $nombreCliente . ", ¿en qué te puedo colaborar el día de hoy?' o '¡Hola " . $nombreCliente . ", " . strtolower($saludoTemporal) . "! ¿En qué te puedo ayudar hoy?').\n";
-            $systemPrompt .= "   - Atiende sus dudas e inquietudes sobre servicios e información de la sede de forma directa, amable y personalizada.\n";
+            $systemPrompt .= "   - Si la conversación comenzó con una difusión o invitación enviada por nosotros, responde directamente en contexto con esa invitación/promoción de forma cálida y personalizada.\n";
         } else {
             $systemPrompt .= "1. PRIMER MENSAJE DE CLIENTE NUEVO (SOLICITAR NOMBRE OBLIGATORIAMENTE): Aún NO conocemos el nombre de este cliente.\n";
             $systemPrompt .= "   - En tu PRIMER mensaje tu objetivo es únicamente: dar la bienvenida usando el saludo según la hora del día ('" . $saludoTemporal . " 🖐️'), presentarte (ej. 'Soy " . $nombreAgente . ", la asistente virtual de STARFI.') y PREGUNTAR SU NOMBRE (ej. 'Para poder atenderte mejor, ¿por favor me indicas tu nombre?').\n";
@@ -124,6 +143,16 @@ class IaConnector {
                 $role = ($msg['role'] === 'model') ? 'model' : 'user';
                 $text = self::utf8Clean(trim($msg['parts'][0]['text'] ?? ''));
                 if (empty($text)) continue;
+
+                // Si el primer mensaje de la conversación fue enviado por el CRM (ej. Difusión Masiva),
+                // insertamos un turno inicial de contexto 'user' para cumplir la regla de Gemini (primer turno = user).
+                if (empty($contents) && $role === 'model') {
+                    $contents[] = [
+                        'role' => 'user',
+                        'parts' => [['text' => '[Inicio de conversación por campaña de difusión oficial]']]
+                    ];
+                    $lastRole = 'user';
+                }
 
                 if ($role === $lastRole && !empty($contents)) {
                     $idx = count($contents) - 1;
@@ -195,8 +224,8 @@ class IaConnector {
             }
         }
 
-        $modelo = !empty($configIa['modelo_ia']) ? $configIa['modelo_ia'] : 'gemini-3.6-flash';
-        $payload = self::construirPayload($configIa, $historialMensajes, $mensajeActual, $contextoJIT);
+        $modelo = !empty($configIa['modelo_ia']) ? $configIa['modelo_ia'] : 'gemini-2.0-flash';
+        $payload = self::construirPayload($configIa, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
 
         $jsonPayload = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE);
         if ($jsonPayload === false) {
@@ -272,8 +301,8 @@ class IaConnector {
     /**
      * Método abreviado que retorna solo el texto o null.
      */
-    public static function generarRespuesta(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT): ?string {
-        $res = self::generarRespuestaConDetalles($configIa, $historialMensajes, $mensajeActual, $contextoJIT);
+    public static function generarRespuesta(array $configIa, array $historialMensajes, string $mensajeActual, string $contextoJIT, string $nombreCliente = ''): ?string {
+        $res = self::generarRespuestaConDetalles($configIa, $historialMensajes, $mensajeActual, $contextoJIT, $nombreCliente);
         return $res['success'] ? $res['text'] : null;
     }
 }

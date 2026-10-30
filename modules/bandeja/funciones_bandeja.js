@@ -1164,28 +1164,46 @@ function renderMessages(messages, scrollToBottom) {
                 try {
                     let match = msg.contenido.match(/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*\])/);
                     if (match) {
-                        let tplName = match[1];
+                        let tplName = match[1].trim();
                         let params = JSON.parse(match[2]);
-                        let paramsHtml = params.map((p, i) => `
-                            <div style="display:flex; align-items:baseline; margin-bottom:2px;">
-                                <span style="color:#9CA3AF; font-size:0.75rem; width:15px;">${i+1}.</span> 
-                                <span style="font-weight:600; color:#374151;">${p}</span>
-                            </div>
-                        `).join('');
-                        
-                        displayContent = `
-                            <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
-                                <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                                    <i class="fa-solid fa-bolt"></i> Plantilla: ${tplName.replace(/_/g, ' ')}
+                        if (tplName === 'starfi_difusion_directa' && params.length >= 3) {
+                            displayContent = `
+                                <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
+                                    <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
+                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${tplName}
+                                    </div>
+                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B; white-space:pre-line;">👋¡Hola <strong>${params[0]}</strong>!
+Hoy queremos ${params[1]}.
+Recuerda que en ${params[2]}.
+📲 <strong>Responde a este mensaje para obtener más información</strong>👇</div>
                                 </div>
-                                <div style="font-size:0.85rem; line-height:1.4;">
-                                    ${paramsHtml}
+                                <div style="font-size:0.7rem; color:#9CA3AF; margin-top:6px; display:flex; align-items:center; justify-content:space-between; border-top:1px solid #F3F4F6; padding-top:6px;">
+                                    <span>Servicio de mensajería inteligente de STARFI CRM</span>
+                                    <i class="fa-solid fa-paper-plane text-primary"></i>
                                 </div>
-                            </div>
-                            <div style="font-size:0.7rem; color:#9CA3AF; margin-top:8px; display:flex; align-items:center; gap:4px; border-top:1px solid #F3F4F6; padding-top:6px;">
-                                <i class="fa-solid fa-shield-check text-success"></i> Mensaje de Sistema
-                            </div>
-                        `;
+                            `;
+                        } else {
+                            let paramsHtml = params.map((p, i) => `
+                                <div style="display:flex; align-items:baseline; margin-bottom:2px;">
+                                    <span style="color:#9CA3AF; font-size:0.75rem; width:15px;">${i+1}.</span> 
+                                    <span style="font-weight:600; color:#374151;">${p}</span>
+                                </div>
+                            `).join('');
+                            
+                            displayContent = `
+                                <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
+                                    <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
+                                        <i class="fa-solid fa-bolt"></i> Plantilla: ${tplName.replace(/_/g, ' ')}
+                                    </div>
+                                    <div style="font-size:0.85rem; line-height:1.4;">
+                                        ${paramsHtml}
+                                    </div>
+                                </div>
+                                <div style="font-size:0.7rem; color:#9CA3AF; margin-top:8px; display:flex; align-items:center; gap:4px; border-top:1px solid #F3F4F6; padding-top:6px;">
+                                    <i class="fa-solid fa-shield-check text-success"></i> Mensaje de Sistema
+                                </div>
+                            `;
+                        }
                         icon = ''; 
                     }
                 } catch(e) {}

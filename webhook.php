@@ -456,9 +456,19 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
 
                         $contextoJIT = IaContextEngine::obtenerContextoInventario($con, $id_sede, $cuerpo_mensaje);
                         $historial = IaConnector::recuperarHistorialMensajes($con, $id_conversacion, 12);
-                        $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT);
+                        $respuestaIa = IaConnector::generarRespuesta($configIa, $historial, $cuerpo_mensaje, $contextoJIT, (string)($nombre_db ?? ''));
 
                         if (!empty($respuestaIa)) {
+                            if (preg_match('/\[GUARDAR_NOMBRE:\s*([^\]]+)\]/i', $respuestaIa, $mNombre)) {
+                                $nuevoNombre = trim($mNombre[1]);
+                                if (!empty($nuevoNombre)) {
+                                    $nuevoNombreEsc = mysqli_real_escape_string($con, $nuevoNombre);
+                                    mysqli_query($con, "UPDATE clientes_contactos SET nombre = '$nuevoNombreEsc' WHERE id = $id_cliente");
+                                    $nombre_db = $nuevoNombre;
+                                }
+                                $respuestaIa = trim(str_replace($mNombre[0], '', $respuestaIa));
+                            }
+
                             if (strpos($respuestaIa, '[SOLICITAR_AGENTE_HUMANO]') !== false) {
                                 $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
                                 mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
