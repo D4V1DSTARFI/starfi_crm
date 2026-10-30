@@ -375,14 +375,12 @@ function updateSelectionUI() {
 // =========================================================================
 
 function openBroadcastModal() {
-    if (selectedClientIds.size > 0) {
-        $('#bcDirectoryScope').val('selected');
-    } else {
-        $('#bcDirectoryScope').val('sede');
-    }
-    loadBroadcastConfig();
-    updateBroadcastPreview();
-    $('#broadcastModal').modal('show');
+    try {
+        if (selectedClientIds && selectedClientIds.size > 0) {
+            sessionStorage.setItem('starfi_campana_preseleccion', JSON.stringify(Array.from(selectedClientIds)));
+        }
+    } catch (e) {}
+    window.location.href = '../campanas/campanas.php';
 }
 
 window.loadBroadcastConfig = function() {

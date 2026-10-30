@@ -1,0 +1,225 @@
+﻿
+> function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pendiente_id) {
+      if (!$id_sede || !$fecha_desde || !$fecha_hasta) {
+          return ['status' => 'error', 'message' => 'Faltan parÃ¡metros'];
+      }
+  
+      $start_ts = strtotime($fecha_desde . " 00:00:00");
+      $end_ts = strtotime($fecha_hasta . " 23:59:59");
+      
+      // Obtener WABA ID
+      $res = $con->query("SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = $id_sede LIMIT 1");
+      if (!$res || !($row = $res->fetch_assoc()) || empty($row['id_negocio'])) {
+          return ['status' => 'error', 'message' => 'Sede sin WABA configurada'];
+      }
+      $waba_id = $row['id_negocio'];
+  
+      // Obtener Tarifa
+      $tipo_tarifa = 'PORCENTAJE';
+      $valor_tarifa = 10.00;
+      $res = $con->query("SELECT tipo_tarifa, valor FROM waba_tarifas_sede WHERE id_sede = $id_sede");
+      if ($res && $row = $res->fetch_assoc()) {
+          $tipo_tarifa = $row['tipo_tarifa'];
+          $valor_tarifa = floatval($row['valor']);
+      }
+      
+      // API Call
+      $fields = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY),analyt
+ics.start($start_ts).end($end_ts).granularity(DAY)";
+      $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
+      
+      $curl = curl_init();
+      curl_setopt($curl, CURLOPT_URL, $url);
+      curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: 
+application/json"]);
+      curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+      $raw_exec = curl_exec($curl);
+      $resp = json_decode($raw_exec, true);
+      curl_close($curl);
+      
+      if (isset($resp['error'])) {
+          return ['status' => 'error', 'message' => 'Error de Meta API: ' . $resp['error']['message']];
+      }
+      
+      $costo_meta = 0;
+      $costo_meta_por_categoria = [
+          'MARKETING' => 0.0,
+          'UTILITY' => 0.0,
+          'AUTHENTICATION' => 0.0,
+          'SERVICE' => 0.0
+      ];
+  
+      if(isset($resp['pricing_analytics']['data'][0]['data_points'])) {
+          foreach($resp['pricing_analytics']['data'][0]['data_points'] as $dp) {
+              $cat = strtoupper($dp['pricing_category'] ?? 'MARKETING');
+              $c = floatval($dp['cost'] ?? 0);
+              if (!isset($costo_meta_por_categoria[$cat])) {
+                  $costo_meta_por_categoria[$cat] = 0.0;
+              }
+              $costo_meta_por_categoria[$cat] += $c;
+              $costo_meta += $c;
+          }
+      }
+      
+      $mensajes_totales = 0;
+      if(isset($resp['analytics']['data_points'])) {
+          foreach($resp['analytics']['data_points'] as $dp) {
+              if (isset($dp['sent'])) $mensajes_totales += intval($dp['sent']);
+          }
+      } else if(isset($resp['analytics']['data'][0]['data_points'])) {
+          foreach($resp['analytics']['data'][0]['data_points'] as $dp) {
+              if (isset($dp['sent'])) $mensajes_totales += intval($dp['sent']);
+          }
+      }
+      
+      $costo_final = 0;
+      $margen = 0;
+      
+      if ($tipo_tarifa === 'PORCENTAJE') {
+          $costo_final = $costo_meta * (1 + ($valor_tarifa / 100));
+          $margen = $costo_final - $costo_meta;
+      } else if ($tipo_tarifa === 'FIJA') {
+          $margen = $mensajes_totales * $valor_tarifa;
+          $costo_final = $costo_meta + $margen;
+      } else if ($tipo_tarifa === 'PORCENTAJE_VOLUMEN') {
+          $p = $mensajes_totales > 1000 ? ($valor_tarifa / 2) : $valor_tarifa;
+          $costo_final = $costo_meta * (1 + ($p / 100));
+          $margen = $costo_final - $costo_meta;
+      }
+      
+      // Insert order
+      $con->begin_transaction();
+      try {
+          if ($orden_pendiente_id) {
+              // Update old to fused
+              $con->query("UPDATE waba_ordenes_cobro SET estado = 'FUSIONADO' WHERE id = " . 
+intval($orden_pendiente_id));
+          }
+          
+          if ($orden_pendiente_id) {
+              $stmt = $con->prepare("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, 
+mensajes_totales, costo_meta, margen_ganancia, monto_total, orden_padre_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+              $stmt->bind_param("issidddi", $id_sede, $fecha_desde, $fecha_hasta, $mensajes_totales, $costo_meta, 
+$margen, $costo_final, $orden_pendiente_id);
+          } else {
+              $stmt = $con->prepare("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, 
+mensajes_totales, costo_meta, margen_ganancia, monto_total) VALUES (?, ?, ?, ?, ?, ?, ?)");
+              $stmt->bind_param("issiddd", $id_sede, $fecha_desde, $fecha_hasta, $mensajes_totales, $costo_meta, 
+$margen, $costo_final);
+          }
+          
+          if (!$stmt->execute()) {
+              throw new Exception("Error al insertar orden: " . $stmt->error);
+          }
+          $new_order_id = $stmt->insert_id;
+          $stmt->close();
+          
+          // Registrar desglose por categorÃ­a consultando la BD de auditorÃ­a local y Meta
+          $cat_details = [
+              'MARKETING' => ['nombre' => 'Mensajes de Marketing', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 
+'gratuitos' => 0],
+              'UTILITY' => ['nombre' => 'Mensajes de Utilidad', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 
+'gratuitos' => 0],
+              'AUTHENTICATION' => ['nombre' => 'Mensajes de AutenticaciÃ³n', 'volumen' => 0, 'costo' => 0.0, 'pagados' 
+=> 0, 'gratuitos' => 0],
+              'SERVICE' => ['nombre' => 'Mensajes de Servicio', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 
+'gratuitos' => 0]
+          ];
+  
+          // Consultar categorÃ­as de la BD local
+          $q_cat = "SELECT 
+              UPPER(COALESCE(NULLIF(m.categoria_meta, ''), 'MARKETING')) as cat,
+              COUNT(*) as vol,
+              SUM(CASE WHEN m.es_pagado = 1 THEN 1 ELSE 0 END) as pag,
+              SUM(CASE WHEN m.es_pagado = 0 THEN 1 ELSE 0 END) as grat
+              FROM mensajes_y_eventos m
+              JOIN conversaciones c ON m.id_conversacion = c.id
+              JOIN lineas_whatsapp l ON c.id_linea = l.id
+              WHERE l.id_sede = $id_sede AND m.origen != 'CLIENTE'
+                AND m.timestamp >= '$fecha_desde 00:00:00' AND m.timestamp <= '$fecha_hasta 23:59:59'
+              GROUP BY cat";
+          $res_c = $con->query($q_cat);
+          $total_vol_local = 0;
+          if ($res_c) {
+              while ($rc = $res_c->fetch_assoc()) {
+                  $cname = $rc['cat'];
+                  $v = intval($rc['vol']);
+                  $total_vol_local += $v;
+                  if (!isset($cat_details[$cname])) {
+                      $cat_details[$cname] = ['nombre' => 'Mensajes ' . ucfirst(strtolower($cname)), 'volumen' => 0, 
+'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0];
+                  }
+                  $cat_details[$cname]['volumen'] += $v;
+                  $cat_details[$cname]['pagados'] += intval($rc['pag']);
+                  $cat_details[$cname]['gratuitos'] += intval($rc['grat']);
+              }
+          }
+  
+          // Asignar el costo real extraÃ­do de Meta en lugar de prorratearlo ciegamente
+          foreach ($cat_details as $cname => &$cd) {
+              $cd['costo'] = round($costo_meta_por_categoria[$cname] ?? 0.0, 4);
+          }
+  
+          // Si no hay detalle local, asignar volumen total a Marketing por defecto, pero usando su costo real
+          if ($total_vol_local === 0) {
+              $cat_details['MARKETING']['volumen'] = $mensajes_totales;
+              $cat_details['MARKETING']['pagados'] = $mensajes_totales;
+          }
+  
+          // Insertar cada categorÃ­a en waba_ordenes_detalles
+          foreach ($cat_details as $cname => $cd) {
+              if ($cd['volumen'] > 0 || $cd['costo'] > 0) {
+                  $n_esc = mysqli_real_escape_string($con, $cd['nombre']);
+                  $c_esc = mysqli_real_escape_string($con, $cname);
+                  $vol = intval($cd['volumen']);
+                  $c_base = floatval($cd['costo']);
+                  $grat = intval($cd['gratuitos']);
+                  $pag = intval($cd['pagados']);
+                  $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, categoria, costo_base, 
+volumen, mensajes_gratuitos, mensajes_pagados) VALUES ($new_order_id, '$n_esc', '$c_esc', $c_base, $vol, $grat, 
+$pag)");
+              }
+          }
+  
+          if ($margen > 0) {
+              $con->query("INSERT INTO waba_ordenes_detalles (id_orden, nombre_plantilla, categoria, costo_base, 
+volumen, mensajes_gratuitos, mensajes_pagados) VALUES ($new_order_id, 'Margen Administrativo (CRM)', 'ADMIN', $margen, 
+1, 0, 0)");
+          }
+          
+          $con->commit();
+          
+          // ==========================================
+          // PASO 3: MOTOR DE NOTIFICACIÃ“N
+          // ==========================================
+          $notificado = 0;
+          $res_s = $con->query("SELECT gerente_nombre, gerente_telefono, gerente_email, pref_not_cobro, nombre_sede 
+FROM sedes WHERE id = $id_sede");
+          if ($res_s && $s = $res_s->fetch_assoc()) {
+              $msg = "Hola {$s['gerente_nombre']}, se ha generado la orden de cobro *#$new_order_id* para 
+*{$s['nombre_sede']}* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* 
+$costo_final USD\n\nPor favor coordine el pago correspondiente.";
+              
+              // WHATSAPP
+              if (in_array($s['pref_not_cobro'], ['WHATSAPP', 'AMBOS']) && !empty($s['gerente_telefono'])) {
+                  $res_l = $con->query("SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id_sede = $id_sede 
+AND estado = 'ACTIVO' LIMIT 1");
+                  if ($res_l && $l = $res_l->fetch_assoc()) {
+                      $waba_token = $l['meta_token'];
+                      
+                      // Asegurar que la plantilla existe
+                      $check_url = 
+"https://graph.facebook.com/v23.0/$waba_id/message_templates?name=notificacion_orden_cobro";
+                      $ch_ck = curl_init($check_url);
+                      curl_setopt($ch_ck, CURLOPT_HTTPHEADER, ["Authorization: Bearer $waba_token"]);
+                      curl_setopt($ch_ck, CURLOPT_RETURNTRANSFER, true);
+                      $res_ck = json_decode(curl_exec($ch_ck), true);
+                      curl_close($ch_ck);
+                      
+                      $template_ready = false;
+                      if (isset($res_ck['data']) && count($res_ck['data']) > 0) {
+                          $template_ready = true; // Ya existe
+                      } else {
+                          // Crear plantilla
+
+

@@ -299,6 +299,24 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             </div>
             <?php endif; ?>
 
+            <!-- 3.5. Campañas de Difusión Masiva -->
+            <?php if (hasPermission('campanas')): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/campanas/campanas.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(232, 91, 20, 0.12); color: #E85B14;">
+                            <i class="bi bi-megaphone-fill"></i>
+                        </div>
+                        <h4 class="module-title">Campañas de Difusión</h4>
+                        <p class="module-desc">Ecosistema de difusión masiva por sede: control de flujo diario anti-bloqueo, presupuesto Meta USD y embudo de enviados, leídos y respondidos.</p>
+                    </div>
+                    <div class="action-link" style="color: #E85B14;">
+                        Gestionar Campañas <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            <?php endif; ?>
+
             <!-- 4. Estadísticas y Reportes -->
             <?php if (hasPermission('dashboard')): ?>
             <div class="col-12 col-md-6 col-lg-4">

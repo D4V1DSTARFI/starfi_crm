@@ -153,6 +153,11 @@ function hasPermission($modulo) {
                 }
                 $stmt_perm->close();
             }
+
+            // Si aún no existe regla explícita para 'campanas', heredar permiso de 'directorio'
+            if ($modulo === 'campanas') {
+                return hasPermission('directorio');
+            }
         } else {
             $stmt->close();
         }
@@ -215,6 +220,7 @@ function renderSidebar($active = '') {
     $items = [
         'dashboard_main' => ['link' => '../../index.php', 'icon' => 'fa-solid fa-house', 'label' => 'Volver al Dashboard'],
         'bandeja' => ['link' => '../bandeja/bandeja.php', 'icon' => 'fa-solid fa-inbox', 'label' => 'Bandeja Omnicanal'],
+        'campanas' => ['link' => '../campanas/campanas.php', 'icon' => 'fa-solid fa-bullhorn', 'label' => 'Campañas Difusión'],
         'perfil_empresa' => ['link' => '../perfil_empresa/index.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
         'directorio' => ['link' => '../directorio/directorio.php', 'icon' => 'fa-solid fa-address-book', 'label' => 'Directorio 360'],
         'gestion_usuarios' => ['link' => '../gestion_usuarios/index.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],

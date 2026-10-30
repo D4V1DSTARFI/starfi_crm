@@ -253518,3 +253518,2118 @@
         ]
     }
 }
+2026-10-13 16:45:24
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones.pdf",
+                            "id": "952662417458706"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "Mersha Campos"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "13\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 17:19:01
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones.pdf",
+                            "id": "2097571587518377"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "Mersha Campos"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "13\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 17:21:03
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "send_confirmacion_compra_cn_sn_btn",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "Cliente Test"
+                    },
+                    {
+                        "type": "text",
+                        "text": "2026-10-13"
+                    },
+                    {
+                        "type": "text",
+                        "text": "10.00 USD"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Asesor Test"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Empresa Test"
+                    },
+                    {
+                        "type": "text",
+                        "text": "NE-001"
+                    },
+                    {
+                        "type": "text",
+                        "text": "04141234567"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 17:46:06
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "1323073303134249"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "Mersha Campos"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 17:46:10
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "1982690742425402"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "Mersha Campos"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 18:05:07
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "2689541434825191"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-13 18:05:11
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "4169265070039550"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 17:30:25
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "1136876235688710"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 17:30:32
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "1465951589080668"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:05:46
+{
+    "messaging_product": "whatsapp",
+    "to": "584241214639",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "2255960422011900"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:05:50
+{
+    "messaging_product": "whatsapp",
+    "to": "584241214639",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "1830726584619764"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:05:54
+{
+    "messaging_product": "whatsapp",
+    "to": "584241214639",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-12.pdf",
+                            "id": "2264843488242817"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:05:58
+{
+    "messaging_product": "whatsapp",
+    "to": "584241214639",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-12.pdf",
+                            "id": "2255582748348778"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:21:19
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "2864514020598751"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:21:23
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "28726869666970261"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:21:27
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-12.pdf",
+                            "id": "4516209301937231"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-14 18:21:38
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-12.pdf",
+                            "id": "2290626438446499"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-20 16:23:29
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-12.pdf",
+                            "id": "1661066585457129"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-20 16:23:34
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-12.pdf",
+                            "id": "2066268044073694"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-20 16:23:38
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-12.pdf",
+                            "id": "1057358130680968"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-20 16:23:43
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-12.pdf",
+                            "id": "1370680141567731"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "12\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 08:21:35
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-09-30.pdf",
+                            "id": "1447835683381547"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 08:21:39
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-09-30.pdf",
+                            "id": "1816583326030360"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 08:21:44
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-09-30.pdf",
+                            "id": "2163317225061296"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 08:21:48
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-09-30.pdf",
+                            "id": "26613865668310978"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 19:50:14
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-09-30.pdf",
+                            "id": "1667405928253290"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 19:50:19
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-09-30.pdf",
+                            "id": "1510318984479001"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 19:50:23
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-09-30.pdf",
+                            "id": "2199985867527743"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-21 19:50:28
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-09-30.pdf",
+                            "id": "1285936776997784"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:23:47
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-09-30.pdf",
+                            "id": "1756103035651284"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:23:52
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-09-30.pdf",
+                            "id": "1893658968713696"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:23:56
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-09-30.pdf",
+                            "id": "28737230352604574"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:24:02
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-09-30.pdf",
+                            "id": "2356969861726378"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "30\/09\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:47:48
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-21.pdf",
+                            "id": "1133314362369429"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:47:53
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-21.pdf",
+                            "id": "1084452117796238"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:47:58
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-21.pdf",
+                            "id": "1422098650090514"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 08:48:03
+{
+    "messaging_product": "whatsapp",
+    "to": "584142133510",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-21.pdf",
+                            "id": "1192248520104374"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Sede Principal"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 10:51:22
+{
+    "messaging_product": "whatsapp",
+    "to": "584242988880",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-21.pdf",
+                            "id": "3169748409880391"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 10:51:28
+{
+    "messaging_product": "whatsapp",
+    "to": "584242988880",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-21.pdf",
+                            "id": "1764323194873957"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 10:51:32
+{
+    "messaging_product": "whatsapp",
+    "to": "584242988880",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-21.pdf",
+                            "id": "2553352771799524"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-22 10:51:37
+{
+    "messaging_product": "whatsapp",
+    "to": "584242988880",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-21.pdf",
+                            "id": "1099937349493890"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "21\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-26 14:55:11
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Diario_Operaciones_2026-10-26.pdf",
+                            "id": "2827613400947615"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Diario de Operaciones"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "26\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-26 14:55:18
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Valija_Corte_Financiero_2026-10-26.pdf",
+                            "id": "1724109762683209"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Valija o Corte Financiero"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "26\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-26 14:55:26
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Reporte_Transaccional_API_2026-10-26.pdf",
+                            "id": "1178556388071167"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Reporte Transaccional API"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "26\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}
+2026-10-26 14:55:32
+{
+    "messaging_product": "whatsapp",
+    "to": "584126138068",
+    "type": "template",
+    "template": {
+        "name": "starfi_reporte_cierre_caja",
+        "language": {
+            "code": "es"
+        },
+        "components": [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "document",
+                        "document": {
+                            "filename": "Estado_Global_Billetera_2026-10-26.pdf",
+                            "id": "1084496111250807"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "body",
+                "parameters": [
+                    {
+                        "type": "text",
+                        "text": "MERSHA CAMPOS"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Estado Global de Billetera"
+                    },
+                    {
+                        "type": "text",
+                        "text": "SUPERFORMICA"
+                    },
+                    {
+                        "type": "text",
+                        "text": "26\/10\/2026"
+                    }
+                ]
+            }
+        ]
+    }
+}

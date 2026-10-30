@@ -27,6 +27,7 @@ $es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) =
 
 $modulos_definidos = [
     'bandeja' => 'Centro de Mensajes',
+    'campanas' => 'Campañas de Difusión',
     'perfil_empresa' => 'Perfil de Empresa',
     'directorio' => 'Directorio 360',
     'gestion_usuarios' => 'Gestión de Usuarios',

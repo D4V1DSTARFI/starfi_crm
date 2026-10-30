@@ -152,6 +152,54 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
 
             $update_sql = "UPDATE mensajes_y_eventos SET " . implode(", ", $updates) . " WHERE id_mensaje_meta = '$id_msg_esc'";
             mysqli_query($con, $update_sql);
+
+            // ====== ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: ACTUALIZAR ENTREGADOS, LEÍDOS Y FALLIDOS ======
+            $chk_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
+            if ($chk_dest && mysqli_num_rows($chk_dest) > 0) {
+                $res_dest = mysqli_query($con, "SELECT id, id_campana, estado_envio, respondido FROM campanas_difusion_destinatarios WHERE id_mensaje_meta = '$id_msg_esc' LIMIT 1");
+                if ($res_dest && mysqli_num_rows($res_dest) > 0) {
+                    $row_dest = mysqli_fetch_assoc($res_dest);
+                    $id_dest = (int)$row_dest['id'];
+                    $id_camp = (int)$row_dest['id_campana'];
+                    $est_actual = $row_dest['estado_envio'];
+                    $ya_respondio = (int)$row_dest['respondido'];
+
+                    $dest_updates = [];
+                    if ($estado_sql === 'ENTREGADO') {
+                        if ($ya_respondio === 0 && $est_actual !== 'LEIDO') {
+                            $dest_updates[] = "estado_envio = 'ENTREGADO'";
+                        }
+                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                    } elseif ($estado_sql === 'LEIDO') {
+                        if ($ya_respondio === 0) {
+                            $dest_updates[] = "estado_envio = 'LEIDO'";
+                        }
+                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                        $dest_updates[] = "fecha_lectura = IFNULL(fecha_lectura, NOW())";
+                    } elseif ($estado_sql === 'FALLIDO') {
+                        $dest_updates[] = "estado_envio = 'FALLIDO'";
+                        if (!empty($error_detalle_meta)) {
+                            $err_d_esc = mysqli_real_escape_string($con, $error_detalle_meta);
+                            $dest_updates[] = "error_detalle = '$err_d_esc'";
+                        }
+                    }
+
+                    if (isset($costo_estimado)) {
+                        $dest_updates[] = "costo_usd = $costo_estimado";
+                    }
+
+                    if (!empty($dest_updates)) {
+                        mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET " . implode(", ", $dest_updates) . " WHERE id = $id_dest");
+                        // Recalcular embudo en campanas_difusion
+                        mysqli_query($con, "UPDATE campanas_difusion c SET 
+                            entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
+                            leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
+                            fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'FALLIDO'),
+                            costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio != 'FALLIDO' AND d.estado_envio != 'PENDIENTE')
+                            WHERE c.id = $id_camp");
+                    }
+                }
+            }
         }
         exit;
     }
@@ -374,6 +422,40 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                   VALUES ($id_conversacion, $id_msg_meta_esc, '$tipo_bd', 'CLIENTE', '$cuerpo_mensaje', $url_archivo_esc, $mime_type_esc)";
     if (!mysqli_query($con, $query_msg)) {
         error_log("Error al guardar mensaje en la bd: " . mysqli_error($con));
+    }
+
+    // 4.1 ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: REGISTRAR RESPUESTA DEL CLIENTE (CONVERSIÓN)
+    $chk_camp_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
+    if ($chk_camp_dest && mysqli_num_rows($chk_camp_dest) > 0) {
+        $tel_clean_camp = preg_replace('/[^0-9]/', '', $telefono_cliente);
+        $tel_tail = strlen($tel_clean_camp) >= 10 ? substr($tel_clean_camp, -10) : $tel_clean_camp;
+        if (!empty($tel_tail)) {
+            $tel_tail_esc = mysqli_real_escape_string($con, $tel_tail);
+            $res_camp_hit = mysqli_query($con, "SELECT id, id_campana FROM campanas_difusion_destinatarios 
+                                                WHERE (id_cliente = $id_cliente OR telefono LIKE '%$tel_tail_esc%') 
+                                                AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO') 
+                                                AND respondido = 0 
+                                                ORDER BY id DESC LIMIT 1");
+            if ($res_camp_hit && mysqli_num_rows($res_camp_hit) > 0) {
+                $row_hit = mysqli_fetch_assoc($res_camp_hit);
+                $id_dest_hit = (int)$row_hit['id'];
+                $id_camp_hit = (int)$row_hit['id_campana'];
+                $resp_preview = mysqli_real_escape_string($con, mb_substr(strip_tags($cuerpo_mensaje), 0, 250));
+                mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
+                                    SET respondido = 1, 
+                                        estado_envio = 'RESPONDIDO', 
+                                        respuesta_texto = '$resp_preview', 
+                                        fecha_entrega = IFNULL(fecha_entrega, NOW()),
+                                        fecha_lectura = IFNULL(fecha_lectura, NOW()),
+                                        fecha_respuesta = NOW() 
+                                    WHERE id = $id_dest_hit");
+                mysqli_query($con, "UPDATE campanas_difusion c SET 
+                    entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
+                    leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
+                    respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND d.respondido = 1)
+                    WHERE c.id = $id_camp_hit");
+            }
+        }
     }
     
     // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS
