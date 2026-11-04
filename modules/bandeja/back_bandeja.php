@@ -99,7 +99,7 @@ switch ($action) {
         $join_condition = "AND c.estado != 'CERRADO'";
         if ($filter === 'cerrados') {
             $join_condition = "AND c.estado = 'CERRADO'";
-        } elseif ($filter === 'ventas' || $filter === 'todos') {
+        } elseif ($filter === 'ventas' || $filter === 'campanas' || $filter === 'todos') {
             $join_condition = ""; // Permite listar conversaciones tanto abiertas como cerradas
         }
 
@@ -112,11 +112,14 @@ switch ($action) {
                 IFNULL(c.estado, 'SIN INICIAR') as estado, 
                 IFNULL(c.fecha_inicio, cl.fecha_registro) as fecha_inicio,
                 (SELECT MAX(timestamp) FROM mensajes_y_eventos WHERE id_conversacion = c.id) as ultimo_mensaje_ts,
+                (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = c.id ORDER BY id DESC LIMIT 1) as ultimo_mensaje_texto,
+                (SELECT origen FROM mensajes_y_eventos WHERE id_conversacion = c.id ORDER BY id DESC LIMIT 1) as ultimo_mensaje_origen,
                 IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
                 IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
                 up.nombre as nombre_asesor,
                 IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad,
-                (EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL') OR c.resultado_comercial = 'VENTA_CERRADA' OR c.fecha_cierre_venta IS NOT NULL) as es_venta
+                (EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%') OR c.resultado_comercial = 'VENTA_CERRADA' OR c.fecha_cierre_venta IS NOT NULL) as es_venta,
+                EXISTS(SELECT 1 FROM mensajes_y_eventos me_c WHERE me_c.id_conversacion = c.id AND me_c.origen = 'API_TRANSACCIONAL' AND (me_c.contenido LIKE '%starfi_difusion_directa%' OR me_c.contenido LIKE '%| Texto:%')) as es_campana
             FROM clientes_contactos cl
             JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
@@ -130,6 +133,9 @@ switch ($action) {
         } elseif ($filter === 'clientes') {
             // Conversaciones iniciadas por clientes/personas reales
             $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
+        } elseif ($filter === 'campanas') {
+            // Conversaciones con mensajes de difusión masiva enviados
+            $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%| Texto:%'))";
         } elseif ($filter === 'ventas') {
             // Conversaciones de Ventas / Notificaciones transaccionales o cierres comerciales por venta (abiertas o cerradas)
             $query .= " AND (
@@ -179,6 +185,15 @@ switch ($action) {
             if ($id_sede > 0) {
                 $query .= " AND l.id_sede = $id_sede";
             }
+        }
+
+        $search_phone = preg_replace('/[^0-9]/', '', trim($_POST['search_phone'] ?? ''));
+        $target_conv_id = intval($_POST['target_conv_id'] ?? 0);
+        if ($target_conv_id > 0) {
+            $query .= " AND c.id = $target_conv_id";
+        } elseif ($search_phone !== '') {
+            $search_esc = $con->real_escape_string($search_phone);
+            $query .= " AND cl.numero_whatsapp LIKE '%$search_esc%'";
         }
 
         $page = max(1, intval($_POST['page'] ?? 1));

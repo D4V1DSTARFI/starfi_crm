@@ -16,12 +16,43 @@ function ensureBroadcastTables($con) {
         `template_name` VARCHAR(120) NOT NULL DEFAULT 'starfi_difusion_directa',
         `param_cuerpo` TEXT NOT NULL,
         `param_eslogan` TEXT NOT NULL,
+        `costo_unitario_usd` DECIMAL(10,4) NOT NULL DEFAULT 0.0700,
+        `presupuesto_max_usd` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        `costo_real_usd` DECIMAL(10,4) NOT NULL DEFAULT 0.0000,
         `total_destinatarios` INT NOT NULL DEFAULT 0,
+        `pendientes` INT NOT NULL DEFAULT 0,
         `enviados` INT NOT NULL DEFAULT 0,
+        `entregados` INT NOT NULL DEFAULT 0,
+        `leidos` INT NOT NULL DEFAULT 0,
+        `respondidos` INT NOT NULL DEFAULT 0,
         `fallidos` INT NOT NULL DEFAULT 0,
         `estado` VARCHAR(30) NOT NULL DEFAULT 'EN_PROCESO',
         `fecha_creacion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         `fecha_fin` DATETIME DEFAULT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $con->query("CREATE TABLE IF NOT EXISTS `campanas_difusion_destinatarios` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `id_campana` INT NOT NULL,
+        `id_sede` INT NOT NULL DEFAULT 0,
+        `id_cliente` INT NOT NULL DEFAULT 0,
+        `id_conversacion` INT NOT NULL DEFAULT 0,
+        `nombre` VARCHAR(150) NOT NULL DEFAULT 'Cliente',
+        `telefono` VARCHAR(40) NOT NULL,
+        `id_mensaje_meta` VARCHAR(150) NULL,
+        `estado_envio` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+        `respondido` TINYINT(1) NOT NULL DEFAULT 0,
+        `respuesta_texto` VARCHAR(255) NULL,
+        `costo_usd` DECIMAL(10,4) NOT NULL DEFAULT 0.0000,
+        `error_detalle` TEXT NULL,
+        `fecha_envio` DATETIME NULL,
+        `fecha_entrega` DATETIME NULL,
+        `fecha_lectura` DATETIME NULL,
+        `fecha_respuesta` DATETIME NULL,
+        INDEX idx_campana (id_campana),
+        INDEX idx_sede_fecha (id_sede, fecha_envio),
+        INDEX idx_meta_msg (id_mensaje_meta),
+        INDEX idx_telefono (telefono)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     $con->query("CREATE TABLE IF NOT EXISTS `notificacion_enviada` (
@@ -65,7 +96,7 @@ switch ($action) {
         $agente = getAgenteInfo();
         $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
-        $is_master = ($rol === 'MASTER' || intval($agente['id'] ?? 0) === 1);
+        $is_master = ($rol === 'MASTER' || $rol === 'MASTER CI' || intval($agente['id'] ?? 0) === 1 || ($rol === 'ADMIN' && $user_sede === 0));
         
         $where = "";
         if (!$is_master && $user_sede > 0) {
@@ -83,11 +114,15 @@ switch ($action) {
         $agente = getAgenteInfo();
         $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
-        $is_master = ($rol === 'MASTER' || intval($agente['id'] ?? 0) === 1);
+        $is_master = ($rol === 'MASTER' || $rol === 'MASTER CI' || intval($agente['id'] ?? 0) === 1 || ($rol === 'ADMIN' && $user_sede === 0));
         
         $where = "";
         if (!$is_master && $user_sede > 0) {
-            $where = "WHERE c.id_sede = $user_sede";
+            $where = "WHERE (c.id_sede = $user_sede OR EXISTS (
+                SELECT 1 FROM conversaciones cv2
+                INNER JOIN lineas_whatsapp lw2 ON lw2.id = cv2.id_linea
+                WHERE cv2.id_cliente = c.id AND lw2.id_sede = $user_sede
+            ))";
         }
         
         $query = "SELECT c.id, c.id_sede, c.nombre, c.numero_whatsapp, c.estado, c.etiquetas, c.fecha_registro, s.nombre_sede 
@@ -111,7 +146,7 @@ switch ($action) {
         $agente = getAgenteInfo();
         $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
-        $is_master = ($rol === 'MASTER' || intval($agente['id'] ?? 0) === 1);
+        $is_master = ($rol === 'MASTER' || $rol === 'MASTER CI' || intval($agente['id'] ?? 0) === 1 || ($rol === 'ADMIN' && $user_sede === 0));
 
         $where_sede = (!$is_master && $user_sede > 0) ? "AND s.id = $user_sede" : "";
 
@@ -283,12 +318,14 @@ switch ($action) {
             "Content-Type: application/json"
         ];
 
-        // Lista de códigos de idioma en español para auto-reintento si Meta la registró bajo otra variante regional
-        $lang_candidates = array_values(array_unique([$lang_code, 'es', 'es_ES', 'es_LA', 'es_MX']));
+        // Códigos de idioma en Español ('es' prioritario y 'es_ES' respaldo; nunca 'es_MX')
+        $primary_lang = ($lang_code && !in_array($lang_code, ['es_MX', 'es_LA'], true)) ? $lang_code : 'es';
+        $lang_candidates = array_values(array_unique([$primary_lang, 'es', 'es_ES']));
         $status_code = 0;
         $estado_meta = [];
+        $first_estado_meta = null;
 
-        foreach ($lang_candidates as $try_lang) {
+        foreach ($lang_candidates as $idx_lang => $try_lang) {
             $payload = [
                 'messaging_product' => 'whatsapp',
                 'recipient_type' => 'individual',
@@ -312,12 +349,18 @@ switch ($action) {
             curl_close($ch);
 
             $estado_meta = json_decode($raw_exec, true) ?? [];
+            if ($idx_lang === 0 && $first_estado_meta === null) {
+                $first_estado_meta = $estado_meta;
+            }
 
             // Si fue exitoso o el error NO es 132001 (idioma de plantilla no coincide), salimos del bucle
             $err_code = intval($estado_meta['error']['code'] ?? 0);
             if ($status_code === 200 || $err_code !== 132001) {
                 break;
             }
+        }
+        if ($status_code !== 200 && intval($estado_meta['error']['code'] ?? 0) === 132001 && $first_estado_meta !== null) {
+            $estado_meta = $first_estado_meta;
         }
 
         $envio_exitoso = ($status_code === 200 && !empty($estado_meta['messages'][0]['id']));
@@ -380,10 +423,21 @@ switch ($action) {
                          VALUES ($id_conversacion, '$id_meta_esc', 'TEXTO', 'API_TRANSACCIONAL', '$contenido_esc', '$estado_msg', $err_sql, '$now_full')");
         }
 
-        // 6. Actualizar contadores de la campaña
+        // 6. Registrar en campanas_difusion_destinatarios y actualizar contadores de la campaña
         if ($campaign_id > 0) {
+            $nom_dest_esc = $con->real_escape_string($p1);
+            $id_meta_dest = $envio_exitoso ? "'" . $con->real_escape_string($id_mensaje_meta) . "'" : "NULL";
+            $est_dest = $envio_exitoso ? 'ENVIADO' : 'FALLIDO';
+            $costo_dest = $envio_exitoso ? 0.0700 : 0.0000;
+            $err_dest_sql = isset($err_sql) ? $err_sql : "NULL";
+            $id_conv_dest = isset($id_conversacion) ? intval($id_conversacion) : 0;
+
+            $con->query("INSERT INTO campanas_difusion_destinatarios 
+                (id_campana, id_sede, id_cliente, id_conversacion, nombre, telefono, id_mensaje_meta, estado_envio, costo_usd, error_detalle, fecha_envio)
+                VALUES ($campaign_id, $id_sede, $id_cliente, $id_conv_dest, '$nom_dest_esc', '$telefono', $id_meta_dest, '$est_dest', $costo_dest, $err_dest_sql, '$now_full')");
+
             if ($envio_exitoso) {
-                $con->query("UPDATE campanas_difusion SET enviados = enviados + 1 WHERE id = $campaign_id");
+                $con->query("UPDATE campanas_difusion SET enviados = enviados + 1, costo_real_usd = costo_real_usd + $costo_dest WHERE id = $campaign_id");
             } else {
                 $con->query("UPDATE campanas_difusion SET fallidos = fallidos + 1 WHERE id = $campaign_id");
             }

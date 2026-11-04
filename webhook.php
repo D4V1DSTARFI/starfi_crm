@@ -77,131 +77,152 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     $displayPhoneNumber = $value['metadata']['display_phone_number'] ?? null;
 
     // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído, fallido)
-    if (isset($value['statuses'][0])) {
-        $status_obj = $value['statuses'][0];
-        $estado = $status_obj['status']; // sent, delivered, read, failed
-        $id_mensaje_meta_status = $status_obj['id'];
-        
-        $estado_sql = null;
-        if ($estado == 'sent') $estado_sql = 'ENVIADO';
-        else if ($estado == 'delivered') $estado_sql = 'ENTREGADO';
-        else if ($estado == 'read') $estado_sql = 'LEIDO';
-        else if ($estado == 'failed') $estado_sql = 'FALLIDO';
-
-        // Extraer metadatos de facturación / conversación de Meta
-        $pricing_cat = isset($status_obj['pricing']['category']) ? strtoupper($status_obj['pricing']['category']) : null;
-        if (!$pricing_cat && isset($status_obj['conversation']['origin']['type'])) {
-            $pricing_cat = strtoupper($status_obj['conversation']['origin']['type']);
-        }
-        $is_billable = isset($status_obj['pricing']['billable']) ? ($status_obj['pricing']['billable'] ? 1 : 0) : null;
-        $conv_id_meta = $status_obj['conversation']['id'] ?? null;
-
-        $error_detalle_meta = null;
-        if ($estado == 'failed' && isset($status_obj['errors'][0])) {
-            $err = $status_obj['errors'][0];
-            $err_code = $err['code'] ?? '';
-            $err_title = $err['title'] ?? '';
-            $err_data = $err['error_data']['details'] ?? ($err['message'] ?? '');
+    if (!empty($value['statuses']) && is_array($value['statuses'])) {
+        foreach ($value['statuses'] as $status_obj) {
+            $estado = $status_obj['status'] ?? ''; // sent, delivered, read, failed
+            $id_mensaje_meta_status = $status_obj['id'] ?? '';
+            if (empty($id_mensaje_meta_status)) continue;
             
-            if ($err_code == 131047) {
-                $error_detalle_meta = "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o enviar una plantilla aprobada.";
-            } elseif ($err_code == 131026) {
-                $error_detalle_meta = "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
-            } elseif ($err_code == 131049) {
-                $error_detalle_meta = "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
-            } elseif ($err_code == 130472) {
-                $error_detalle_meta = "Restricción de Meta (Error 130472). El número forma parte de un entorno de pruebas o experimento.";
-            } else {
-                $error_detalle_meta = "Rechazado por Meta (Error $err_code - $err_title): $err_data";
-            }
-        }
-        
-        if ($con && $estado_sql) {
-            $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
-            $updates = ["estado_envio = '$estado_sql'"];
-            
-            if (!empty($error_detalle_meta)) {
-                $err_esc = mysqli_real_escape_string($con, $error_detalle_meta);
-                $updates[] = "error_detalle = '$err_esc'";
-            }
-            if ($pricing_cat !== null) {
-                $p_cat_esc = mysqli_real_escape_string($con, $pricing_cat);
-                $updates[] = "categoria_meta = '$p_cat_esc'";
-            }
-            if ($is_billable !== null) {
-                $updates[] = "es_pagado = $is_billable";
-            }
-            if ($conv_id_meta !== null) {
-                $c_id_esc = mysqli_real_escape_string($con, $conv_id_meta);
-                $updates[] = "conversation_id_meta = '$c_id_esc'";
-            }
+            $estado_sql = null;
+            if ($estado == 'sent') $estado_sql = 'ENVIADO';
+            else if ($estado == 'delivered') $estado_sql = 'ENTREGADO';
+            else if ($estado == 'read') $estado_sql = 'LEIDO';
+            else if ($estado == 'failed') $estado_sql = 'FALLIDO';
 
-            // Calcular costo estimado en USD según categoría si el mensaje es facturable
-            if ($is_billable == 1 || ($is_billable === null && $pricing_cat !== null)) {
-                $cat_check = $pricing_cat ?? 'MARKETING';
-                $costo_estimado = 0.0700; // Tarifas base aproximadas Meta
-                if ($cat_check === 'UTILITY' || $cat_check === 'AUTHENTICATION') {
-                    $costo_estimado = 0.0150;
-                } else if ($cat_check === 'SERVICE') {
-                    $costo_estimado = 0.0120;
-                }
-                $updates[] = "costo_meta_estimado = $costo_estimado";
-            } else if ($is_billable === 0) {
-                $updates[] = "costo_meta_estimado = 0.0000";
+            // Extraer metadatos de facturación / conversación de Meta
+            $pricing_cat = isset($status_obj['pricing']['category']) ? strtoupper($status_obj['pricing']['category']) : null;
+            if (!$pricing_cat && isset($status_obj['conversation']['origin']['type'])) {
+                $pricing_cat = strtoupper($status_obj['conversation']['origin']['type']);
             }
+            $is_billable = isset($status_obj['pricing']['billable']) ? ($status_obj['pricing']['billable'] ? 1 : 0) : null;
+            $conv_id_meta = $status_obj['conversation']['id'] ?? null;
 
-            $update_sql = "UPDATE mensajes_y_eventos SET " . implode(", ", $updates) . " WHERE id_mensaje_meta = '$id_msg_esc'";
-            mysqli_query($con, $update_sql);
-
-            // ====== ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: ACTUALIZAR ENTREGADOS, LEÍDOS Y FALLIDOS ======
-            $chk_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-            if ($chk_dest && mysqli_num_rows($chk_dest) > 0) {
-                $res_dest = mysqli_query($con, "SELECT id, id_campana, estado_envio, respondido FROM campanas_difusion_destinatarios WHERE id_mensaje_meta = '$id_msg_esc' LIMIT 1");
-                if ($res_dest && mysqli_num_rows($res_dest) > 0) {
-                    $row_dest = mysqli_fetch_assoc($res_dest);
-                    $id_dest = (int)$row_dest['id'];
-                    $id_camp = (int)$row_dest['id_campana'];
-                    $est_actual = $row_dest['estado_envio'];
-                    $ya_respondio = (int)$row_dest['respondido'];
-
-                    $dest_updates = [];
-                    if ($estado_sql === 'ENTREGADO') {
-                        if ($ya_respondio === 0 && $est_actual !== 'LEIDO') {
-                            $dest_updates[] = "estado_envio = 'ENTREGADO'";
-                        }
-                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
-                    } elseif ($estado_sql === 'LEIDO') {
-                        if ($ya_respondio === 0) {
-                            $dest_updates[] = "estado_envio = 'LEIDO'";
-                        }
-                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
-                        $dest_updates[] = "fecha_lectura = IFNULL(fecha_lectura, NOW())";
-                    } elseif ($estado_sql === 'FALLIDO') {
-                        $dest_updates[] = "estado_envio = 'FALLIDO'";
-                        if (!empty($error_detalle_meta)) {
-                            $err_d_esc = mysqli_real_escape_string($con, $error_detalle_meta);
-                            $dest_updates[] = "error_detalle = '$err_d_esc'";
-                        }
-                    }
-
-                    if (isset($costo_estimado)) {
-                        $dest_updates[] = "costo_usd = $costo_estimado";
-                    }
-
-                    if (!empty($dest_updates)) {
-                        mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET " . implode(", ", $dest_updates) . " WHERE id = $id_dest");
-                        // Recalcular embudo en campanas_difusion
-                        mysqli_query($con, "UPDATE campanas_difusion c SET 
-                            entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
-                            leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
-                            fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'FALLIDO'),
-                            costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio != 'FALLIDO' AND d.estado_envio != 'PENDIENTE')
-                            WHERE c.id = $id_camp");
-                    }
+            $error_detalle_meta = null;
+            if ($estado == 'failed' && isset($status_obj['errors'][0])) {
+                $err = $status_obj['errors'][0];
+                $err_code = $err['code'] ?? '';
+                $err_title = $err['title'] ?? '';
+                $err_data = $err['error_data']['details'] ?? ($err['message'] ?? '');
+                
+                if ($err_code == 131047) {
+                    $error_detalle_meta = "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o enviar una plantilla aprobada.";
+                } elseif ($err_code == 131026) {
+                    $error_detalle_meta = "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
+                } elseif ($err_code == 131049) {
+                    $error_detalle_meta = "Límite de frecuencia de Marketing (Error Meta 131049): este número ya recibió varios mensajes promocionales hoy sin responder. Si el cliente envía un mensaje (ej. 'Hola') al número de la sede, Meta desbloquea la entrega de inmediato.";
+                } elseif ($err_code == 131042) {
+                    $error_detalle_meta = "Problema de método de pago en Meta (Error 131042): la cuenta WABA de esta sede tiene un saldo o pago pendiente en Meta Billing Hub.";
+                } elseif ($err_code == 130472) {
+                    $error_detalle_meta = "Restricción de Meta (Error 130472). El número forma parte de un entorno de pruebas o experimento.";
+                } else {
+                    $error_detalle_meta = "Rechazado por Meta (Error $err_code - $err_title): $err_data";
                 }
             }
+            
+            if ($con && $estado_sql) {
+                $id_msg_esc = mysqli_real_escape_string($con, $id_mensaje_meta_status);
+                // Evitar degradar el estado si el webhook 'sent' llega después de 'delivered' o 'read'
+                $updates = ["estado_envio = CASE 
+                    WHEN '$estado_sql' = 'FALLIDO' THEN 'FALLIDO'
+                    WHEN '$estado_sql' = 'LEIDO' THEN 'LEIDO'
+                    WHEN '$estado_sql' = 'ENTREGADO' AND estado_envio NOT IN ('LEIDO') THEN 'ENTREGADO'
+                    WHEN '$estado_sql' = 'ENVIADO' AND (estado_envio IS NULL OR estado_envio NOT IN ('ENTREGADO','LEIDO','FALLIDO')) THEN 'ENVIADO'
+                    ELSE estado_envio END"];
+                
+                if (!empty($error_detalle_meta)) {
+                    $err_esc = mysqli_real_escape_string($con, $error_detalle_meta);
+                    $updates[] = "error_detalle = '$err_esc'";
+                }
+                if ($pricing_cat !== null) {
+                    $p_cat_esc = mysqli_real_escape_string($con, $pricing_cat);
+                    $updates[] = "categoria_meta = '$p_cat_esc'";
+                }
+                if ($is_billable !== null) {
+                    $updates[] = "es_pagado = $is_billable";
+                }
+                if ($conv_id_meta !== null) {
+                    $c_id_esc = mysqli_real_escape_string($con, $conv_id_meta);
+                    $updates[] = "conversation_id_meta = '$c_id_esc'";
+                }
+
+                // Calcular costo estimado en USD según categoría si el mensaje es facturable
+                if ($is_billable == 1 || ($is_billable === null && $pricing_cat !== null)) {
+                    $cat_check = $pricing_cat ?? 'MARKETING';
+                    $costo_estimado = 0.0700; // Tarifas base aproximadas Meta
+                    if ($cat_check === 'UTILITY' || $cat_check === 'AUTHENTICATION') {
+                        $costo_estimado = 0.0150;
+                    } else if ($cat_check === 'SERVICE') {
+                        $costo_estimado = 0.0120;
+                    }
+                    $updates[] = "costo_meta_estimado = $costo_estimado";
+                } else if ($is_billable === 0) {
+                    $updates[] = "costo_meta_estimado = 0.0000";
+                }
+
+                $update_sql = "UPDATE mensajes_y_eventos SET " . implode(", ", $updates) . " WHERE id_mensaje_meta = '$id_msg_esc'";
+                mysqli_query($con, $update_sql);
+
+                // ====== ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: ACTUALIZAR ENTREGADOS, LEÍDOS Y FALLIDOS ======
+                $chk_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
+                if ($chk_dest && mysqli_num_rows($chk_dest) > 0) {
+                    $res_dest = mysqli_query($con, "SELECT d.id, d.id_campana, d.estado_envio, d.respondido, c.costo_unitario_usd 
+                                                    FROM campanas_difusion_destinatarios d
+                                                    LEFT JOIN campanas_difusion c ON c.id = d.id_campana
+                                                    WHERE d.id_mensaje_meta = '$id_msg_esc' LIMIT 1");
+                    if ($res_dest && mysqli_num_rows($res_dest) > 0) {
+                        $row_dest = mysqli_fetch_assoc($res_dest);
+                        $id_dest = (int)$row_dest['id'];
+                        $id_camp = (int)$row_dest['id_campana'];
+                        $est_actual = $row_dest['estado_envio'];
+                        $ya_respondio = (int)$row_dest['respondido'];
+                        $costo_camp_unit = floatval($row_dest['costo_unitario_usd'] ?? 0.0770);
+
+                        $dest_updates = [];
+                        if ($estado_sql === 'ENTREGADO') {
+                            if ($ya_respondio === 0 && $est_actual !== 'LEIDO') {
+                                $dest_updates[] = "estado_envio = 'ENTREGADO'";
+                            }
+                            $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                        } elseif ($estado_sql === 'LEIDO') {
+                            if ($ya_respondio === 0) {
+                                $dest_updates[] = "estado_envio = 'LEIDO'";
+                            }
+                            $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                            $dest_updates[] = "fecha_lectura = IFNULL(fecha_lectura, NOW())";
+                        } elseif ($estado_sql === 'FALLIDO') {
+                            $dest_updates[] = "estado_envio = 'FALLIDO'";
+                            $dest_updates[] = "costo_usd = 0.0000";
+                            if (!empty($error_detalle_meta)) {
+                                $err_d_esc = mysqli_real_escape_string($con, $error_detalle_meta);
+                                $dest_updates[] = "error_detalle = '$err_d_esc'";
+                            }
+                        }
+
+                        // Si el mensaje fue entregado o leído, mantener la tarifa unitaria configurada en la sede (que incluye comisión)
+                        if ($estado_sql !== 'FALLIDO' && $costo_camp_unit > 0) {
+                            $dest_updates[] = "costo_usd = $costo_camp_unit";
+                        }
+
+                        if (!empty($dest_updates)) {
+                            mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET " . implode(", ", $dest_updates) . " WHERE id = $id_dest");
+                            // Recalcular embudo en campanas_difusion
+                            mysqli_query($con, "UPDATE campanas_difusion c SET 
+                                pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'PENDIENTE'),
+                                enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
+                                entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
+                                leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
+                                respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.respondido = 1),
+                                fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'FALLIDO'),
+                                costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
+                                WHERE c.id = $id_camp");
+                        }
+                    }
+                }
+            }
         }
-        exit;
+        if (!isset($value['messages'][0])) {
+            exit;
+        }
     }
 
     // Verificar que hay mensajes

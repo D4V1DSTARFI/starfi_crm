@@ -53,6 +53,14 @@ class IaConnector {
                         }
                     }
                 }
+            } elseif (strpos($texto, '[TEMPLATE:') === 0 && preg_match('/^\[TEMPLATE:([^:]+):(.*)\]$/s', $texto, $m)) {
+                $tplName = trim($m[1]);
+                $params = explode('|', $m[2]);
+                if ($tplName === 'starfi_difusion_directa' && count($params) >= 3) {
+                    $texto = "👋¡Hola {$params[0]}!\nHoy queremos {$params[1]}.\nRecuerda que en {$params[2]}.\n📲 Responde a este mensaje para obtener más información👇";
+                } else {
+                    $texto = "Mensaje de plantilla ($tplName) enviado al cliente: " . implode(' | ', $params);
+                }
             }
 
             $role = ($origenUpper === 'CLIENTE') ? 'user' : 'model';

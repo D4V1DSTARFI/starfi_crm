@@ -531,6 +531,14 @@ function loadOperadoresFilter() {
 let currentChatPage = 1;
 let hasMoreChats = false;
 let isLoadingChats = false;
+let pendingDeepLinkChat = (function () {
+    const sp = new URLSearchParams(window.location.search);
+    const search = (sp.get('search') || '').trim();
+    const convId = parseInt(sp.get('conv_id') || '0', 10);
+    const clienteId = parseInt(sp.get('cliente_id') || '0', 10);
+    if (!search && !convId && !clienteId) return null;
+    return { search, convId, clienteId };
+})();
 
 function loadChats(append = false) {
     if (isLoadingChats) return;
@@ -556,13 +564,38 @@ function loadChats(append = false) {
             id_sede: id_sede, 
             id_agente: id_agente,
             page: currentChatPage,
-            limit: 30
+            limit: 30,
+            target_conv_id: pendingDeepLinkChat ? (pendingDeepLinkChat.convId || 0) : 0,
+            search_phone: pendingDeepLinkChat ? (pendingDeepLinkChat.search || '') : ''
         },
         success: function (response) {
             isLoadingChats = false;
             if (response.status === 'success') {
                 hasMoreChats = !!response.has_more;
                 renderChatList(response.data, append, hasMoreChats);
+                if (pendingDeepLinkChat) {
+                    const dl = pendingDeepLinkChat;
+                    pendingDeepLinkChat = null;
+                    if (dl.search) {
+                        $('.search-bar input').val(dl.search);
+                    }
+                    let targetItem = null;
+                    if (dl.convId > 0) {
+                        targetItem = $(`#chatList .chat-item[data-id="${dl.convId}"]`).first();
+                    }
+                    if ((!targetItem || !targetItem.length) && dl.clienteId > 0) {
+                        targetItem = $(`#chatList .chat-item[data-cliente-id="${dl.clienteId}"]`).first();
+                    }
+                    if ((!targetItem || !targetItem.length) && dl.search) {
+                        const cleanPhone = dl.search.replace(/[^0-9]/g, '');
+                        targetItem = $(`#chatList .chat-item`).filter(function () {
+                            return String($(this).data('phone') || '').indexOf(cleanPhone) !== -1;
+                        }).first();
+                    }
+                    if (targetItem && targetItem.length) {
+                        window.clickChat(targetItem[0]);
+                    }
+                }
             } else {
                 if (!append) {
                     $('#chatList').html(`<div class="p-3 text-danger text-center"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${response.message}</div>`);
@@ -629,9 +662,41 @@ function renderChatList(chats, append = false, has_more = false) {
         
         let estadoBadge = `<span class="badge ${estadoColor} rounded-pill px-2 py-0.5" style="font-size: 0.6rem; margin-left: 4px;">${estadoLabel.replace('_', ' ')}</span>`;
         
-        let tipoBadge = (chat.es_venta == 1 || chat.es_venta === '1') 
-            ? `<span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-shopping-bag me-1"></i> VENTA</span>`
-            : `<span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-user me-1"></i> CLIENTE</span>`;
+        let tipoBadge = '';
+        if (chat.es_campana == 1 || chat.es_campana === '1') {
+            tipoBadge = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-bullhorn me-1"></i> DIFUSIÓN</span>`;
+        } else if (chat.es_venta == 1 || chat.es_venta === '1') {
+            tipoBadge = `<span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-shopping-bag me-1"></i> VENTA</span>`;
+        } else {
+            tipoBadge = `<span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2 py-0.5" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-user me-1"></i> CLIENTE</span>`;
+        }
+
+        let previewText = 'Haz clic para ver la conversación';
+        if (chat.ultimo_mensaje_texto) {
+            let rawLast = String(chat.ultimo_mensaje_texto);
+            if (rawLast.indexOf('| Texto:') !== -1) {
+                previewText = '📢 ' + rawLast.substring(rawLast.indexOf('| Texto:') + 8).trim().replace(/\s+/g, ' ');
+            } else if (rawLast.indexOf('starfi_difusion_directa') !== -1) {
+                try {
+                    let m = rawLast.match(/Params:\s*(\[.*\])/);
+                    if (m) {
+                        let p = JSON.parse(m[1]);
+                        previewText = `📢 Difusión: Hola ${p[0] || ''}, hoy queremos ${p[1] || ''}...`;
+                    } else {
+                        previewText = '📢 Mensaje de campaña de difusión enviado';
+                    }
+                } catch (e) {
+                    previewText = '📢 Mensaje de campaña de difusión enviado';
+                }
+            } else if (rawLast.startsWith('Envío dinámico de plantilla:')) {
+                previewText = '⚡ ' + rawLast.replace('Envío dinámico de plantilla:', 'Plantilla:').split('.')[0];
+            } else {
+                previewText = rawLast;
+            }
+            if (previewText.length > 68) {
+                previewText = previewText.substring(0, 65) + '...';
+            }
+        }
 
         let html = `
             <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}">
@@ -651,7 +716,7 @@ function renderChatList(chats, append = false, has_more = false) {
                         ${starsHtml}
                     </div>
                     <div class="chat-bottom" style="display:flex; align-items:center;">
-                        <p class="preview" style="margin-right:10px;">Haz clic para ver la conversación</p>
+                        <p class="preview" style="margin-right:10px;">${previewText.replace(/</g, '&lt;')}</p>
                         ${badge}
                         ${unreadDot}
                     </div>
@@ -1160,13 +1225,40 @@ function renderMessages(messages, scrollToBottom) {
             let agentNameHtml = (msg.origen === 'AGENTE' && msg.nombre_agente) ? `<div style="font-size: 0.65rem; color: #6B7280; margin-bottom: 6px; border-bottom: 1px solid #BFDBFE; padding-bottom: 2px;"><i class="fa-solid fa-headset"></i> ${msg.nombre_agente}</div>` : '';
             
             // Intelligent Visual Rendering for Templates
-            if (msg.origen === 'API_TRANSACCIONAL' && msg.contenido && msg.contenido.startsWith('Envío dinámico de plantilla:')) {
+            if (msg.contenido && (msg.contenido.startsWith('Envío dinámico de plantilla:') || msg.contenido.startsWith('[TEMPLATE:'))) {
                 try {
-                    let match = msg.contenido.match(/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*\])/);
-                    if (match) {
-                        let tplName = match[1].trim();
-                        let params = JSON.parse(match[2]);
-                        if (tplName === 'starfi_difusion_directa' && params.length >= 3) {
+                    let tplName = '';
+                    let params = [];
+                    if (msg.contenido.startsWith('Envío dinámico de plantilla:')) {
+                        let match = msg.contenido.match(/plantilla:\s*([^.]+)\.\s*Params:\s*(\[.*?\])/s);
+                        if (match) {
+                            tplName = match[1].trim();
+                            params = JSON.parse(match[2]);
+                        }
+                    } else if (msg.contenido.startsWith('[TEMPLATE:')) {
+                        let match2 = msg.contenido.match(/^\[TEMPLATE:([^:]+):(.*)\]$/s);
+                        if (match2) {
+                            tplName = match2[1].trim();
+                            params = match2[2].split('|');
+                        }
+                    }
+                    if (tplName && Array.isArray(params)) {
+                        let idxRendered = String(msg.contenido).indexOf('| Texto:');
+                        if (idxRendered !== -1) {
+                            let renderedBodyText = String(msg.contenido).substring(idxRendered + 8).trim();
+                            displayContent = `
+                                <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
+                                    <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
+                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${tplName}
+                                    </div>
+                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B; white-space:pre-line;">${renderedBodyText}</div>
+                                </div>
+                                <div style="font-size:0.7rem; color:#9CA3AF; margin-top:6px; display:flex; align-items:center; justify-content:space-between; border-top:1px solid #F3F4F6; padding-top:6px;">
+                                    <span>Servicio de mensajería inteligente de STARFI CRM</span>
+                                    <i class="fa-solid fa-paper-plane text-primary"></i>
+                                </div>
+                            `;
+                        } else if (tplName === 'starfi_difusion_directa' && params.length >= 3) {
                             displayContent = `
                                 <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
                                     <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">

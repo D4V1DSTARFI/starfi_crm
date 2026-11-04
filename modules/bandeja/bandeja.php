@@ -333,6 +333,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button class="tab active" data-target="todos">Todos</button>
                     <?php if (!$is_operador): ?>
                         <button class="tab" data-target="clientes"><i class="fa-solid fa-user me-1"></i> Clientes</button>
+                        <button class="tab" data-target="campanas"><i class="fa-solid fa-bullhorn me-1"></i> Difusión</button>
                         <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
                     <?php endif; ?>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
