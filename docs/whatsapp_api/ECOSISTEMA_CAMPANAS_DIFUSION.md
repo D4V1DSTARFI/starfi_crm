@@ -62,3 +62,4 @@ Al seleccionar cualquier plantilla en **Plantilla Oficial Meta** (`#campTemplate
 - `campanas_difusion`: Cabecera de campaña (`id_sede`, `template_name`, `template_language`, `template_category`, `header_format`, `template_params_json`, `header_imagen_path`, `header_media_id`, `costo_unitario_usd`, `costo_estimado_usd`, `costo_real_usd`, `cuota_diaria_programada`, `total_tandas`, `piloto_automatico`, `hora_programada`, `estado`, métricas consolidadas).
 - `campanas_difusion_destinatarios`: Cola e historial por contacto (`id_campana`, `id_sede`, `id_cliente`, `id_conversacion`, `nombre`, `telefono`, `numero_tanda`, `fecha_programada`, `estado_envio`, `id_mensaje_meta`, `respondido`, `respuesta_texto`, `costo_usd`, `error_detalle`, timestamps de envío/entrega/lectura/respuesta).
 - `campanas_cuotas_sede`: Parámetros de protección anti-bloqueo por sede (`id_sede`, `limite_diario_mensajes`, `cadencia_ms`).
+
