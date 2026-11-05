@@ -2331,7 +2331,15 @@ switch ($action) {
             exit;
         }
 
-        $res_d = mysqli_query($con, "SELECT * FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana ORDER BY respondido DESC, fecha_lectura DESC, id ASC");
+        $res_d = mysqli_query($con, "SELECT d.*,
+                                            COALESCE(NULLIF(s_cli.nombre_sede, ''), NULLIF(s_camp.nombre_sede, ''), 'General') AS nombre_sede_cliente,
+                                            COALESCE(NULLIF(c_cli.id_sede, 0), d.id_sede) AS id_sede_cliente
+                                     FROM campanas_difusion_destinatarios d
+                                     LEFT JOIN clientes_contactos c_cli ON c_cli.id = d.id_cliente
+                                     LEFT JOIN sedes s_cli ON s_cli.id = c_cli.id_sede
+                                     LEFT JOIN sedes s_camp ON s_camp.id = d.id_sede
+                                     WHERE d.id_campana = $id_campana
+                                     ORDER BY d.respondido DESC, d.fecha_lectura DESC, d.id ASC");
         $destinatarios = [];
         if ($res_d) {
             while ($row = mysqli_fetch_assoc($res_d)) {

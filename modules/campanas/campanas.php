@@ -1177,9 +1177,9 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                         </div>
                     </div>
 
-                    <!-- Filtros rápidos dentro del modal + Exportar CSV -->
+                    <!-- Filtros rápidos dentro del modal + Buscador + Exportar CSV -->
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                        <div class="btn-group btn-group-sm" role="group">
+                        <div class="btn-group btn-group-sm" role="group" id="detGrupoFiltrosEstadoModal">
                             <button type="button" class="btn btn-outline-dark active"
                                 onclick="filtrarTablaDestinatariosModal('TODOS', this)">Todos</button>
                             <button type="button" class="btn btn-outline-success"
@@ -1191,8 +1191,17 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                             <button type="button" class="btn btn-outline-danger"
                                 onclick="filtrarTablaDestinatariosModal('FALLIDO', this)">Fallidos</button>
                         </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="small text-muted" id="detResumenModal"></span>
+                        <div class="d-flex flex-wrap align-items-center gap-2 ms-auto">
+                            <div class="input-group input-group-sm" style="width: 240px;">
+                                <span class="input-group-text bg-white text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+                                <input type="text" id="detInputBuscarModal" class="form-control" placeholder="Buscar cliente, tlf o sede..." oninput="buscarEnDestinatariosModal(this.value)">
+                            </div>
+                            <select id="detSelectPageSizeModal" class="form-select form-select-sm" style="width: auto;" onchange="cambiarPageSizeDestinatariosModal(this.value)">
+                                <option value="10" selected>10 / pág.</option>
+                                <option value="25">25 / pág.</option>
+                                <option value="50">50 / pág.</option>
+                                <option value="100">100 / pág.</option>
+                            </select>
                             <button type="button" class="btn btn-sm btn-outline-success fw-semibold" onclick="exportarDestinatariosCampanaCsv()">
                                 <i class="fa-solid fa-file-csv me-1"></i>Exportar CSV
                             </button>
@@ -1200,10 +1209,11 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                     </div>
 
                     <div class="table-responsive">
-                        <table class="table table-sm table-hover align-middle" style="font-size: 0.84rem;">
+                        <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.84rem;">
                             <thead class="table-light">
                                 <tr>
                                     <th>Cliente</th>
+                                    <th>Sede Cliente</th>
                                     <th>Teléfono</th>
                                     <th class="text-center">Estado</th>
                                     <th>Enviado / Tanda</th>
@@ -1214,6 +1224,12 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                             </thead>
                             <tbody id="tbodyDetalleDestinatarios"></tbody>
                         </table>
+                    </div>
+
+                    <!-- Barra de Paginación del Modal de Destinatarios -->
+                    <div class="d-flex flex-wrap justify-content-between align-items-center pt-3 mt-2 border-top gap-2" style="font-size: 0.8rem;">
+                        <span class="text-muted fw-semibold" id="detResumenModal">Mostrando 0 de 0 destinatarios</span>
+                        <div class="d-flex align-items-center gap-1" id="detControlesPaginacionModal"></div>
                     </div>
                 </div>
             </div>

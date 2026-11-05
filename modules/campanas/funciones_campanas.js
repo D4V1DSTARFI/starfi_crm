@@ -2570,6 +2570,16 @@ async function verDetalleDestinatariosCampana(idCampana) {
         if (elFal) elFal.innerHTML = `${totalFal}`;
         if (elCos) elCos.innerHTML = `$${costoRealModal} <small class="text-muted fw-normal d-block" style="font-size:0.65rem;">Est: $${costoEstModal}</small>`;
 
+        const inpBuscarModal = document.getElementById('detInputBuscarModal');
+        if (inpBuscarModal) inpBuscarModal.value = '';
+        ECO_STATE.modalFiltroEstado = 'TODOS';
+        ECO_STATE.modalBuscarTexto = '';
+        ECO_STATE.modalPaginaActual = 1;
+        ECO_STATE.modalPageSize = parseInt(document.getElementById('detSelectPageSizeModal')?.value || 10, 10);
+
+        const btnsGrp = document.querySelectorAll('#detGrupoFiltrosEstadoModal .btn');
+        btnsGrp.forEach((b, idx) => b.classList.toggle('active', idx === 0));
+
         filtrarTablaDestinatariosModal('TODOS', null);
         const modal = new bootstrap.Modal(document.getElementById('modalDetalleCampana'));
         modal.show();
@@ -2578,30 +2588,124 @@ async function verDetalleDestinatariosCampana(idCampana) {
     }
 }
 
+function buscarEnDestinatariosModal(texto) {
+    ECO_STATE.modalBuscarTexto = String(texto || '').trim().toLowerCase();
+    ECO_STATE.modalPaginaActual = 1;
+    renderizarTablaDestinatariosModalPaginada();
+}
+
+function cambiarPageSizeDestinatariosModal(nuevoSize) {
+    ECO_STATE.modalPageSize = Math.max(5, parseInt(nuevoSize || 10, 10));
+    ECO_STATE.modalPaginaActual = 1;
+    renderizarTablaDestinatariosModalPaginada();
+}
+
+function cambiarPaginaDestinatariosModal(nuevaPagina) {
+    ECO_STATE.modalPaginaActual = Math.max(1, parseInt(nuevaPagina || 1, 10));
+    renderizarTablaDestinatariosModalPaginada();
+}
+
 function filtrarTablaDestinatariosModal(filtro, btnEl) {
     if (btnEl) {
         const group = btnEl.parentElement.querySelectorAll('.btn');
         group.forEach(b => b.classList.remove('active'));
         btnEl.classList.add('active');
     }
+    ECO_STATE.modalFiltroEstado = filtro || 'TODOS';
+    ECO_STATE.modalPaginaActual = 1;
+    renderizarTablaDestinatariosModalPaginada();
+}
 
-    const lista = ECO_STATE.destinatariosModalCache.filter(d => {
-        if (filtro === 'TODOS') return true;
-        if (filtro === 'RESPONDIDO') return parseInt(d.respondido, 10) === 1 || d.estado_envio === 'RESPONDIDO';
-        if (filtro === 'LEIDO') return d.fecha_lectura !== null || d.estado_envio === 'LEIDO' || d.estado_envio === 'RESPONDIDO';
-        return d.estado_envio === filtro;
+function obtenerListaFiltradaDestinatariosModal() {
+    const filtro = ECO_STATE.modalFiltroEstado || 'TODOS';
+    const q = (ECO_STATE.modalBuscarTexto || '').trim().toLowerCase();
+
+    return (ECO_STATE.destinatariosModalCache || []).filter(d => {
+        if (filtro !== 'TODOS') {
+            if (filtro === 'RESPONDIDO' && !(parseInt(d.respondido, 10) === 1 || d.estado_envio === 'RESPONDIDO')) return false;
+            else if (filtro === 'LEIDO' && !(d.fecha_lectura !== null || d.estado_envio === 'LEIDO' || d.estado_envio === 'RESPONDIDO')) return false;
+            else if (filtro !== 'RESPONDIDO' && filtro !== 'LEIDO' && d.estado_envio !== filtro) return false;
+        }
+        if (q) {
+            const nom = String(d.nombre || '').toLowerCase();
+            const tel = String(d.telefono || '').toLowerCase();
+            const sede = String(d.nombre_sede_cliente || '').toLowerCase();
+            const resp = String(d.respuesta_texto || '').toLowerCase();
+            const tanda = `tanda #${d.numero_tanda || 1}`;
+            if (!nom.includes(q) && !tel.includes(q) && !sede.includes(q) && !resp.includes(q) && !tanda.includes(q)) {
+                return false;
+            }
+        }
+        return true;
     });
+}
 
-    document.getElementById('detResumenModal').textContent = `Mostrando ${lista.length} de ${ECO_STATE.destinatariosModalCache.length} destinatarios`;
+function renderizarTablaDestinatariosModalPaginada() {
+    const listaFiltrada = obtenerListaFiltradaDestinatariosModal();
+    const totalFiltrados = listaFiltrada.length;
+    const totalGlobal = (ECO_STATE.destinatariosModalCache || []).length;
+    const pageSize = ECO_STATE.modalPageSize || 10;
+    const totalPaginas = Math.max(1, Math.ceil(totalFiltrados / pageSize));
+
+    if (!ECO_STATE.modalPaginaActual || ECO_STATE.modalPaginaActual > totalPaginas) {
+        ECO_STATE.modalPaginaActual = totalPaginas;
+    }
+    if (ECO_STATE.modalPaginaActual < 1) {
+        ECO_STATE.modalPaginaActual = 1;
+    }
+
+    const pagActual = ECO_STATE.modalPaginaActual;
+    const startIdx = (pagActual - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, totalFiltrados);
+    const paginaItems = listaFiltrada.slice(startIdx, endIdx);
+
+    const lblRes = document.getElementById('detResumenModal');
+    if (lblRes) {
+        lblRes.textContent = totalFiltrados === 0
+            ? `0 coincidencias (de ${totalGlobal} destinatarios)`
+            : `Mostrando ${startIdx + 1}–${endIdx} de ${totalFiltrados} destinatarios${totalFiltrados < totalGlobal ? ` (filtrado de ${totalGlobal})` : ''}`;
+    }
+
+    const ctrlPag = document.getElementById('detControlesPaginacionModal');
+    if (ctrlPag) {
+        if (totalFiltrados <= pageSize) {
+            ctrlPag.innerHTML = `<span class="badge bg-white text-secondary border">Página 1 de 1</span>`;
+        } else {
+            let btns = `
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" ${pagActual <= 1 ? 'disabled' : ''} onclick="cambiarPaginaDestinatariosModal(1)" title="Primera página">
+                    <i class="fa-solid fa-angles-left" style="font-size:0.7rem;"></i>
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" ${pagActual <= 1 ? 'disabled' : ''} onclick="cambiarPaginaDestinatariosModal(${pagActual - 1})" title="Anterior">
+                    <i class="fa-solid fa-chevron-left" style="font-size:0.7rem;"></i>
+                </button>
+            `;
+            for (let p = 1; p <= totalPaginas; p++) {
+                if (p === 1 || p === totalPaginas || Math.abs(p - pagActual) <= 2) {
+                    btns += `<button type="button" class="btn btn-sm ${p === pagActual ? 'btn-dark fw-bold' : 'btn-outline-secondary'} py-0 px-2" style="font-size:0.75rem;" onclick="cambiarPaginaDestinatariosModal(${p})">${p}</button>`;
+                } else if (Math.abs(p - pagActual) === 3) {
+                    btns += `<span class="text-muted px-1">…</span>`;
+                }
+            }
+            btns += `
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" ${pagActual >= totalPaginas ? 'disabled' : ''} onclick="cambiarPaginaDestinatariosModal(${pagActual + 1})" title="Siguiente">
+                    <i class="fa-solid fa-chevron-right" style="font-size:0.7rem;"></i>
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" ${pagActual >= totalPaginas ? 'disabled' : ''} onclick="cambiarPaginaDestinatariosModal(${totalPaginas})" title="Última página">
+                    <i class="fa-solid fa-angles-right" style="font-size:0.7rem;"></i>
+                </button>
+            `;
+            ctrlPag.innerHTML = btns;
+        }
+    }
 
     const tbody = document.getElementById('tbodyDetalleDestinatarios');
-    if (lista.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-muted">No hay destinatarios en este estado.</td></tr>`;
+    if (paginaItems.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">No se encontraron destinatarios con este filtro o búsqueda.</td></tr>`;
         return;
     }
 
     let html = '';
-    lista.forEach(d => {
+    paginaItems.forEach(d => {
         let badge = `<span class="badge bg-secondary">${escapeHtml(d.estado_envio)}</span>`;
         if (d.estado_envio === 'RESPONDIDO' || parseInt(d.respondido, 10) === 1) {
             badge = `<span class="badge bg-success"><i class="fa-solid fa-reply me-1"></i>RESPONDIDO</span>`;
@@ -2624,6 +2728,9 @@ function filtrarTablaDestinatariosModal(filtro, btnEl) {
         const fProg = d.fecha_programada ? ` (${escapeHtml(d.fecha_programada)})` : '';
         const infoEnvio = d.fecha_envio ? escapeHtml(d.fecha_envio) : `<span class="badge bg-light text-dark border">Tanda #${numTanda}${fProg}</span>`;
 
+        const sedeCliente = d.nombre_sede_cliente || (ECO_STATE.campanaModalActual?.nombre_sede || 'General');
+        const badgeSedeCli = `<span class="badge bg-light text-dark border" style="font-size:0.72rem;"><i class="fa-solid fa-store text-primary me-1"></i>${escapeHtml(sedeCliente)}</span>`;
+
         const paramsUrlChat = new URLSearchParams();
         if (d.telefono) paramsUrlChat.set('search', d.telefono);
         if (parseInt(d.id_conversacion || 0, 10) > 0) paramsUrlChat.set('conv_id', d.id_conversacion);
@@ -2633,6 +2740,7 @@ function filtrarTablaDestinatariosModal(filtro, btnEl) {
         html += `
             <tr>
                 <td class="fw-semibold">${escapeHtml(d.nombre)}</td>
+                <td>${badgeSedeCli}</td>
                 <td><code>${escapeHtml(d.telefono)}</code></td>
                 <td class="text-center">${badge}</td>
                 <td class="small text-muted">${infoEnvio}</td>
@@ -2651,11 +2759,13 @@ function exportarDestinatariosCampanaCsv() {
         return;
     }
     const camp = ECO_STATE.campanaModalActual || {};
-    const headers = ['Cliente', 'Telefono', 'Estado', 'Tanda', 'Fecha_Envio', 'Fecha_Entrega', 'Fecha_Lectura', 'Respondido', 'Respuesta_Cliente', 'Error_Detalle', 'Costo_USD'];
+    const headers = ['Cliente', 'Sede_Cliente', 'Telefono', 'Estado', 'Tanda', 'Fecha_Envio', 'Fecha_Entrega', 'Fecha_Lectura', 'Respondido', 'Respuesta_Cliente', 'Error_Detalle', 'Costo_USD'];
     const rows = [headers.join(',')];
     ECO_STATE.destinatariosModalCache.forEach(d => {
+        const sedeCli = d.nombre_sede_cliente || (camp.nombre_sede || 'General');
         const vals = [
             `"${String(d.nombre || '').replace(/"/g, '""')}"`,
+            `"${String(sedeCli).replace(/"/g, '""')}"`,
             `"${String(d.telefono || '')}"`,
             `"${String(d.estado_envio || '')}"`,
             d.numero_tanda || 1,
