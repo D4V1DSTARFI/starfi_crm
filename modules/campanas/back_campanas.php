@@ -972,13 +972,14 @@ switch ($action) {
         }
 
         // Obtener cuota diaria y tarifa oficial de la sede (con la comisión de waba_tarifas_sede incluida)
-        $res_q = mysqli_query($con, "SELECT IFNULL(q.limite_diario_mensajes, 250) AS limite_diario_mensajes,
+        $res_q = mysqli_query($con, "SELECT IFNULL(q.limite_diario_mensajes, IFNULL(l.limite_solicitudes, 250)) AS limite_diario_mensajes,
                                             IFNULL(q.cadencia_ms, 1000) AS cadencia_ms,
                                             IFNULL(q.costo_marketing_usd, 0.0700) AS costo_marketing_base_usd,
                                             IFNULL(q.costo_utility_usd, 0.0150) AS costo_utility_base_usd,
                                             IFNULL(wt.tipo_tarifa, 'PORCENTAJE') AS waba_tipo_tarifa,
                                             IFNULL(wt.valor, 10.00) AS waba_valor_tarifa
                                      FROM sedes s
+                                     LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id AND l.estado = 'ACTIVO'
                                      LEFT JOIN campanas_cuotas_sede q ON q.id_sede = s.id
                                      LEFT JOIN waba_tarifas_sede wt ON wt.id_sede = s.id
                                      WHERE s.id = $id_sede LIMIT 1");
@@ -996,6 +997,12 @@ switch ($action) {
             $base_util_sede = floatval($rq['costo_utility_base_usd']);
             $waba_tipo_sede = $rq['waba_tipo_tarifa'] ?: 'PORCENTAJE';
             $waba_val_sede = floatval($rq['waba_valor_tarifa'] ?? 10.00);
+        }
+        // Si el usuario especificó una cuota diaria mayor (ej. 1000/día), elevar automáticamente el tope diario de la sede para no truncarla a 250
+        $cuota_solicitada = max(1, intval($_POST['cuota_diaria_programada'] ?? $limite_diario));
+        if ($cuota_solicitada > $limite_diario) {
+            $limite_diario = min(100000, $cuota_solicitada);
+            mysqli_query($con, "INSERT INTO campanas_cuotas_sede (id_sede, limite_diario_mensajes, cadencia_ms) VALUES ($id_sede, $limite_diario, $cadencia_ms) ON DUPLICATE KEY UPDATE limite_diario_mensajes = GREATEST(limite_diario_mensajes, $limite_diario)");
         }
         // Aplicar el precio final oficial de la sede según la categoría de la plantilla (UTILITY o MARKETING) con la comisión configurada en waba_tarifas_sede
         $base_tarifa_aplicable = ($template_category === 'UTILITY') ? $base_util_sede : $base_mkt_sede;
@@ -1295,7 +1302,7 @@ switch ($action) {
         }
 
         // Obtener configuración de flujo diario de la sede
-        $res_q = mysqli_query($con, "SELECT limite_diario_mensajes, cadencia_ms FROM campanas_cuotas_sede WHERE id_sede = $id_sede LIMIT 1");
+        $res_q = mysqli_query($con, "SELECT IFNULL(q.limite_diario_mensajes, IFNULL(l.limite_solicitudes, 250)) AS limite_diario_mensajes, IFNULL(q.cadencia_ms, 1000) AS cadencia_ms FROM sedes s LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id AND l.estado = 'ACTIVO' LEFT JOIN campanas_cuotas_sede q ON q.id_sede = s.id WHERE s.id = $id_sede LIMIT 1");
         $limite_diario_sede = 250;
         $cadencia_ms = 1000;
         if ($res_q && mysqli_num_rows($res_q) > 0) {
@@ -1305,6 +1312,9 @@ switch ($action) {
         }
 
         $cuota_campana = max(1, intval($camp['cuota_diaria_programada'] ?? $limite_diario_sede));
+        if ($cuota_campana > $limite_diario_sede) {
+            $limite_diario_sede = $cuota_campana;
+        }
         $tope_efectivo_hoy = min($limite_diario_sede, $cuota_campana);
 
         $res_hoy = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $id_sede AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
@@ -1396,6 +1406,257 @@ switch ($action) {
         break;
 
     // =========================================================================
+    // 4.2B EDITAR / REAJUSTAR CAMPAÑA ANTES DE APROBAR (CUOTA DIARIA, TOPE DE CONTACTOS, HORA, VARIABLES, FLYER)
+    // =========================================================================
+    case 'edit_pending_campaign':
+        $id_campana = intval($_POST['id_campana'] ?? 0);
+        if ($id_campana <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'ID de campaña inválido.']);
+            exit;
+        }
+        $res_c = mysqli_query($con, "SELECT * FROM campanas_difusion WHERE id = $id_campana LIMIT 1");
+        if (!$res_c || mysqli_num_rows($res_c) === 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Campaña no encontrada.']);
+            exit;
+        }
+        $camp = mysqli_fetch_assoc($res_c);
+        $id_sede = intval($camp['id_sede']);
+        if (!$es_global && $id_sede_usuario > 0 && $id_sede !== $id_sede_usuario) {
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado: solo puede editar campañas de su propia sede.']);
+            exit;
+        }
+
+        $nuevo_nombre = trim($_POST['nombre_campana'] ?? $camp['nombre_campana']);
+        if ($nuevo_nombre === '') {
+            $nuevo_nombre = $camp['nombre_campana'];
+        }
+        $nueva_cuota_diaria = max(1, min(100000, intval($_POST['cuota_diaria_programada'] ?? ($camp['cuota_diaria_programada'] ?: 250))));
+        $nueva_hora_raw = trim($_POST['hora_programada'] ?? ($camp['hora_programada'] ?: '09:00:00'));
+        if (!preg_match('/^([01][0-9]|2[0-3]):([0-5][0-9])(:[0-5][0-9])?$/', $nueva_hora_raw)) {
+            $nueva_hora_raw = '09:00:00';
+        } elseif (strlen($nueva_hora_raw) === 5) {
+            $nueva_hora_raw .= ':00';
+        }
+        $nuevo_piloto = isset($_POST['piloto_automatico']) ? (intval($_POST['piloto_automatico']) === 1 ? 1 : 0) : intval($camp['piloto_automatico'] ?? 1);
+        $nuevo_presupuesto = max(0, floatval($_POST['presupuesto_max_usd'] ?? ($camp['presupuesto_max_usd'] ?? 0)));
+        $tope_destinatarios = intval($_POST['tope_destinatarios'] ?? 0); // Si > 0 y menor que los pendientes, recorta la cola
+        $cuota_por_sede_recorte = intval($_POST['cuota_por_sede'] ?? 0); // Si > 0, deja máximo X destinatarios por cada sede de origen del cliente
+
+        // Si la nueva cuota diaria supera el límite diario actual de la sede, actualizar también el límite diario de la sede para que no la frene a 250
+        mysqli_query($con, "INSERT INTO campanas_cuotas_sede (id_sede, limite_diario_mensajes, cadencia_ms) VALUES ($id_sede, $nueva_cuota_diaria, 1000) ON DUPLICATE KEY UPDATE limite_diario_mensajes = GREATEST(limite_diario_mensajes, $nueva_cuota_diaria)");
+
+        // 1. Si pidió recortar por cuota por sede (ej: máximo 100 o 250 por sede en una campaña global)
+        if ($cuota_por_sede_recorte > 0) {
+            $res_all_d = mysqli_query($con, "SELECT d.id, COALESCE(c.id_sede, 0) AS id_sede_cli
+                                             FROM campanas_difusion_destinatarios d
+                                             LEFT JOIN clientes_contactos c ON c.id = d.id_cliente
+                                             WHERE d.id_campana = $id_campana AND d.estado_envio = 'PENDIENTE'
+                                             ORDER BY d.id ASC");
+            $conteo_s = [];
+            $ids_eliminar = [];
+            if ($res_all_d) {
+                while ($rd = mysqli_fetch_assoc($res_all_d)) {
+                    $sc = intval($rd['id_sede_cli']);
+                    if (!isset($conteo_s[$sc])) $conteo_s[$sc] = 0;
+                    if ($conteo_s[$sc] < $cuota_por_sede_recorte) {
+                        $conteo_s[$sc]++;
+                    } else {
+                        $ids_eliminar[] = intval($rd['id']);
+                    }
+                }
+            }
+            if (!empty($ids_eliminar)) {
+                foreach (array_chunk($ids_eliminar, 500) as $chunk_del) {
+                    $in_del = implode(',', $chunk_del);
+                    mysqli_query($con, "DELETE FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' AND id IN ($in_del)");
+                }
+            }
+        }
+
+        // 2. Si pidió recortar al tope total de destinatarios (ej: bajar de 9354 a 1000 contactos en 1 tanda)
+        $costo_unit = floatval($camp['costo_unitario_usd'] ?: 0.0770);
+        if ($nuevo_presupuesto > 0 && $costo_unit > 0) {
+            $max_pres = intval(floor(($nuevo_presupuesto + 0.00001) / $costo_unit));
+            if ($max_pres > 0 && ($tope_destinatarios <= 0 || $max_pres < $tope_destinatarios)) {
+                $tope_destinatarios = $max_pres;
+            }
+        }
+
+        if ($tope_destinatarios > 0) {
+            $res_keep = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana ORDER BY FIELD(estado_envio, 'RESPONDIDO','LEIDO','ENTREGADO','ENVIADO','PENDIENTE','FALLIDO'), id ASC LIMIT $tope_destinatarios");
+            $keep_ids = [];
+            if ($res_keep) {
+                while ($rk = mysqli_fetch_assoc($res_keep)) {
+                    $keep_ids[] = intval($rk['id']);
+                }
+            }
+            if (!empty($keep_ids)) {
+                // Eliminar los PENDIENTE que excedan el tope
+                $res_all_p = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE'");
+                $keep_map = array_flip($keep_ids);
+                $del_ids = [];
+                if ($res_all_p) {
+                    while ($rp = mysqli_fetch_assoc($res_all_p)) {
+                        $pid = intval($rp['id']);
+                        if (!isset($keep_map[$pid])) {
+                            $del_ids[] = $pid;
+                        }
+                    }
+                }
+                if (!empty($del_ids)) {
+                    foreach (array_chunk($del_ids, 500) as $chunk_del) {
+                        $in_del = implode(',', $chunk_del);
+                        mysqli_query($con, "DELETE FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' AND id IN ($in_del)");
+                    }
+                }
+            }
+        }
+
+        // 3. Reasignar numero_tanda y fecha_programada a todos los destinatarios PENDIENTE según la nueva cuota diaria
+        $res_hoy = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $id_sede AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
+        $enviados_hoy = ($res_hoy && $rh = mysqli_fetch_assoc($res_hoy)) ? intval($rh['c']) : 0;
+        $cupo_hoy = max(0, $nueva_cuota_diaria - $enviados_hoy);
+
+        $res_pend_ids = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' ORDER BY id ASC");
+        $pend_ids = [];
+        if ($res_pend_ids) {
+            while ($r_pi = mysqli_fetch_assoc($res_pend_ids)) {
+                $pend_ids[] = intval($r_pi['id']);
+            }
+        }
+
+        $total_pend = count($pend_ids);
+        $cursor_p = 0;
+        $num_tanda_actual = 1;
+        $dia_offset = 0;
+
+        if ($total_pend > 0) {
+            if ($cupo_hoy > 0) {
+                $slice_1 = array_slice($pend_ids, 0, $cupo_hoy);
+                if (!empty($slice_1)) {
+                    $fecha_t1 = date('Y-m-d');
+                    foreach (array_chunk($slice_1, 500) as $ch_1) {
+                        $in_1 = implode(',', $ch_1);
+                        mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET numero_tanda = 1, fecha_programada = '$fecha_t1' WHERE id IN ($in_1)");
+                    }
+                    $cursor_p += count($slice_1);
+                    $num_tanda_actual = 2;
+                    $dia_offset = 1;
+                }
+            } else {
+                $dia_offset = 1;
+            }
+
+            while ($cursor_p < $total_pend) {
+                $slice_t = array_slice($pend_ids, $cursor_p, $nueva_cuota_diaria);
+                if (empty($slice_t)) break;
+                $fecha_t = date('Y-m-d', strtotime("+$dia_offset days"));
+                foreach (array_chunk($slice_t, 500) as $ch_t) {
+                    $in_t = implode(',', $ch_t);
+                    mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET numero_tanda = $num_tanda_actual, fecha_programada = '$fecha_t' WHERE id IN ($in_t)");
+                }
+                $cursor_p += count($slice_t);
+                $num_tanda_actual++;
+                $dia_offset++;
+            }
+        }
+
+        $nuevas_tandas_totales = max(1, ($num_tanda_actual > 1 ? $num_tanda_actual - 1 : 1));
+
+        // 4. Actualizar variables de plantilla si fueron enviadas
+        $sql_extra_cols = "";
+        if (!empty($_POST['param_cuerpo']) || !empty($_POST['param_eslogan'])) {
+            $p_cuerpo = sanitizeMetaTemplateParam($_POST['param_cuerpo'] ?? $camp['param_cuerpo'], true);
+            $p_eslogan = sanitizeMetaTemplateParam($_POST['param_eslogan'] ?? $camp['param_eslogan'], true);
+            $p_cuerpo_esc = mysqli_real_escape_string($con, $p_cuerpo);
+            $p_eslogan_esc = mysqli_real_escape_string($con, $p_eslogan);
+            $sql_extra_cols .= ", param_cuerpo = '$p_cuerpo_esc', param_eslogan = '$p_eslogan_esc'";
+
+            $tpl_json_curr = !empty($camp['template_params_json']) ? json_decode($camp['template_params_json'], true) : [];
+            if (is_array($tpl_json_curr) && isset($tpl_json_curr['body_params']) && is_array($tpl_json_curr['body_params'])) {
+                if (count($tpl_json_curr['body_params']) >= 3) {
+                    $tpl_json_curr['body_params'][1] = $p_cuerpo;
+                    $tpl_json_curr['body_params'][2] = $p_eslogan;
+                } elseif (count($tpl_json_curr['body_params']) === 2) {
+                    $tpl_json_curr['body_params'][0] = $p_cuerpo;
+                    $tpl_json_curr['body_params'][1] = $p_eslogan;
+                } elseif (count($tpl_json_curr['body_params']) === 1) {
+                    $tpl_json_curr['body_params'][0] = $p_cuerpo;
+                }
+                $json_upd_esc = mysqli_real_escape_string($con, json_encode($tpl_json_curr, JSON_UNESCAPED_UNICODE));
+                $sql_extra_cols .= ", template_params_json = '$json_upd_esc'";
+            }
+        }
+
+        // 5. Si adjuntó un nuevo flyer/imagen en la edición
+        if (isset($_FILES['header_imagen']) && $_FILES['header_imagen']['error'] === UPLOAD_ERR_OK) {
+            $tmp_img = $_FILES['header_imagen']['tmp_name'];
+            $mime_img = @mime_content_type($tmp_img) ?: '';
+            $dir_upload = __DIR__ . '/../../uploads/campanas';
+            if (!is_dir($dir_upload)) @mkdir($dir_upload, 0775, true);
+            $new_rel_path = null;
+            if ($mime_img === 'image/jpeg' || $mime_img === 'image/jpg') {
+                $fname_img = 'camp_' . $id_sede . '_' . time() . '_' . mt_rand(100, 999) . '.jpg';
+                if (@move_uploaded_file($tmp_img, $dir_upload . DIRECTORY_SEPARATOR . $fname_img)) {
+                    $new_rel_path = 'uploads/campanas/' . $fname_img;
+                }
+            } elseif ($mime_img === 'image/png') {
+                $fname_img = 'camp_' . $id_sede . '_' . time() . '_' . mt_rand(100, 999) . '.png';
+                if (@move_uploaded_file($tmp_img, $dir_upload . DIRECTORY_SEPARATOR . $fname_img)) {
+                    $new_rel_path = 'uploads/campanas/' . $fname_img;
+                }
+            } elseif (in_array($mime_img, ['image/webp', 'image/gif', 'image/bmp'], true) && function_exists('imagecreatefromstring')) {
+                $raw_bytes = @file_get_contents($tmp_img);
+                $gd_img = $raw_bytes ? @imagecreatefromstring($raw_bytes) : false;
+                if ($gd_img !== false) {
+                    $fname_img = 'camp_' . $id_sede . '_' . time() . '_' . mt_rand(100, 999) . '.png';
+                    if (@imagepng($gd_img, $dir_upload . DIRECTORY_SEPARATOR . $fname_img, 8)) {
+                        $new_rel_path = 'uploads/campanas/' . $fname_img;
+                    }
+                    @imagedestroy($gd_img);
+                }
+            }
+            if ($new_rel_path) {
+                $rel_esc = mysqli_real_escape_string($con, $new_rel_path);
+                $sql_extra_cols .= ", header_imagen_path = '$rel_esc', header_media_id = NULL";
+            }
+        }
+
+        recalcularMetricasCampana($con, $id_campana);
+        $res_cnt = mysqli_query($con, "SELECT COUNT(*) AS tot, SUM(CASE WHEN estado_envio='PENDIENTE' THEN 1 ELSE 0 END) AS pend FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana");
+        $rcnt = ($res_cnt && $r_c = mysqli_fetch_assoc($res_cnt)) ? $r_c : ['tot' => 0, 'pend' => 0];
+        $nuevo_total_dest = intval($rcnt['tot']);
+        $nuevo_pend_dest = intval($rcnt['pend']);
+        $nuevo_costo_est = round($nuevo_total_dest * $costo_unit, 4);
+
+        $nom_esc = mysqli_real_escape_string($con, $nuevo_nombre);
+        $hora_esc = mysqli_real_escape_string($con, $nueva_hora_raw);
+
+        mysqli_query($con, "UPDATE campanas_difusion
+                            SET nombre_campana = '$nom_esc',
+                                cuota_diaria_programada = $nueva_cuota_diaria,
+                                total_tandas = $nuevas_tandas_totales,
+                                hora_programada = '$hora_esc',
+                                piloto_automatico = $nuevo_piloto,
+                                presupuesto_max_usd = $nuevo_presupuesto,
+                                total_destinatarios = $nuevo_total_dest,
+                                pendientes = $nuevo_pend_dest,
+                                costo_estimado_usd = $nuevo_costo_est
+                                $sql_extra_cols
+                            WHERE id = $id_campana");
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => "Campaña actualizada: {$nuevo_total_dest} contactos en {$nuevas_tandas_totales} tanda(s) de hasta {$nueva_cuota_diaria}/día (\${$nuevo_costo_est} USD).",
+            'id_campana' => $id_campana,
+            'total_destinatarios' => $nuevo_total_dest,
+            'cuota_diaria_programada' => $nueva_cuota_diaria,
+            'total_tandas' => $nuevas_tandas_totales,
+            'costo_estimado_usd' => $nuevo_costo_est
+        ]);
+        break;
+
+    // =========================================================================
     // 4.3 ALTERNAR PILOTO AUTOMÁTICO DIARIO DE UNA CAMPAÑA
     // =========================================================================
     case 'toggle_autopilot':
@@ -1438,6 +1699,7 @@ switch ($action) {
                     $cad_sede = max(250, intval($rq['cadencia_ms']));
                 }
                 $cuota_c = max(1, intval($cap['cuota_diaria_programada'] ?: $lim_sede));
+                if ($cuota_c > $lim_sede) $lim_sede = $cuota_c;
                 $tope_hoy = min($lim_sede, $cuota_c);
 
                 $rh_s = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $sid AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
@@ -1501,6 +1763,7 @@ switch ($action) {
         $res_q = mysqli_query($con, "SELECT limite_diario_mensajes FROM campanas_cuotas_sede WHERE id_sede = $id_sede LIMIT 1");
         $limite_diario_sede = ($res_q && $rq = mysqli_fetch_assoc($res_q)) ? max(1, intval($rq['limite_diario_mensajes'])) : 250;
         $cuota_campana = max(1, intval($camp['cuota_diaria_programada'] ?? $limite_diario_sede));
+        if ($cuota_campana > $limite_diario_sede) $limite_diario_sede = $cuota_campana;
         $limite_diario = min($limite_diario_sede, $cuota_campana);
 
         $res_hoy = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $id_sede AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
@@ -1993,6 +2256,7 @@ switch ($action) {
             $cadencia_ms = max(250, intval($rq['cadencia_ms']));
         }
         $cuota_campana = max(1, intval($camp['cuota_diaria_programada'] ?: $limite_diario_sede));
+        if ($cuota_campana > $limite_diario_sede) $limite_diario_sede = $cuota_campana;
         $tope_efectivo = min($limite_diario_sede, $cuota_campana);
 
         $res_hoy = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $id_sede AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");

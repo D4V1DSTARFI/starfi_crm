@@ -1209,7 +1209,8 @@ function recalcularPresupuestoCampana() {
     const inpCuota = document.getElementById('campCuotaDiariaProg');
     let cuotaDiariaProg = inpCuota ? parseInt(inpCuota.value || limSede, 10) : limSede;
     if (isNaN(cuotaDiariaProg) || cuotaDiariaProg < 1) cuotaDiariaProg = 1;
-    if (cuotaDiariaProg > limSede) cuotaDiariaProg = limSede;
+    if (cuotaDiariaProg > 100000) cuotaDiariaProg = 100000;
+    const dispEfectivoHoy = Math.max(dispHoySede, cuotaDiariaProg);
 
     const pilotoAuto = document.getElementById('campPilotoAutomatico')?.checked ?? true;
     const horaProgInput = (document.getElementById('campHoraProgramada')?.value || '09:00').trim();
@@ -1230,7 +1231,7 @@ function recalcularPresupuestoCampana() {
     document.getElementById('lblCostoEstimadoCampana').textContent = `$${costoEstimado} USD`;
 
     // Calcular desglose de tandas diarias proyectadas
-    const cupoTanda1 = Math.min(cuotaDiariaProg, dispHoySede);
+    const cupoTanda1 = Math.min(cuotaDiariaProg, dispEfectivoHoy);
     let restantes = efectivos;
     const tandas = [];
     let diaOffset = 0;
@@ -1544,7 +1545,7 @@ async function iniciarLanzamientoCampana() {
     const limSede = parseInt(sedeObj.limite_diario_mensajes || 250, 10);
     let cuotaDiariaProg = parseInt(document.getElementById('campCuotaDiariaProg')?.value || limSede, 10);
     if (isNaN(cuotaDiariaProg) || cuotaDiariaProg < 1) cuotaDiariaProg = limSede;
-    cuotaDiariaProg = Math.min(cuotaDiariaProg, limSede);
+    cuotaDiariaProg = Math.min(cuotaDiariaProg, 100000);
     const pilotoAutomatico = document.getElementById('campPilotoAutomatico')?.checked ? 1 : 0;
     const horaProgramada = (document.getElementById('campHoraProgramada')?.value || '09:00').trim();
     const horaProg12 = formatearHora12h(horaProgramada);
@@ -1861,6 +1862,229 @@ async function cancelarCampanaPendiente(idCampana) {
         }
     } catch (e) {
         console.error(e);
+    }
+}
+
+window.recalcularPreviewModalEditarCampana = function (costoUnit, totalOriginal) {
+    const inpCuota = document.getElementById('editCampCuotaDiaria');
+    const inpTope = document.getElementById('editCampTopeDestinatarios');
+    const inpPres = document.getElementById('editCampPresupuestoMax');
+    const lblPreview = document.getElementById('editCampLivePreviewBox');
+    if (!inpCuota || !inpTope || !lblPreview) return;
+
+    let cuota = Math.max(1, parseInt(inpCuota.value || 1000, 10));
+    let tope = Math.max(1, Math.min(totalOriginal, parseInt(inpTope.value || totalOriginal, 10)));
+    const pres = parseFloat(inpPres?.value || 0);
+    if (pres > 0 && costoUnit > 0) {
+        const maxPorPres = Math.max(1, Math.floor((pres + 0.00001) / costoUnit));
+        if (maxPorPres < tope) tope = maxPorPres;
+    }
+
+    const tandas = Math.max(1, Math.ceil(tope / cuota));
+    const costoTotal = (tope * costoUnit).toFixed(2);
+    lblPreview.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <i class="fa-solid fa-calculator text-primary me-1"></i>
+                Resultado tras guardar: <strong>${tope} contactos</strong> en <strong>${tandas} ${tandas === 1 ? 'tanda (1 día)' : `tandas (${tandas} días)`}</strong> a razón de <strong>${cuota} msgs/día</strong>
+            </div>
+            <span class="badge bg-warning text-dark border border-warning fs-6">$${costoTotal} USD</span>
+        </div>
+    `;
+};
+
+window.aplicarAtajoEdicionCampana = function (modo, totalOriginal, costoUnit) {
+    const inpCuota = document.getElementById('editCampCuotaDiaria');
+    const inpTope = document.getElementById('editCampTopeDestinatarios');
+    const inpCuotaSede = document.getElementById('editCampCuotaPorSede');
+    if (!inpCuota || !inpTope) return;
+
+    if (modo === '1_DIA_1000') {
+        inpCuota.value = 1000;
+        inpTope.value = Math.min(1000, totalOriginal);
+        if (inpCuotaSede) inpCuotaSede.value = '';
+    } else if (modo === 'CUOTA_1000_TODOS') {
+        inpCuota.value = 1000;
+        inpTope.value = totalOriginal;
+        if (inpCuotaSede) inpCuotaSede.value = '';
+    } else if (modo === 'CUOTA_2000_TODOS') {
+        inpCuota.value = 2000;
+        inpTope.value = totalOriginal;
+        if (inpCuotaSede) inpCuotaSede.value = '';
+    } else if (modo === 'TODOS_1_DIA') {
+        inpCuota.value = totalOriginal;
+        inpTope.value = totalOriginal;
+        if (inpCuotaSede) inpCuotaSede.value = '';
+    }
+    window.recalcularPreviewModalEditarCampana(costoUnit, totalOriginal);
+};
+
+async function abrirModalEditarCampana(idCampana) {
+    const camp = ECO_STATE.campanas.find(c => parseInt(c.id, 10) === parseInt(idCampana, 10));
+    if (!camp) {
+        mostrarToastStarfi('No se encontró la información de la campaña.', 'warning');
+        return;
+    }
+
+    const totalActual = parseInt(camp.total_destinatarios || 0, 10);
+    const cuotaActual = parseInt(camp.cuota_diaria_programada || 250, 10);
+    const tandasActual = parseInt(camp.total_tandas || Math.max(1, Math.ceil(totalActual / cuotaActual)), 10);
+    const horaActual = (camp.hora_programada || '09:00').substring(0, 5);
+    const pilotoActual = parseInt(camp.piloto_automatico ?? 1, 10) === 1;
+    const presMaxActual = parseFloat(camp.presupuesto_max_usd || 0);
+    const costoUnit = parseFloat(camp.costo_unitario_usd || 0.0770);
+    const paramCuerpo = camp.param_cuerpo || '';
+    const paramEslogan = camp.param_eslogan || '';
+    const imgPathSaved = (camp.header_imagen_path || '').trim();
+    const campHeaderFmt = String(camp.header_format || 'IMAGE').toUpperCase();
+
+    const ok = await mostrarDialogoStarfi({
+        badge: `EDITAR CAMPAÑA #${camp.id}`,
+        badgeColor: '#F59E0B',
+        title: `Ajustar y Corregir Campaña`,
+        icon: 'fa-solid fa-pen-to-square',
+        iconBg: 'rgba(245, 158, 11, 0.2)',
+        iconColor: '#FBBF24',
+        confirmText: '<i class="fa-solid fa-floppy-disk me-1"></i>Guardar Ajustes y Recalcular Tandas',
+        confirmColor: '#E85B14',
+        cancelText: 'Cancelar',
+        bodyHtml: `
+            <div class="mb-2">
+                <label class="form-label small fw-bold text-dark mb-1">Nombre de la Campaña</label>
+                <input type="text" id="editCampNombre" class="form-control form-control-sm fw-semibold" value="${escapeHtml(camp.nombre_campana || '')}">
+            </div>
+
+            <!-- Atajos rápidos para corregir tandas y cantidad -->
+            <div class="p-2 px-2.5 rounded-3 border mb-2" style="background: #FFFBEB; border-color: #FDE68A !important;">
+                <div class="small fw-bold text-dark mb-1" style="font-size: 0.74rem;">
+                    <i class="fa-solid fa-wand-magic-sparkles text-warning me-1"></i>Atajos Rápidos para Corregir Días / Tandas:
+                </div>
+                <div class="d-flex flex-wrap gap-1">
+                    <button type="button" class="btn btn-sm btn-warning text-dark py-0 px-2 fw-bold" style="font-size:0.71rem;" onclick="aplicarAtajoEdicionCampana('1_DIA_1000', ${totalActual}, ${costoUnit})">
+                        Solo 1,000 msgs en 1 tanda (1 día)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-dark py-0 px-2 fw-semibold" style="font-size:0.71rem;" onclick="aplicarAtajoEdicionCampana('CUOTA_1000_TODOS', ${totalActual}, ${costoUnit})">
+                        Subir ritmo a 1,000/día (${Math.ceil(totalActual / 1000)} tandas)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-dark py-0 px-2 fw-semibold" style="font-size:0.71rem;" onclick="aplicarAtajoEdicionCampana('CUOTA_2000_TODOS', ${totalActual}, ${costoUnit})">
+                        Subir ritmo a 2,000/día (${Math.ceil(totalActual / 2000)} tandas)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 fw-semibold" style="font-size:0.71rem;" onclick="aplicarAtajoEdicionCampana('TODOS_1_DIA', ${totalActual}, ${costoUnit})">
+                        Todos (${totalActual}) en 1 tanda
+                    </button>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-2">
+                <div class="col-6">
+                    <label class="form-label small fw-bold text-dark mb-1" style="font-size:0.75rem;">
+                        Cuota Diaria (Msgs / Día)
+                    </label>
+                    <input type="number" id="editCampCuotaDiaria" class="form-control form-control-sm fw-bold" min="1" max="100000" value="${cuotaActual}" oninput="recalcularPreviewModalEditarCampana(${costoUnit}, ${totalActual})">
+                    <small class="text-muted" style="font-size:0.68rem;">Actualiza también el límite diario de la sede</small>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small fw-bold text-dark mb-1" style="font-size:0.75rem;">
+                        Total Contactos a Enviar (Tope)
+                    </label>
+                    <input type="number" id="editCampTopeDestinatarios" class="form-control form-control-sm fw-bold" min="1" max="${totalActual}" value="${totalActual}" oninput="recalcularPreviewModalEditarCampana(${costoUnit}, ${totalActual})">
+                    <small class="text-muted" style="font-size:0.68rem;">De ${totalActual} encolados actualmente</small>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-2">
+                <div class="col-4">
+                    <label class="form-label small fw-bold text-dark mb-1" style="font-size:0.74rem;">Hora Diaria</label>
+                    <input type="time" id="editCampHoraProg" class="form-control form-control-sm fw-bold" value="${escapeHtml(horaActual)}">
+                </div>
+                <div class="col-4">
+                    <label class="form-label small fw-bold text-dark mb-1" style="font-size:0.74rem;">Presupuesto Máx ($)</label>
+                    <input type="number" step="0.50" min="0" id="editCampPresupuestoMax" class="form-control form-control-sm" placeholder="Sin límite" value="${presMaxActual > 0 ? presMaxActual : ''}" oninput="recalcularPreviewModalEditarCampana(${costoUnit}, ${totalActual})">
+                </div>
+                <div class="col-4">
+                    <label class="form-label small fw-bold text-dark mb-1" style="font-size:0.74rem;">Recortar por Sede</label>
+                    <input type="number" min="0" id="editCampCuotaPorSede" class="form-control form-control-sm" placeholder="Ej: 100/sede">
+                </div>
+            </div>
+
+            <div id="editCampLivePreviewBox" class="p-2 px-3 rounded-3 border bg-light mb-2 small">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <i class="fa-solid fa-calculator text-primary me-1"></i>
+                        Actual: <strong>${totalActual} contactos</strong> en <strong>${tandasActual} ${tandasActual === 1 ? 'tanda' : 'tandas'}</strong> (${cuotaActual} msgs/día)
+                    </div>
+                    <span class="badge bg-warning text-dark border border-warning fs-6">$${(totalActual * costoUnit).toFixed(2)} USD</span>
+                </div>
+            </div>
+
+            <div class="accordion accordion-flush border rounded-3 mb-2" id="accEditVarsCamp">
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed py-2 px-3 small fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseEditVars">
+                            <i class="fa-solid fa-comment-pen text-primary me-2"></i>Editar Texto del Mensaje o Flyer (Opcional)
+                        </button>
+                    </h2>
+                    <div id="collapseEditVars" class="accordion-collapse collapse" data-bs-parent="#accEditVarsCamp">
+                        <div class="accordion-body p-2.5 bg-light">
+                            <div class="mb-2">
+                                <label class="form-label small fw-bold mb-1" style="font-size:0.73rem;">Cuerpo Principal / Variable {{2}}</label>
+                                <textarea id="editCampParamCuerpo" class="form-control form-control-sm" rows="2">${escapeHtml(paramCuerpo)}</textarea>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small fw-bold mb-1" style="font-size:0.73rem;">Cierre / Eslogan / Variable {{3}}</label>
+                                <input type="text" id="editCampParamEslogan" class="form-control form-control-sm" value="${escapeHtml(paramEslogan)}">
+                            </div>
+                            ${campHeaderFmt === 'IMAGE' ? `
+                            <div>
+                                <label class="form-label small fw-bold mb-1" style="font-size:0.73rem;">Reemplazar Imagen / Flyer (${imgPathSaved ? 'Flyer Propio activo' : 'Logo por defecto'})</label>
+                                <input type="file" id="editCampHeaderImg" class="form-control form-control-sm" accept="image/png,image/jpeg,image/webp">
+                            </div>` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="editCampPilotoAuto" ${pilotoActual ? 'checked' : ''}>
+                <label class="form-check-label small fw-bold text-dark" for="editCampPilotoAuto" style="font-size:0.76rem;">
+                    <i class="fa-solid fa-robot text-primary me-1"></i>Piloto Automático Diario Activo
+                </label>
+            </div>
+        `
+    });
+
+    if (!ok) return;
+
+    try {
+        const fd = new FormData();
+        fd.append('action', 'edit_pending_campaign');
+        fd.append('id_campana', idCampana);
+        fd.append('nombre_campana', document.getElementById('editCampNombre')?.value || camp.nombre_campana);
+        fd.append('cuota_diaria_programada', document.getElementById('editCampCuotaDiaria')?.value || cuotaActual);
+        fd.append('tope_destinatarios', document.getElementById('editCampTopeDestinatarios')?.value || totalActual);
+        fd.append('hora_programada', document.getElementById('editCampHoraProg')?.value || horaActual);
+        fd.append('presupuesto_max_usd', document.getElementById('editCampPresupuestoMax')?.value || 0);
+        fd.append('cuota_por_sede', document.getElementById('editCampCuotaPorSede')?.value || 0);
+        fd.append('piloto_automatico', document.getElementById('editCampPilotoAuto')?.checked ? 1 : 0);
+        fd.append('param_cuerpo', document.getElementById('editCampParamCuerpo')?.value || paramCuerpo);
+        fd.append('param_eslogan', document.getElementById('editCampParamEslogan')?.value || paramEslogan);
+
+        const newImgFile = document.getElementById('editCampHeaderImg')?.files?.[0];
+        if (newImgFile) {
+            fd.append('header_imagen', newImgFile);
+        }
+
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (data.status === 'success') {
+            mostrarToastStarfi(data.message || 'Campaña actualizada exitosamente.', 'success');
+            await recargarEcosistema();
+        } else {
+            mostrarToastStarfi(data.message || 'No se pudo actualizar la campaña.', 'danger');
+        }
+    } catch (e) {
+        console.error(e);
+        mostrarToastStarfi('Error de red al guardar los cambios de la campaña.', 'danger');
     }
 }
 
@@ -2222,6 +2446,9 @@ function renderizarTablaCampanas() {
                 <button type="button" class="btn btn-success camp-action-icon-btn" data-tooltip="Aprobar campaña e iniciar envío" aria-label="Aprobar campaña e iniciar envío" onclick="aprobarEIniciarCampana(${c.id})">
                     <i class="fa-solid fa-check"></i>
                 </button>
+                <button type="button" class="btn btn-outline-warning text-dark camp-action-icon-btn" data-tooltip="Editar cuota diaria, tandas, audiencia o mensaje" aria-label="Editar campaña" onclick="abrirModalEditarCampana(${c.id})">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </button>
                 <button type="button" class="btn btn-outline-danger camp-action-icon-btn" data-tooltip="Cancelar campaña" aria-label="Cancelar campaña" onclick="cancelarCampanaPendiente(${c.id})">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -2230,6 +2457,9 @@ function renderizarTablaCampanas() {
             botonesAccion = `
                 <button type="button" class="btn btn-warning camp-action-icon-btn" data-tooltip="Ejecutar tanda diaria pendiente ahora" aria-label="Ejecutar tanda diaria pendiente ahora" onclick="reanudarCampanaPendiente(${c.id})">
                     <i class="fa-solid fa-play"></i>
+                </button>
+                <button type="button" class="btn btn-outline-warning text-dark camp-action-icon-btn" data-tooltip="Editar cuota diaria, tandas o pendientes" aria-label="Editar campaña" onclick="abrirModalEditarCampana(${c.id})">
+                    <i class="fa-solid fa-pen-to-square"></i>
                 </button>
                 <button type="button" class="btn ${piloto ? 'btn-outline-info' : 'btn-outline-secondary'} camp-action-icon-btn" data-tooltip="${piloto ? 'Piloto Automático Activo (clic para pausar)' : 'Piloto Automático Pausado (clic para activar)'}" aria-label="Alternar Piloto Automático" onclick="togglePilotoAutomaticoCampana(${c.id}, ${!piloto})">
                     <i class="fa-solid fa-robot"></i>

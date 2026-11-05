@@ -191,6 +191,7 @@ while ($camp = mysqli_fetch_assoc($res)) {
     }
 
     $cuota_camp = max(1, intval($camp['cuota_diaria_programada'] ?: $lim_sede));
+    if ($cuota_camp > $lim_sede) $lim_sede = $cuota_camp;
     $tope_hoy = min($lim_sede, $cuota_camp);
 
     // Verificar enviados hoy en la sede y en la campaña
