@@ -157,14 +157,18 @@ function recalcularCampanaCron($con, $id_campana) {
         WHERE c.id = $id_campana");
 }
 
-// Buscar únicamente campañas APROBADAS con Piloto Automático activo, destinatarios pendientes y cuya hora programada ya llegó
-$sql = "SELECT * FROM campanas_difusion 
-        WHERE piloto_automatico = 1 
-          AND aprobado_por IS NOT NULL 
-          AND pendientes > 0 
-          AND IFNULL(hora_programada, '00:00:00') <= CURTIME()
-          AND estado NOT IN ('PENDIENTE_APROBACION', 'CANCELADA', 'COMPLETADA', 'TOPE_PRESUPUESTO')
-        ORDER BY id ASC";
+// Liberar filas atascadas en PROCESANDO por más de 3 minutos sin wamid
+@mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE' WHERE estado_envio = 'PROCESANDO' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '') AND fecha_envio < DATE_SUB(NOW(), INTERVAL 3 MINUTE)");
+
+// Buscar únicamente campañas APROBADAS con Piloto Automático activo, destinatarios pendientes, cuya hora programada ya llegó y que NO estén enviando en vivo desde el navegador en los últimos 90s
+$sql = "SELECT * FROM campanas_difusion c
+        WHERE c.piloto_automatico = 1 
+          AND c.aprobado_por IS NOT NULL 
+          AND c.pendientes > 0 
+          AND IFNULL(c.hora_programada, '00:00:00') <= CURTIME()
+          AND c.estado NOT IN ('PENDIENTE_APROBACION', 'CANCELADA', 'COMPLETADA', 'TOPE_PRESUPUESTO')
+          AND NOT EXISTS (SELECT 1 FROM campanas_difusion_destinatarios d_act WHERE d_act.id_campana = c.id AND d_act.fecha_envio >= DATE_SUB(NOW(), INTERVAL 90 SECOND))
+        ORDER BY c.id ASC";
 $res = mysqli_query($con, $sql);
 
 if (!$res || mysqli_num_rows($res) === 0) {
@@ -232,13 +236,32 @@ while ($camp = mysqli_fetch_assoc($res)) {
     while ($dest = mysqli_fetch_assoc($res_dest)) {
         $id_dest = intval($dest['id']);
         $telefono_limpio = normalizeVePhoneCron($dest['telefono']);
+        $tel_esc_lock = mysqli_real_escape_string($con, $telefono_limpio);
+        $template_name = $camp['template_name'] ?: 'starfi_difusion_directa';
+        $tpl_esc_lock = mysqli_real_escape_string($con, $template_name);
+
+        // Reclamo atómico de la fila para evitar colisiones con navegador u otro cron
+        mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
+                            SET estado_envio = 'PROCESANDO', fecha_envio = NOW() 
+                            WHERE id = $id_dest AND id_campana = $id_campana AND estado_envio = 'PENDIENTE' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '')");
+        if (mysqli_affected_rows($con) <= 0) {
+            continue;
+        }
+
+        // Protección anti-duplicado por teléfono en la misma campaña / mismo día
+        $res_dup_tel = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND id != $id_dest AND telefono = '$tel_esc_lock' AND estado_envio IN ('PROCESANDO','ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') LIMIT 1");
+        $res_dup_notif = mysqli_query($con, "SELECT id FROM notificacion_enviada WHERE fecha = CURDATE() AND telefono_receptor = '$tel_esc_lock' AND template = '$tpl_esc_lock' AND status = 'ENVIADO' LIMIT 1");
+        if (($res_dup_tel && mysqli_num_rows($res_dup_tel) > 0) || ($res_dup_notif && mysqli_num_rows($res_dup_notif) > 0)) {
+            mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'ENVIADO', error_detalle = 'Omitido automáticamente: número ya notificado hoy.' WHERE id = $id_dest");
+            continue;
+        }
+
         $nombre_cliente = trim($dest['nombre'] ?: 'Cliente');
         $primer_nombre = explode(' ', $nombre_cliente)[0];
         if (empty($primer_nombre) || strlen($primer_nombre) < 2 || preg_match('/^\+?[0-9\s\-]+$/', $primer_nombre)) {
             $primer_nombre = 'Estimado(a) cliente';
         }
         $primer_nombre = sanitizeParamCron($primer_nombre, false);
-        $template_name = $camp['template_name'] ?: 'starfi_difusion_directa';
         $camp_lang = trim($camp['template_language'] ?? 'es') ?: 'es';
         $camp_cat = strtoupper(trim($camp['template_category'] ?? 'MARKETING')) ?: 'MARKETING';
         $camp_hdr_fmt = strtoupper(trim($camp['header_format'] ?? 'IMAGE')) ?: 'IMAGE';

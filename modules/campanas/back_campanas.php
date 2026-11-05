@@ -1353,22 +1353,20 @@ switch ($action) {
                 }
             }
             if (empty($cola)) {
-                $res_fal = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' LIMIT $disponibles_hoy");
+                // Solo reencolar FALLIDO si no tuvieron ya una entrega exitosa previa
+                $res_fal = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' AND fecha_entrega IS NULL AND fecha_lectura IS NULL AND respondido = 0 LIMIT $disponibles_hoy");
                 if ($res_fal && mysqli_num_rows($res_fal) > 0) {
-                    mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE', error_detalle = NULL WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO'");
-                } else {
-                    // Si el operador presionó Reenviar sobre una campaña ya completada (o tras cambiar el flyer), reencolar todos sus destinatarios para nuevo despacho
-                    mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE', error_detalle = NULL, id_mensaje_meta = NULL, fecha_envio = NULL WHERE id_campana = $id_campana");
-                }
-                recalcularMetricasCampana($con, $id_campana);
-                $res_pend2 = mysqli_query($con, "SELECT id AS id_destinatario, id_cliente, nombre, telefono, numero_tanda, fecha_programada 
-                                                 FROM campanas_difusion_destinatarios 
-                                                 WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' 
-                                                 ORDER BY numero_tanda ASC, id ASC 
-                                                 LIMIT $disponibles_hoy");
-                if ($res_pend2) {
-                    while ($r2 = mysqli_fetch_assoc($res_pend2)) {
-                        $cola[] = $r2;
+                    mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE', error_detalle = NULL, id_mensaje_meta = NULL WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' AND fecha_entrega IS NULL AND fecha_lectura IS NULL AND respondido = 0");
+                    recalcularMetricasCampana($con, $id_campana);
+                    $res_pend2 = mysqli_query($con, "SELECT id AS id_destinatario, id_cliente, nombre, telefono, numero_tanda, fecha_programada 
+                                                     FROM campanas_difusion_destinatarios 
+                                                     WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' 
+                                                     ORDER BY numero_tanda ASC, id ASC 
+                                                     LIMIT $disponibles_hoy");
+                    if ($res_pend2) {
+                        while ($r2 = mysqli_fetch_assoc($res_pend2)) {
+                            $cola[] = $r2;
+                        }
                     }
                 }
             }
@@ -1673,11 +1671,15 @@ switch ($action) {
     // 4.4 CONSULTAR SI HAY LOTES PENDIENTES HOY DE CAMPAÑAS APROBADAS EN PILOTO AUTOMÁTICO
     // =========================================================================
     case 'check_autopilot_due':
+        // Liberar filas atascadas en PROCESANDO por más de 3 minutos sin wamid
+        @mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE' WHERE estado_envio = 'PROCESANDO' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '') AND fecha_envio < DATE_SUB(NOW(), INTERVAL 3 MINUTE)");
+
         $filtro_sede = intval($_GET['id_sede'] ?? $_POST['id_sede'] ?? 0);
         if (!$es_global && $id_sede_usuario > 0) {
             $filtro_sede = $id_sede_usuario;
         }
-        $where_ap = "WHERE c.piloto_automatico = 1 AND c.aprobado_por IS NOT NULL AND c.pendientes > 0 AND c.estado IN ('PILOTO_AUTOMATICO','EN_COLA_DIARIA','APROBADA_EN_PROCESO','PAUSADA_CUOTA_DIARIA') AND IFNULL(c.hora_programada, '00:00:00') <= CURTIME()";
+        // Evitar que una segunda pestaña o recarga de página secuestre una campaña que ya está enviando mensajes en vivo en otra pestaña/proceso (en los últimos 90 segundos)
+        $where_ap = "WHERE c.piloto_automatico = 1 AND c.aprobado_por IS NOT NULL AND c.pendientes > 0 AND c.estado IN ('PILOTO_AUTOMATICO','EN_COLA_DIARIA','APROBADA_EN_PROCESO','PAUSADA_CUOTA_DIARIA') AND IFNULL(c.hora_programada, '00:00:00') <= CURTIME() AND NOT EXISTS (SELECT 1 FROM campanas_difusion_destinatarios d_act WHERE d_act.id_campana = c.id AND d_act.fecha_envio >= DATE_SUB(NOW(), INTERVAL 90 SECOND))";
         if ($filtro_sede > 0) {
             $where_ap .= " AND c.id_sede = $filtro_sede";
         }
@@ -1828,6 +1830,65 @@ switch ($action) {
 
         // Formatear teléfono destino (normalizar 04xx Venezuela a 584xx)
         $telefono_limpio = normalizeVenezuelanPhone($dest['telefono']);
+        $tel_esc_lock = mysqli_real_escape_string($con, $telefono_limpio);
+        $template_name = $camp['template_name'] ?: 'starfi_difusion_directa';
+        $tpl_esc_lock = mysqli_real_escape_string($con, $template_name);
+
+        // =========================================================================
+        // CANDADO ATÓMICO ANTI-DUPLICADOS (IDEMPOTENCIA ESTRICTA DE FILA Y TELÉFONO)
+        // =========================================================================
+        // 1. Verificar que la fila siga estrictamente en PENDIENTE y sin wamid previo
+        if (strtoupper(trim($dest['estado_envio'] ?? '')) !== 'PENDIENTE' || !empty($dest['id_mensaje_meta'])) {
+            echo json_encode([
+                'status' => 'already_processed',
+                'skipped' => true,
+                'telefono' => $telefono_limpio,
+                'message' => 'Este destinatario ya fue procesado por otra pestaña o lote en curso.'
+            ]);
+            exit;
+        }
+
+        // 2. Reclamar atómicamente la fila (solo 1 petición concurrente puede pasar de PENDIENTE a PROCESANDO)
+        mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
+                            SET estado_envio = 'PROCESANDO', fecha_envio = NOW() 
+                            WHERE id = $id_destinatario AND id_campana = $id_campana AND estado_envio = 'PENDIENTE' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '')");
+        if (mysqli_affected_rows($con) <= 0) {
+            echo json_encode([
+                'status' => 'already_processed',
+                'skipped' => true,
+                'telefono' => $telefono_limpio,
+                'message' => 'Destinatario tomado simultáneamente por otro proceso activo.'
+            ]);
+            exit;
+        }
+
+        // 3. Verificar que este mismo número telefónico no haya recibido ya esta campaña o esta misma plantilla hoy
+        $res_dup_tel = mysqli_query($con, "SELECT id, id_mensaje_meta, estado_envio FROM campanas_difusion_destinatarios 
+                                           WHERE id_campana = $id_campana 
+                                             AND id != $id_destinatario 
+                                             AND telefono = '$tel_esc_lock' 
+                                             AND estado_envio IN ('PROCESANDO','ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') 
+                                           LIMIT 1");
+        $res_dup_notif = mysqli_query($con, "SELECT id FROM notificacion_enviada 
+                                             WHERE fecha = CURDATE() 
+                                               AND telefono_receptor = '$tel_esc_lock' 
+                                               AND template = '$tpl_esc_lock' 
+                                               AND status = 'ENVIADO' 
+                                             LIMIT 1");
+        if (($res_dup_tel && mysqli_num_rows($res_dup_tel) > 0) || ($res_dup_notif && mysqli_num_rows($res_dup_notif) > 0)) {
+            mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
+                                SET estado_envio = 'ENVIADO', 
+                                    error_detalle = 'Omitido automáticamente: número ya recibió esta difusión hoy (protección anti-duplicado).' 
+                                WHERE id = $id_destinatario");
+            recalcularMetricasCampana($con, $id_campana);
+            echo json_encode([
+                'status' => 'already_processed',
+                'skipped' => true,
+                'telefono' => $telefono_limpio,
+                'message' => 'Número ya notificado hoy en esta campaña (duplicado evitado).'
+            ]);
+            exit;
+        }
 
         $nombre_cliente = trim($dest['nombre'] ?: 'Cliente');
         // Extraer primer nombre amigable para variables dinámicas de saludo
@@ -1837,7 +1898,6 @@ switch ($action) {
         }
         $primer_nombre = sanitizeMetaTemplateParam($primer_nombre, false);
 
-        $template_name = $camp['template_name'] ?: 'starfi_difusion_directa';
         $camp_lang = trim($camp['template_language'] ?? '') ?: $language_code;
         $camp_cat = strtoupper(trim($camp['template_category'] ?? 'MARKETING')) ?: 'MARKETING';
         $camp_hdr_fmt = strtoupper(trim($camp['header_format'] ?? 'IMAGE')) ?: 'IMAGE';
@@ -2283,11 +2343,11 @@ switch ($action) {
             }
         }
 
-        // Si no había PENDIENTE pero el usuario pidió reintentar los FALLIDO (o la campaña solo tenía fallidos por el error previo de imagen), reencolar los FALLIDO
+        // Si no había PENDIENTE pero el usuario pidió reintentar los FALLIDO reales (sin entrega previa), reencolar solo esos FALLIDO
         if (empty($cola)) {
-            $res_fal = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' LIMIT $disponibles_hoy");
+            $res_fal = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' AND fecha_entrega IS NULL AND fecha_lectura IS NULL AND respondido = 0 LIMIT $disponibles_hoy");
             if ($res_fal && mysqli_num_rows($res_fal) > 0) {
-                mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE', error_detalle = NULL WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO'");
+                mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE', error_detalle = NULL, id_mensaje_meta = NULL WHERE id_campana = $id_campana AND estado_envio = 'FALLIDO' AND fecha_entrega IS NULL AND fecha_lectura IS NULL AND respondido = 0");
                 recalcularMetricasCampana($con, $id_campana);
                 $res_pend2 = mysqli_query($con, "SELECT id AS id_destinatario, id_cliente, nombre, telefono, numero_tanda, fecha_programada FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' ORDER BY numero_tanda ASC, id ASC LIMIT $disponibles_hoy");
                 if ($res_pend2) {

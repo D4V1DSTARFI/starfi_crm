@@ -2202,6 +2202,9 @@ async function procesarColaDeEnvio(idCampana, cola, cadenciaMs, langCode = 'es')
             if (res.status === 'success') {
                 enviadosOk++;
                 logDiv.innerHTML = `<div class="text-success">✔ [${i + 1}/${total}] Enviado a ${escapeHtml(item.nombre)} (${escapeHtml(res.telefono)}) - $${parseFloat(res.costo_usd).toFixed(4)}</div>` + logDiv.innerHTML;
+            } else if (res.status === 'already_processed') {
+                logDiv.innerHTML = `<div class="text-muted">⏭ [${i + 1}/${total}] Omitido ${escapeHtml(item.telefono)}: ${escapeHtml(res.message || 'Ya procesado previamente')}</div>` + logDiv.innerHTML;
+                continue;
             } else if (res.status === 'quota_reached' || res.status === 'budget_reached') {
                 logDiv.innerHTML = `<div class="text-warning fw-bold">🛡 ${escapeHtml(res.message)}</div>` + logDiv.innerHTML;
                 break;
