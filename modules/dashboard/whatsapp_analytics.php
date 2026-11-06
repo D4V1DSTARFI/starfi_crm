@@ -3,10 +3,17 @@ require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
 requirePermission('whatsapp_analytics');
 $agente = getAgenteInfo();
+$es_master = (($agente['rol'] ?? '') === 'MASTER');
+$id_sede_agente = intval($agente['id_sede'] ?? 0);
 
 // Cargar sedes activas para el filtro
 $con = getDbConnection();
-$res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+if ($es_master) {
+    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+} else {
+    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE id = $id_sede_agente LIMIT 1");
+}
+
 $sedes = [];
 if ($res_sedes) {
     while ($row = $res_sedes->fetch_assoc()) {
@@ -74,12 +81,13 @@ if ($res_sedes) {
         .chart-container { padding: 20px; height: 400px; position: relative; width: 100%; }
         
         /* Modificadores estéticos (Colores de las líneas) */
-        .color-sent { color: #fa383e; } /* Rojo similar a la imagen */
-        .color-delivered { color: #5a2e70; } /* Morado */
-        .color-read { color: #008080; } /* Verde Azulado */
-        .color-replies { color: #004d40; } /* Verde oscuro */
+        .color-sent { color: #fa383e; }
+        .color-delivered { color: #5a2e70; }
+        .color-read { color: #008080; }
+        .color-replies { color: #004d40; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- [FAC-05] Chart.js migrado a asset local -->
+    <script src="../../assets/js/chart.umd.min.js"></script>
 </head>
 <body>
     <?php renderHeader('Dashboard Facturación WhatsApp'); ?>
@@ -87,27 +95,31 @@ if ($res_sedes) {
     <main class="main-content">
         <div class="dashboard-container">
             
-            <div class="d-flex justify-content-between align-items-center mb-4">
+            <!-- Cabecera y Navegación Directa [FAC-05] -->
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
                 <h2 class="mb-0" style="font-size: 1.5rem; font-weight: 700; color: #1c1e21;">
                     <i class="fa-brands fa-whatsapp text-success me-2"></i> Rendimiento de la API
                 </h2>
-                <div>
-                    <?php if ($agente['rol'] === 'MASTER'): ?>
-                    <button class="btn btn-success shadow-sm me-2" id="btnEmitirOrden">
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="waba_ordenes.php" class="btn btn-dark shadow-sm">
+                        <i class="fa-solid fa-file-invoice-dollar me-2"></i>Órdenes de Cobro
+                    </a>
+                    <?php if ($es_master): ?>
+                    <button class="btn btn-success shadow-sm" id="btnEmitirOrden">
                         <i class="fa-solid fa-file-invoice me-2"></i>Emitir Orden de Cobro
                     </button>
-                    <button class="btn btn-warning shadow-sm me-2 text-dark" data-bs-toggle="modal" data-bs-target="#modalEmisionMasiva">
+                    <button class="btn btn-warning shadow-sm text-dark" data-bs-toggle="modal" data-bs-target="#modalEmisionMasiva">
                         <i class="fa-solid fa-layer-group me-2"></i>Emisión Masiva
                     </button>
-                    <button class="btn btn-info shadow-sm me-2 text-white" id="btnInstalarCron" title="Instalar tarea programada en Windows">
+                    <button class="btn btn-info shadow-sm text-white" id="btnInstalarCron" title="Instalar tarea programada en Windows">
                         <i class="fa-solid fa-robot me-2"></i>Instalar Auto-Facturación
                     </button>
-                    <button class="btn btn-primary bg-primary border-primary me-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTarifasSede">
-                        <i class="fa-solid fa-file-invoice-dollar me-2"></i>Configurar Tarifas
+                    <button class="btn btn-primary bg-primary border-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTarifasSede">
+                        <i class="fa-solid fa-gear me-2"></i>Configurar Tarifas
                     </button>
                     <?php endif; ?>
                     <a href="dashboard.php" class="btn btn-outline-secondary bg-white text-dark border-secondary shadow-sm">
-                        <i class="fa-solid fa-chart-line"></i> Dashboard General
+                        <i class="fa-solid fa-chart-line me-1"></i> Dashboard General
                     </a>
                 </div>
             </div>
@@ -116,17 +128,21 @@ if ($res_sedes) {
             <div class="filters-panel">
                 <div class="filter-group">
                     <label>Sede / Sucursal</label>
-                    <select id="filterSede" class="filter-control">
-                        <option value="0">Global (Todas las sedes)</option>
+                    <select id="filterSede" class="filter-control" <?= !$es_master ? 'disabled' : '' ?>>
+                        <?php if ($es_master): ?>
+                            <option value="0">Global (Todas las sedes)</option>
+                        <?php endif; ?>
                         <?php foreach ($sedes as $s): ?>
-                            <option value="<?= $s['id'] ?>"><?= htmlspecialchars($s['nombre_sede']) ?></option>
+                            <option value="<?= $s['id'] ?>" <?= (!$es_master && intval($s['id']) === $id_sede_agente) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($s['nombre_sede']) ?>
+                            </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="filter-group">
                     <label>Plantilla (Opcional)</label>
                     <select id="filterPlantilla" class="filter-control">
-                        <option value="">Todas las plantillas</option>
+                        <option value="">Todas las plantillas (Consolidado)</option>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -144,14 +160,14 @@ if ($res_sedes) {
 
             <div id="loaderData" class="text-center py-5" style="display: none;">
                 <i class="fa-solid fa-circle-notch fa-spin fa-3x text-primary mb-3"></i>
-                <p class="text-muted fw-bold">Obteniendo métricas de Meta Business...</p>
+                <p class="text-muted fw-bold">Obteniendo métricas consolidadas de Meta Business y CRM...</p>
             </div>
 
-            <!-- Placeholder State -->
-            <div id="placeholderData" class="text-center py-5">
+            <!-- Placeholder State (oculto al iniciar por carga automática [FAC-05]) -->
+            <div id="placeholderData" class="text-center py-5" style="display: none;">
                 <i class="fa-solid fa-chart-bar fa-3x text-muted mb-3"></i>
                 <h4 class="text-secondary fw-bold">Seleccione sus filtros</h4>
-                <p class="text-muted">Por favor, elija una sede y una plantilla, luego presione "Actualizar" para cargar las métricas.</p>
+                <p class="text-muted">Elija un rango de fechas o plantilla y presione "Actualizar" para consultar las métricas.</p>
             </div>
 
             <!-- Dashboard Content -->
@@ -159,7 +175,7 @@ if ($res_sedes) {
                 
                 <!-- Nota de ayuda -->
                 <div class="mb-3 p-2 text-muted" style="font-size: 0.8rem; background-color: #fff; border-radius: 6px; border: 1px solid #dadde1;">
-                    <i class="fa-solid fa-info-circle text-primary me-1"></i> Nota: Todos los datos de estadísticas son aproximados y consolidados entre la API de Meta y las métricas locales de CRM.
+                    <i class="fa-solid fa-info-circle text-primary me-1"></i> Nota: Todos los datos de estadísticas son aproximados y consolidados entre la API de Meta, las campañas de difusión y las métricas locales de CRM.
                 </div>
 
                 <div class="row g-3 mb-4">
@@ -337,12 +353,13 @@ if ($res_sedes) {
                     </div>
                 </div>
 
-                <!-- Debug -->
+                <?php if ($es_master): ?>
+                <!-- Debug exclusivo para MASTER [FAC-04] -->
                 <div class="accordion" id="debugAccordion">
                     <div class="accordion-item border-0 bg-transparent">
                         <h2 class="accordion-header">
-                            <button class="accordion-button collapsed bg-transparent shadow-none fw-bold text-muted" type="button" data-bs-toggle="collapse" data-bs-toggle="collapse" data-bs-target="#debugCollapse">
-                                <i class="fa-solid fa-code me-2"></i> Ver respuesta en bruto de Meta Graph API
+                            <button class="accordion-button collapsed bg-transparent shadow-none fw-bold text-muted" type="button" data-bs-toggle="collapse" data-bs-target="#debugCollapse">
+                                <i class="fa-solid fa-code me-2"></i> Ver respuesta en bruto de Meta Graph API (Exclusivo MASTER)
                             </button>
                         </h2>
                         <div id="debugCollapse" class="accordion-collapse collapse">
@@ -352,12 +369,14 @@ if ($res_sedes) {
                         </div>
                     </div>
                 </div>
+                <?php endif; ?>
 
             </div>
             
         </div>
     </main>
 
+    <?php if ($es_master): ?>
     <!-- Modal Emisión Masiva -->
     <div class="modal fade" id="modalEmisionMasiva" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -368,7 +387,7 @@ if ($res_sedes) {
                 </div>
                 <div class="modal-body">
                     <div class="alert alert-info">
-                        <i class="fa-solid fa-circle-info me-2"></i> Esta acción generará una orden de cobro nueva e independiente para cada sede seleccionada, ignorando las órdenes pendientes anteriores.
+                        <i class="fa-solid fa-circle-info me-2"></i> Esta acción generará una orden de cobro nueva e independiente para cada sede seleccionada, utilizando el motor híbrido de conciliación.
                     </div>
                     
                     <div class="row mb-3">
@@ -485,7 +504,9 @@ if ($res_sedes) {
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
+    <!-- [FAC-05] Assets JS Locales -->
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
@@ -495,14 +516,46 @@ if ($res_sedes) {
         let templatesLoaded = false;
 
         $(document).ready(function() {
-            $('#btnApplyFilters').click(function() { 
-                if ($('#filterSede').val() == '0' || $('#filterPlantilla').val() === '') {
-                    Swal.fire('Atención', 'Por favor seleccione una Sede y una Plantilla antes de actualizar.', 'warning');
-                    return;
-                }
-                loadAnalytics(); 
+            // [FAC-05] Carga automática del consolidado (Todas las plantillas) al iniciar la página
+            loadAnalytics();
+
+            $('#btnApplyFilters').click(function() {
+                loadAnalytics();
             });
-            fetchTemplatesOnLoad();
+
+            // Recargar plantillas y consolidado automáticamente al cambiar de sede
+            $('#filterSede').change(function() {
+                templatesLoaded = false;
+                $('#filterPlantilla').html('<option value="">Todas las plantillas (Consolidado)</option>');
+                loadAnalytics();
+            });
+
+            $('#filterPlantilla').change(function() {
+                loadAnalytics();
+            });
+
+            // Instalar Cron de Auto-facturación
+            $('#btnInstalarCron').click(function() {
+                Swal.fire({
+                    title: '¿Instalar Auto-Facturación?',
+                    text: 'Se registrará la tarea programada diaria (01:00 AM) en el Programador de Tareas de Windows.',
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, instalar',
+                    cancelButtonText: 'Cancelar'
+                }).then((r) => {
+                    if (r.isConfirmed) {
+                        Swal.fire({ title: 'Instalando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                        $.post('back_waba_billing.php', { action: 'install_cron' }, function(res) {
+                            if (res.status === 'success') {
+                                Swal.fire('¡Éxito!', res.message, 'success');
+                            } else {
+                                Swal.fire('Atención', res.message, 'warning');
+                            }
+                        }, 'json');
+                    }
+                });
+            });
 
             // Lógica Modal Tarifas
             $('#selConfigSede').change(function() {
@@ -513,7 +566,6 @@ if ($res_sedes) {
                     return;
                 }
                 
-                // Mostrar spinner
                 Swal.fire({ title: 'Cargando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
                 
                 $.post('back_waba_billing.php', { action: 'get_sede_config', id_sede: id_sede }, function(res) {
@@ -568,7 +620,7 @@ if ($res_sedes) {
                 let fecha_hasta_filtro = $('#filterFechaHasta').val();
                 
                 if (!id_sede || id_sede == '0') {
-                    Swal.fire('Atención', 'Por favor seleccione una sede específica en los filtros antes de emitir una orden.', 'warning');
+                    Swal.fire('Atención', 'Por favor seleccione una sede específica en los filtros antes de emitir una orden individual.', 'warning');
                     return;
                 }
 
@@ -597,7 +649,7 @@ if ($res_sedes) {
                             cancelButtonText: 'Cancelar'
                         }).then((result) => {
                             if (result.isConfirmed) {
-                                Swal.fire({ title: 'Procesando...', text: 'Consultando a Meta y emitiendo factura', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                                Swal.fire({ title: 'Procesando...', text: 'Conciliando consumo híbrido y emitiendo orden', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
                                 
                                 $.post('back_waba_billing.php', { 
                                     action: actionToCall, 
@@ -607,13 +659,24 @@ if ($res_sedes) {
                                     orden_pendiente_id: res.pendiente_id
                                 }, function(orderRes) {
                                     if (orderRes.status === 'success') {
-                                        Swal.fire('Orden Creada', `Monto Total: ${orderRes.monto_total} USD<br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`, 'success');
+                                        Swal.fire({
+                                            title: 'Orden Creada',
+                                            html: `Monto Total: <b>$${orderRes.monto_total} USD</b><br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`,
+                                            icon: 'success',
+                                            showCancelButton: true,
+                                            confirmButtonText: 'Ir a Órdenes de Cobro',
+                                            cancelButtonText: 'Cerrar'
+                                        }).then((go) => {
+                                            if (go.isConfirmed) {
+                                                window.location.href = 'waba_ordenes.php';
+                                            }
+                                        });
                                     } else {
                                         Swal.fire('Error', orderRes.message, 'error');
                                     }
                                 }, 'json');
                             } else if (result.isDenied) {
-                                Swal.fire({ title: 'Procesando...', text: 'Consultando a Meta y emitiendo factura', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+                                Swal.fire({ title: 'Procesando...', text: 'Conciliando consumo híbrido y emitiendo orden', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
                                 
                                 $.post('back_waba_billing.php', { 
                                     action: 'generate_order', 
@@ -623,7 +686,7 @@ if ($res_sedes) {
                                     orden_pendiente_id: null
                                 }, function(orderRes) {
                                     if (orderRes.status === 'success') {
-                                        Swal.fire('Orden Creada', `Monto Total: ${orderRes.monto_total} USD<br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`, 'success');
+                                        Swal.fire('Orden Creada', `Monto Total: $${orderRes.monto_total} USD<br>La orden #${orderRes.id_orden} ha sido generada exitosamente.`, 'success');
                                     } else {
                                         Swal.fire('Error', orderRes.message, 'error');
                                     }
@@ -684,7 +747,7 @@ if ($res_sedes) {
                                     html: res.message,
                                     icon: 'success'
                                 }).then(() => {
-                                    location.reload(); // Recargar para ver los cambios
+                                    window.location.href = 'waba_ordenes.php';
                                 });
                             } else {
                                 Swal.fire('Atención', res.message, 'info');
@@ -695,38 +758,7 @@ if ($res_sedes) {
                     }
                 });
             });
-
-            // Recargar plantillas al cambiar de sede
-            $('#filterSede').change(function() {
-                templatesLoaded = false;
-                $('#filterPlantilla').html('<option value="">Todas las plantillas</option>');
-                fetchTemplatesOnLoad();
-            });
         });
-
-        function fetchTemplatesOnLoad() {
-            let id_sede = $('#filterSede').val();
-            let desde = $('#filterFechaDesde').val();
-            let hasta = $('#filterFechaHasta').val();
-
-            $.ajax({
-                url: 'back_whatsapp_analytics.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
-                            let select = $('#filterPlantilla');
-                            res.data.message_templates.data.forEach(tpl => {
-                                select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
-                            });
-                            templatesLoaded = true;
-                        }
-                    }
-                }
-            });
-        }
 
         function loadAnalytics() {
             $('#placeholderData').hide();
@@ -745,21 +777,26 @@ if ($res_sedes) {
                 data: { action: 'get_analytics', id_sede: id_sede, fecha_desde: desde, fecha_hasta: hasta, id_plantilla: id_plantilla },
                 success: function(res) {
                     $('#loaderData').hide();
-                    $('#rawApiResponse').text(JSON.stringify(res, null, 2));
+                    if ($('#rawApiResponse').length) {
+                        $('#rawApiResponse').text(JSON.stringify(res, null, 2));
+                    }
 
                     if(res.status === 'success') {
                         $('#contentData').fadeIn();
                         
                         // Poblar Dropdown de Plantillas si no se ha hecho
-                        if (!templatesLoaded && res.data.message_templates && res.data.message_templates.data) {
+                        if (!templatesLoaded && res.data && res.data.message_templates && res.data.message_templates.data) {
                             let select = $('#filterPlantilla');
+                            let currentVal = select.val();
+                            select.html('<option value="">Todas las plantillas (Consolidado)</option>');
                             res.data.message_templates.data.forEach(tpl => {
                                 select.append(`<option value="${tpl.id}">${tpl.name} (${tpl.language})</option>`);
                             });
+                            if (currentVal) select.val(currentVal);
                             templatesLoaded = true;
                         }
 
-                        procesarYGraficar(res.data, desde, hasta, id_plantilla, res.tarifa_config, res.local_audit);
+                        procesarYGraficar(res.data || {}, desde, hasta, id_plantilla, res.tarifa_config, res.local_audit);
                     } else {
                         Swal.fire('Error', res.message || 'Error desconocido', 'error');
                         $('#contentData').show();
@@ -767,29 +804,27 @@ if ($res_sedes) {
                 },
                 error: function() {
                     $('#loaderData').hide();
-                    Swal.fire('Error', 'Fallo de conexión al consultar Meta', 'error');
+                    Swal.fire('Error', 'Fallo de conexión al consultar métricas', 'error');
                 }
             });
         }
 
         function procesarYGraficar(data, desde, hasta, id_plantilla, tarifaConfig, localAudit) {
-            let totalCost = 0;
             let mktCost = 0, utilCost = 0, authCost = 0, servCost = 0;
             let mktCount = 0, utilCount = 0, authCount = 0, servCount = 0;
             
-            // Analizar Costos de Meta (pricing_analytics y conversation_analytics)
+            // Analizar Costos de Meta (pricing_analytics)
             if(data.pricing_analytics && data.pricing_analytics.data) {
                 let pricing = data.pricing_analytics.data[0]?.data_points || [];
                 pricing.forEach(dp => {
                     if (dp.cost) {
                         let c = parseFloat(dp.cost);
-                        totalCost += c;
-                        let cat = (dp.category || dp.conversation_category || '').toUpperCase();
+                        let cat = (dp.pricing_category || dp.category || dp.conversation_category || '').toUpperCase();
                         if (cat === 'MARKETING') mktCost += c;
                         else if (cat === 'UTILITY') utilCost += c;
                         else if (cat === 'AUTHENTICATION') authCost += c;
                         else if (cat === 'SERVICE') servCost += c;
-                        else mktCost += c; // fallback
+                        else mktCost += c;
                     }
                 });
             }
@@ -816,10 +851,12 @@ if ($res_sedes) {
                 dataSource = data.template_analytics.data[0]?.data_points || [];
             } else if (data.analytics && data.analytics.data) {
                 dataSource = data.analytics.data[0]?.data_points || [];
+            } else if (data.analytics && data.analytics.data_points) {
+                dataSource = data.analytics.data_points;
             }
 
             if(dataSource && dataSource.length > 0) {
-                let msgs = dataSource;
+                let msgs = dataSource.slice();
                 msgs.sort((a,b) => a.start - b.start);
                 
                 msgs.forEach(dp => {
@@ -846,25 +883,39 @@ if ($res_sedes) {
                 dsEnviados = [0,0]; dsEntregados = [0,0]; dsLeidos = [0,0]; dsRespuestas = [0,0];
             }
 
-            // Usar auditoría local si Meta devuelve ceros por falta de permisos o desfase
+            // Conciliar con auditoría híbrida local (campanas_difusion_destinatarios + mensajes_y_eventos)
             if (localAudit) {
-                if (enviados === 0 && localAudit.enviados > 0) enviados = localAudit.enviados;
-                if (entregados === 0 && localAudit.entregados > 0) entregados = localAudit.entregados;
-                if (leidos === 0 && localAudit.leidos > 0) leidos = localAudit.leidos;
+                if (localAudit.enviados > enviados) enviados = localAudit.enviados;
+                if (localAudit.entregados > entregados) entregados = localAudit.entregados;
+                if (localAudit.leidos > leidos) leidos = localAudit.leidos;
                 
-                if (mktCount === 0) mktCount = localAudit.por_categoria?.MARKETING || 0;
-                if (utilCount === 0) utilCount = localAudit.por_categoria?.UTILITY || 0;
-                if (authCount === 0) authCount = localAudit.por_categoria?.AUTHENTICATION || 0;
-                if (servCount === 0) servCount = localAudit.por_categoria?.SERVICE || 0;
+                if (localAudit.por_categoria) {
+                    mktCount = Math.max(mktCount, localAudit.por_categoria.MARKETING || 0);
+                    utilCount = Math.max(utilCount, localAudit.por_categoria.UTILITY || 0);
+                    authCount = Math.max(authCount, localAudit.por_categoria.AUTHENTICATION || 0);
+                    servCount = Math.max(servCount, localAudit.por_categoria.SERVICE || 0);
+                }
+
+                if (localAudit.costo_local_por_categoria) {
+                    mktCost = Math.max(mktCost, parseFloat(localAudit.costo_local_por_categoria.MARKETING || 0));
+                    utilCost = Math.max(utilCost, parseFloat(localAudit.costo_local_por_categoria.UTILITY || 0));
+                    authCost = Math.max(authCost, parseFloat(localAudit.costo_local_por_categoria.AUTHENTICATION || 0));
+                    servCost = Math.max(servCost, parseFloat(localAudit.costo_local_por_categoria.SERVICE || 0));
+                }
             }
 
-            // Aplicar Modelo de Negocio CRM (Margen)
+            let totalCost = mktCost + utilCost + authCost + servCost;
+
+            // Aplicar Modelo de Negocio CRM (Margen de waba_tarifas_sede)
             let valorTarifa = parseFloat(tarifaConfig ? tarifaConfig.valor : 10.00);
             let tipoTarifa = tarifaConfig ? tarifaConfig.tipo_tarifa : 'PORCENTAJE';
             
             let factorMarkup = 1.10;
             if (tipoTarifa === 'PORCENTAJE') {
                 factorMarkup = 1 + (valorTarifa / 100);
+            } else if (tipoTarifa === 'PORCENTAJE_VOLUMEN') {
+                let p = enviados > 1000 ? (valorTarifa / 2) : valorTarifa;
+                factorMarkup = 1 + (p / 100);
             }
 
             let costoFinalFacturado = totalCost * factorMarkup;
@@ -873,7 +924,16 @@ if ($res_sedes) {
             let authCargoFinal = authCost * factorMarkup;
             let servCargoFinal = servCost * factorMarkup;
 
-            // Si Meta no reportó desglose exacto de costos pero hay entregados, prorratear el costo total
+            if (tipoTarifa === 'FIJA' && enviados > 0) {
+                let margenFijo = enviados * valorTarifa;
+                costoFinalFacturado = totalCost + margenFijo;
+                let ratioFijo = totalCost > 0 ? (costoFinalFacturado / totalCost) : 1;
+                mktCargoFinal = mktCost * ratioFijo;
+                utilCargoFinal = utilCost * ratioFijo;
+                authCargoFinal = authCost * ratioFijo;
+                servCargoFinal = servCost * ratioFijo;
+            }
+
             let totalEntregadosCat = mktCount + utilCount + authCount + servCount;
             if (totalEntregadosCat === 0 && entregados > 0) {
                 mktCount = entregados;
@@ -912,7 +972,7 @@ if ($res_sedes) {
             $('#metaPagAuth').text(authCount);
             $('#metaPagServ').text(servCount);
 
-            // Poblado de Tarjeta 5: Cargos totales aproximados
+            // Poblado de Tarjeta 5: Cargos totales aproximados (Precio Final con comisión integrada)
             $('#metaCargosTotales').text('$' + costoFinalFacturado.toFixed(2).replace('.', ','));
             $('#metaCargoMkt').text('$' + mktCargoFinal.toFixed(2).replace('.', ','));
             $('#metaCargoUtil').text('$' + utilCargoFinal.toFixed(2).replace('.', ','));
@@ -934,10 +994,8 @@ if ($res_sedes) {
                 $('#trendLeidos').html(`(${pctLei}%)`).addClass('trend-neutral');
             }
 
-            // Destruir Chart previo
             if(metaChartInstance) metaChartInstance.destroy();
 
-            // Dibujar Chart.js
             let ctx = document.getElementById('metaChart').getContext('2d');
             metaChartInstance = new Chart(ctx, {
                 type: 'line',

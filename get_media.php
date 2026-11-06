@@ -88,6 +88,28 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
         stream_file($direct_path, $mime_local);
         exit;
     }
+    // Si fue guardado en el servidor central 192.168.0.80, sincronizarlo localmente
+    $chRem = curl_init("http://192.168.0.80/starfi_crm/assets/uploads/" . rawurlencode($filename));
+    curl_setopt_array($chRem, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => 10
+    ]);
+    $remBin = curl_exec($chRem);
+    $remCode = curl_getinfo($chRem, CURLINFO_HTTP_CODE);
+    curl_close($chRem);
+    if ($remCode === 200 && !empty($remBin) && strlen($remBin) > 200) {
+        if (!is_dir(__DIR__ . '/assets/uploads')) @mkdir(__DIR__ . '/assets/uploads', 0777, true);
+        @file_put_contents($direct_path, $remBin);
+        $mime_local = mime_content_type($direct_path);
+        if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
+        stream_file($direct_path, $mime_local);
+        exit;
+    }
+    // Extraer el media_id numérico por si hay que volver a consultarlo en Meta
+    if (preg_match('/media_([0-9]+)/', $filename, $mIdMatch)) {
+        $media_id = $mIdMatch[1];
+    }
 }
 
 // Check if we already cached it in DB
@@ -114,12 +136,14 @@ if (!$resToken || $resToken->num_rows == 0) {
     http_response_code(404);
     exit;
 }
-$meta_token = $resToken->fetch_assoc()['meta_token'];
+$meta_token = trim($resToken->fetch_assoc()['meta_token']);
 
 // Step 1: Get media URL from Meta
-$ch = curl_init("https://graph.facebook.com/v19.0/$media_id");
+$ch = curl_init("https://graph.facebook.com/v19.0/" . urlencode($media_id));
 curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 $response = curl_exec($ch);
 curl_close($ch);
 
@@ -151,6 +175,8 @@ $ch2 = curl_init($meta_media_url);
 curl_setopt($ch2, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
 curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
+curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
 curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 $binary = curl_exec($ch2);
 curl_close($ch2);
