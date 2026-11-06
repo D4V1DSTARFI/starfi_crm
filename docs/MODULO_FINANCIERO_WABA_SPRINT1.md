@@ -78,7 +78,7 @@ Blindar integralmente el ecosistema de facturación, analítica y órdenes de co
 - **Cruce Híbrido de 3 Fuentes + Tarifa**:
   1. **Meta Graph API por Línea (`lineas_whatsapp`)**: Consulta `pricing_analytics` (con dimensión `PRICING_CATEGORY,PHONE` y fallback automático) y `analytics`, aislando los números telefónicos de la sede cuando varias sucursales comparten un mismo `id_negocio` (`WABA ID`).
   2. **Campañas de Difusión (`campanas_difusion_destinatarios` + `campanas_difusion`)**: Contabiliza destinatarios enviados/entregados/leídos/respondidos de la sede en el periodo y su costo asociado por categoría.
-  3. **Tráfico Conversacional y Transaccional (`mensajes_y_eventos`)**: Contabiliza mensajes salientes de bandeja, bots y API transaccional, excluyendo por `id_mensaje_meta` (`wamid`) los mensajes ya contados en campañas para evitar doble cobro.
+  3. **Tráfico Conversacional y Transaccional (`mensajes_y_eventos`)**: Contabiliza mensajes salientes de bandeja, bots y API transaccional, excluyendo por `id_mensaje_meta` (`wamid`) los mensajes ya contados en campañas con colación explícita (`WHERE d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci`) para evitar colisiones entre `utf8mb4_general_ci` y `utf8mb4_unicode_ci` y prevenir doble cobro.
   4. **Tarifario por Sede (`waba_tarifas_sede`)**: Aplica la regla configurada (`PORCENTAJE`, `FIJA` o `PORCENTAJE_VOLUMEN`) para determinar `costo_meta`, `margen_ganancia` y `monto_total`.
 
 ---

@@ -271,7 +271,7 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
     if ($chk_camp && $chk_camp->num_rows > 0) {
         $exclude_camp_wamid_sql = " AND (m.id_mensaje_meta IS NULL OR m.id_mensaje_meta = '' OR NOT EXISTS (
             SELECT 1 FROM campanas_difusion_destinatarios d2 
-            WHERE d2.id_mensaje_meta = m.id_mensaje_meta
+            WHERE d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
         ))";
     }
 

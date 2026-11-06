@@ -141,7 +141,7 @@ if ($action === 'get_analytics') {
         $exclude_wamid = "";
         if ($has_camp_table) {
             $exclude_wamid = " AND (m.id_mensaje_meta IS NULL OR m.id_mensaje_meta = '' OR NOT EXISTS (
-                SELECT 1 FROM campanas_difusion_destinatarios d2 WHERE d2.id_mensaje_meta = m.id_mensaje_meta
+                SELECT 1 FROM campanas_difusion_destinatarios d2 WHERE d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
             )) ";
         }
 
