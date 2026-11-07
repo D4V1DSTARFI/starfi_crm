@@ -9,6 +9,9 @@ require_once __DIR__ . '/../../core/auth.php';
  */
 function ensureWabaBillingSchema($con) {
     if (!$con) return;
+    if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['waba_schema_v2_ready'])) {
+        return;
+    }
 
     // 1. Asegurar que la columna 'estado' en waba_ordenes_cobro soporte 'EN_REVISION' además de 'PENDIENTE', 'PAGADO', 'FUSIONADO', 'ANULADA'
     $res_est = $con->query("SHOW COLUMNS FROM waba_ordenes_cobro LIKE 'estado'");
@@ -51,6 +54,10 @@ function ensureWabaBillingSchema($con) {
             $con->query($sql_alter);
         }
     }
+
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['waba_schema_v2_ready'] = true;
+    }
 }
 
 /**
@@ -64,8 +71,13 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         return ['status' => 'error', 'message' => 'Parámetros de conciliación inválidos'];
     }
 
+    $hoy_ymd  = date('Y-m-d');
+    $fecha_hasta_meta = ($fecha_hasta > $hoy_ymd) ? $hoy_ymd : $fecha_hasta;
     $start_ts = strtotime($fecha_desde . " 00:00:00");
-    $end_ts   = strtotime($fecha_hasta . " 23:59:59");
+    $end_ts   = strtotime($fecha_hasta_meta . " 23:59:59");
+    if ($start_ts > $end_ts) {
+        $start_ts = strtotime('-7 days', $end_ts);
+    }
     $desde_dt = $con->real_escape_string($fecha_desde) . " 00:00:00";
     $hasta_dt = $con->real_escape_string($fecha_hasta) . " 23:59:59";
 
@@ -138,6 +150,8 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
     ];
     $mensajes_meta_api = 0;
 
+    static $meta_api_mem_cache = [];
+
     foreach ($waba_ids as $waba_id => $line_token) {
         $token_to_use = defined('META_GLOBAL_TOKEN') && !empty(META_GLOBAL_TOKEN) ? META_GLOBAL_TOKEN : $line_token;
 
@@ -145,30 +159,43 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         $res_shared = $con->query("SELECT COUNT(DISTINCT id_sede) AS total_sedes FROM lineas_whatsapp WHERE id_negocio = '" . $con->real_escape_string($waba_id) . "' AND estado = 'ACTIVO'");
         $total_sedes_waba = ($res_shared && $rs = $res_shared->fetch_assoc()) ? intval($rs['total_sedes']) : 1;
 
-        // Intentar primero con dimensión PHONE para aislar exactamente las líneas de la sede
-        $fields_phone = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY,PHONE),analytics.start($start_ts).end($end_ts).granularity(DAY)";
-        $url_phone = "https://graph.facebook.com/v23.0/$waba_id?fields=" . urlencode($fields_phone);
+        // Si el WABA es exclusivo de una sede, consultar directo sin doble petición
+        $fields_req = ($total_sedes_waba > 1)
+            ? "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY,PHONE),analytics.start($start_ts).end($end_ts).granularity(DAY)"
+            : "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
 
-        $curl = curl_init();
-        curl_setopt($curl, CURLOPT_URL, "https://graph.facebook.com/v23.0/$waba_id?fields=$fields_phone");
-        curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token_to_use, "Content-Type: application/json"]);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curl, CURLOPT_TIMEOUT, 20);
-        $raw_exec = curl_exec($curl);
-        $resp = json_decode($raw_exec, true);
-        curl_close($curl);
-
-        // Fallback sin dimensión PHONE si la API rechaza la dimensión combinada
-        if (isset($resp['error'])) {
-            $fields_basic = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
+        $cache_key_waba = $waba_id . '_' . $start_ts . '_' . $end_ts . '_' . $total_sedes_waba;
+        if (isset($meta_api_mem_cache[$cache_key_waba])) {
+            $resp = $meta_api_mem_cache[$cache_key_waba];
+        } else {
             $curl = curl_init();
-            curl_setopt($curl, CURLOPT_URL, "https://graph.facebook.com/v23.0/$waba_id?fields=$fields_basic");
+            curl_setopt($curl, CURLOPT_URL, "https://graph.facebook.com/v23.0/$waba_id?fields=$fields_req");
             curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token_to_use, "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($curl, CURLOPT_TIMEOUT, 20);
+            curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
+            curl_setopt($curl, CURLOPT_TIMEOUT, 6);
             $raw_exec = curl_exec($curl);
             $resp = json_decode($raw_exec, true);
             curl_close($curl);
+
+            // Fallback sin dimensión PHONE solo si era WABA compartido y la API rechazó PHONE
+            if (isset($resp['error']) && $total_sedes_waba > 1) {
+                $fields_basic = "pricing_analytics.start($start_ts).end($end_ts).granularity(DAILY).dimensions(PRICING_CATEGORY),analytics.start($start_ts).end($end_ts).granularity(DAY)";
+                $curl = curl_init();
+                curl_setopt($curl, CURLOPT_URL, "https://graph.facebook.com/v23.0/$waba_id?fields=$fields_basic");
+                curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token_to_use, "Content-Type: application/json"]);
+                curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+                curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
+                curl_setopt($curl, CURLOPT_TIMEOUT, 6);
+                $raw_exec = curl_exec($curl);
+                $resp = json_decode($raw_exec, true);
+                curl_close($curl);
+            }
+            $meta_api_mem_cache[$cache_key_waba] = $resp;
         }
 
         if (!isset($resp['error'])) {
@@ -232,6 +259,8 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
     ];
 
     // 5. Cruce con campanas_difusion_destinatarios + campanas_difusion
+    $vol_camp_total = 0;
+    $camp_ids_active = [];
     $chk_camp = $con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
     if ($chk_camp && $chk_camp->num_rows > 0) {
         $q_camp = "SELECT 
@@ -241,24 +270,36 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
                         WHEN d.costo_usd > 0 THEN d.costo_usd 
                         WHEN c.costo_unitario_usd > 0 THEN c.costo_unitario_usd 
                         ELSE $costo_unit_mkt_ref 
-                    END) AS costo_camp
+                    END) AS costo_camp,
+                    GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
                    FROM campanas_difusion_destinatarios d
                    LEFT JOIN campanas_difusion c ON d.id_campana = c.id
                    WHERE (d.id_sede = $id_sede OR (d.id_sede = 0 AND c.id_sede = $id_sede))
                      AND d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')
-                     AND COALESCE(d.fecha_envio, d.fecha_entrega, c.fecha_creacion) >= '$desde_dt'
-                     AND COALESCE(d.fecha_envio, d.fecha_entrega, c.fecha_creacion) <= '$hasta_dt'
+                     AND (
+                         (d.fecha_envio >= '$desde_dt' AND d.fecha_envio <= '$hasta_dt')
+                         OR (d.fecha_envio IS NULL AND c.fecha_creacion >= '$desde_dt' AND c.fecha_creacion <= '$hasta_dt')
+                     )
                    GROUP BY cat";
         $res_camp = $con->query($q_camp);
         if ($res_camp) {
             while ($rc = $res_camp->fetch_assoc()) {
                 $cat = $rc['cat'] ?: 'MARKETING';
+                if (!empty($rc['camp_ids'])) {
+                    foreach (explode(',', $rc['camp_ids']) as $cid) {
+                        $cid_int = intval($cid);
+                        if ($cid_int > 0) {
+                            $camp_ids_active[$cid_int] = $cid_int;
+                        }
+                    }
+                }
                 if (!isset($cat_details[$cat])) {
                     $cat_details[$cat] = ['nombre' => 'Mensajes ' . ucfirst(strtolower($cat)), 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0];
                     $costo_local_por_cat[$cat] = 0.0;
                 }
                 $vol_c = intval($rc['vol']);
                 $costo_c = floatval($rc['costo_camp']);
+                $vol_camp_total += $vol_c;
                 $cat_details[$cat]['volumen'] += $vol_c;
                 $cat_details[$cat]['pagados'] += $vol_c;
                 $costo_local_por_cat[$cat]    += $costo_c;
@@ -266,13 +307,21 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         }
     }
 
-    // 6. Cruce con mensajes_y_eventos (excluyendo wamids que ya fueron contabilizados en campanas_difusion_destinatarios)
+    // 6. Cruce con mensajes_y_eventos (evaluando NOT EXISTS solo en origen API_TRANSACCIONAL y usando idx_campana)
     $exclude_camp_wamid_sql = "";
-    if ($chk_camp && $chk_camp->num_rows > 0) {
-        $exclude_camp_wamid_sql = " AND (m.id_mensaje_meta IS NULL OR m.id_mensaje_meta = '' OR NOT EXISTS (
-            SELECT 1 FROM campanas_difusion_destinatarios d2 
-            WHERE d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
-        ))";
+    if ($chk_camp && $chk_camp->num_rows > 0 && !empty($camp_ids_active)) {
+        $camp_ids_csv = implode(',', $camp_ids_active);
+        $exclude_camp_wamid_sql = " AND (
+            m.origen != 'API_TRANSACCIONAL'
+            OR m.id_mensaje_meta IS NULL
+            OR m.id_mensaje_meta = ''
+            OR NOT EXISTS (
+                SELECT 1 FROM campanas_difusion_destinatarios d2 
+                WHERE d2.id_campana IN ($camp_ids_csv)
+                  AND (d2.id_conversacion = m.id_conversacion OR d2.id_conversacion = 0)
+                  AND d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
+            )
+        )";
     }
 
     $q_msg = "SELECT 
@@ -1097,11 +1146,56 @@ if ($action === 'register_payment' || $action === 'mark_paid') {
     $metodo_pago     = trim($_POST['metodo_pago'] ?? '');
     $referencia_pago = trim($_POST['referencia_pago'] ?? '');
     $fecha_pago_in   = trim($_POST['fecha_pago'] ?? date('Y-m-d H:i:s'));
-    $notas_pago      = trim($_POST['notas_pago'] ?? '');
+    $notas_usuario   = trim($_POST['notas_pago'] ?? '');
 
-    if (empty($metodo_pago) || empty($referencia_pago)) {
-        echo json_encode(['status' => 'error', 'message' => 'El Método de Pago y la Referencia / TxID son obligatorios.']);
+    // Campos dinámicos según el método de pago
+    $banco_emisor    = trim($_POST['banco_emisor'] ?? '');
+    $titular_emisor  = trim($_POST['titular_emisor'] ?? '');
+    $telefono_emisor = trim($_POST['telefono_emisor'] ?? '');
+    $monto_bs        = trim($_POST['monto_bs'] ?? '');
+
+    if (empty($metodo_pago)) {
+        echo json_encode(['status' => 'error', 'message' => 'Debe seleccionar el Método de Pago.']);
         exit;
+    }
+
+    if ($metodo_pago === 'Efectivo' && empty($referencia_pago)) {
+        $referencia_pago = 'Entrega en Efectivo';
+    }
+
+    if (empty($referencia_pago)) {
+        echo json_encode(['status' => 'error', 'message' => 'El número de Referencia / TxID / Confirmación es obligatorio para ' . $metodo_pago . '.']);
+        exit;
+    }
+
+    // Construir resumen estructurado de los campos dinámicos para trazabilidad en auditoría y recibo PDF
+    $detalles_metodo = [];
+    if ($banco_emisor !== '') {
+        $detalles_metodo[] = "Banco: $banco_emisor";
+    }
+    if ($titular_emisor !== '') {
+        $lbl_tit = ($metodo_pago === 'Efectivo') ? 'Entregado/Recibido' : (($metodo_pago === 'Binance') ? 'Cuenta Binance' : 'Titular');
+        $detalles_metodo[] = "$lbl_tit: $titular_emisor";
+    }
+    if ($telefono_emisor !== '') {
+        $detalles_metodo[] = "Tel/CI: $telefono_emisor";
+    }
+    if ($monto_bs !== '') {
+        $detalles_metodo[] = "Monto Bs: $monto_bs";
+    }
+
+    $prefijo_detalles = !empty($detalles_metodo) ? implode(' | ', $detalles_metodo) : '';
+    if ($prefijo_detalles !== '' && $notas_usuario !== '') {
+        // Evitar duplicar si el usuario editó un reporte que ya contenía el prefijo
+        if (strpos($notas_usuario, $prefijo_detalles) === false) {
+            $notas_pago = $prefijo_detalles . " — " . $notas_usuario;
+        } else {
+            $notas_pago = $notas_usuario;
+        }
+    } elseif ($prefijo_detalles !== '') {
+        $notas_pago = $prefijo_detalles;
+    } else {
+        $notas_pago = $notas_usuario;
     }
 
     // Normalizar fecha_pago

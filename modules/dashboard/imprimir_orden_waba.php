@@ -1,12 +1,15 @@
 <?php
 date_default_timezone_set('America/Caracas');
-define('WABA_BILLING_LIB_ONLY', true);
-require_once __DIR__ . '/back_waba_billing.php';
+require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../config/database.php';
 
 requireAuth();
 $agente = getAgenteInfo();
 $es_master = (($agente['rol'] ?? '') === 'MASTER');
 $id_sede_agente = intval($agente['id_sede'] ?? 0);
+
+// Liberar el bloqueo de sesión de inmediato para no bloquear otras pestañas mientras se genera el PDF
+session_write_close();
 
 $id_orden = intval($_GET['id'] ?? 0);
 if ($id_orden <= 0) {
@@ -14,7 +17,9 @@ if ($id_orden <= 0) {
 }
 
 $con = getDbConnection();
-ensureWabaBillingSchema($con);
+if (!$con) {
+    die("Error de conexión a la base de datos.");
+}
 
 // Obtener datos de la orden y sede
 $stmt = $con->prepare("
@@ -87,13 +92,60 @@ $total = floatval($o['monto_total']);
 $fecha_emision = !empty($o['fecha_emision']) ? date('Y-m-d', strtotime($o['fecha_emision'])) : date('Y-m-d');
 $fecha_vencimiento = !empty($o['fecha_vencimiento']) ? date('Y-m-d', strtotime($o['fecha_vencimiento'])) : date('Y-m-d', strtotime($fecha_emision . ' + 5 days'));
 
-$logo_path = realpath(__DIR__ . '/../../docs/identidad_visual/logos/logo_starfi.png');
-$logo_base64 = '';
-if ($logo_path && file_exists($logo_path)) {
-    $type = pathinfo($logo_path, PATHINFO_EXTENSION);
-    $data = file_get_contents($logo_path);
-    $logo_base64 = 'data:image/' . $type . ';base64,' . base64_encode($data);
+/**
+ * Convierte cualquier imagen local (PNG con transparencia, WEBP, JPG de alta resolución)
+ * a un JPEG ligero con fondo sólido y dimensiones acotadas para que Dompdf la incruste
+ * de forma nativa (DCTDecode) en < 10ms sin procesar canales alfa píxel por píxel.
+ */
+function imageToFastPdfBase64($file_path, $max_w = 320, $max_h = 240, $bg_rgb = [255, 255, 255]) {
+    if (!$file_path || !file_exists($file_path)) {
+        return '';
+    }
+    if (function_exists('getimagesize') && function_exists('imagecreatetruecolor')) {
+        $info = @getimagesize($file_path);
+        if ($info && !empty($info[0]) && !empty($info[1])) {
+            $src_w = intval($info[0]);
+            $src_h = intval($info[1]);
+            $mime  = strtolower($info['mime'] ?? '');
+            $src_img = null;
+            if ($mime === 'image/png' && function_exists('imagecreatefrompng')) {
+                $src_img = @imagecreatefrompng($file_path);
+            } elseif (($mime === 'image/jpeg' || $mime === 'image/jpg') && function_exists('imagecreatefromjpeg')) {
+                $src_img = @imagecreatefromjpeg($file_path);
+            } elseif ($mime === 'image/webp' && function_exists('imagecreatefromwebp')) {
+                $src_img = @imagecreatefromwebp($file_path);
+            }
+            if ($src_img) {
+                $ratio = min($max_w / max($src_w, 1), $max_h / max($src_h, 1), 1.0);
+                $dst_w = max(1, intval(round($src_w * $ratio)));
+                $dst_h = max(1, intval(round($src_h * $ratio)));
+                $dst_img = imagecreatetruecolor($dst_w, $dst_h);
+                $bg = imagecolorallocate($dst_img, $bg_rgb[0], $bg_rgb[1], $bg_rgb[2]);
+                imagefilledrectangle($dst_img, 0, 0, $dst_w, $dst_h, $bg);
+                imagealphablending($dst_img, true);
+                imagecopyresampled($dst_img, $src_img, 0, 0, 0, 0, $dst_w, $dst_h, $src_w, $src_h);
+                ob_start();
+                imagejpeg($dst_img, null, 88);
+                $jpeg_bytes = ob_get_clean();
+                imagedestroy($src_img);
+                imagedestroy($dst_img);
+                if (!empty($jpeg_bytes)) {
+                    return 'data:image/jpeg;base64,' . base64_encode($jpeg_bytes);
+                }
+            }
+        }
+    }
+    $ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
+    $mime_fallback = ($ext === 'jpg') ? 'jpeg' : $ext;
+    return 'data:image/' . $mime_fallback . ';base64,' . base64_encode(file_get_contents($file_path));
 }
+
+// Usar el logo ligero optimizado para PDF (4.7 KB) en lugar del master 5K (5077x2540 px)
+$logo_path = realpath(__DIR__ . '/../../docs/identidad_visual/logos/logo_starfi_pdf.png');
+if (!$logo_path || !file_exists($logo_path)) {
+    $logo_path = realpath(__DIR__ . '/../../docs/identidad_visual/logos/logo_starfi.png');
+}
+$logo_base64 = imageToFastPdfBase64($logo_path, 310, 155, [255, 255, 255]);
 
 // [FAC-02] Preparar miniatura base64 del comprobante de pago si es imagen
 $comprobante_base64 = '';
@@ -103,8 +155,8 @@ if (!empty($o['comprobante_path'])) {
     if ($comp_full && file_exists($comp_full)) {
         $ext_c = strtolower(pathinfo($comp_full, PATHINFO_EXTENSION));
         if (in_array($ext_c, ['jpg', 'jpeg', 'png', 'webp'], true)) {
-            $mime_c = ($ext_c === 'jpg') ? 'jpeg' : $ext_c;
-            $comprobante_base64 = 'data:image/' . $mime_c . ';base64,' . base64_encode(file_get_contents($comp_full));
+            $bg_comp = (strtoupper($o['estado'] ?? '') === 'PAGADO') ? [240, 253, 244] : [240, 249, 255];
+            $comprobante_base64 = imageToFastPdfBase64($comp_full, 280, 220, $bg_comp);
         } elseif ($ext_c === 'pdf') {
             $comprobante_es_pdf = true;
         }
@@ -421,20 +473,6 @@ ob_start();
         </tr>
     </table>
 
-    <?php if ($es_master && (!isset($_GET['modo']) || $_GET['modo'] !== 'cliente')): ?>
-    <!-- [FAC-04] Desglose Financiero Interno Exclusivo MASTER -->
-    <div class="master-audit-box">
-        <strong style="color: #5b21b6;">AUDITORÍA FINANCIERA INTERNA (EXCLUSIVO ROL MASTER):</strong><br>
-        <table style="width: 100%; margin-top: 5px; border-collapse: collapse;">
-            <tr>
-                <td><strong>Costo Base Meta:</strong> $<?= number_format($costo_meta_total, 2) ?> USD</td>
-                <td><strong>Margen CRM:</strong> $<?= number_format($margen_total, 2) ?> USD</td>
-                <td><strong>Total a Cobrar:</strong> $<?= number_format($total, 2) ?> USD</td>
-            </tr>
-        </table>
-    </div>
-    <?php endif; ?>
-
     <!-- [FAC-02] Sección de Registro y Reporte de Pago en el Recibo PDF -->
     <?php if (!empty($o['metodo_pago']) || $estado_orden === 'PAGADO' || $estado_orden === 'EN_REVISION'): ?>
         <div class="<?= $estado_orden === 'PAGADO' ? 'payment-receipt-box' : 'payment-review-box' ?>">
@@ -503,7 +541,7 @@ use Dompdf\Options;
 
 $options = new Options();
 $options->set('isHtml5ParserEnabled', true);
-$options->set('isRemoteEnabled', true);
+$options->set('isRemoteEnabled', false);
 $options->set('defaultFont', 'Helvetica');
 $dompdf = new Dompdf($options);
 

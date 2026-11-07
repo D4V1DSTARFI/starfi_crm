@@ -91,7 +91,7 @@ Blindar integralmente el ecosistema de facturación, analítica y órdenes de co
   - En `get_order_details` y `imprimir_orden_waba.php`: Se excluye la fila de categoría `'ADMIN'` (*Margen Administrativo CRM*) y se aplica el factor de distribución proporcional:
     $$\text{Factor} = \frac{\text{Costo Base Meta} + \text{Margen CRM}}{\text{Costo Base Meta}}$$
     De modo que cada categoría muestra directamente su **Precio Unitario Final** y **Subtotal Final** con comisión integrada.
-  - En `imprimir_orden_waba.php`: El bloque *"Auditoría Financiera Interna (Costo Base Meta / Margen CRM / Total a Cobrar)"* solo se renderiza para el rol `MASTER` (y puede omitirse pasando `?modo=cliente`).
+  - En `imprimir_orden_waba.php`: El documento PDF muestra siempre únicamente el **Precio Unitario Final** y **Total Final** con comisión integrada, sin exponer jamás el Costo Base Meta ni el Margen CRM en el recibo impreso.
 
 ---
 

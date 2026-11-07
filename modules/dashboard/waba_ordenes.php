@@ -360,27 +360,77 @@ if ($res_sedes) {
                     <?php endif; ?>
 
                     <div class="row g-3">
-                        <div class="col-md-6">
+                        <div class="col-12">
                             <label class="form-label fw-semibold small">Método de Pago <span class="text-danger">*</span></label>
                             <select name="metodo_pago" id="pago_metodo" class="form-select" required>
-                                <option value="">Seleccione...</option>
-                                <option value="Binance">Binance</option>
-                                <option value="Zelle">Zelle</option>
-                                <option value="Pago Móvil">Pago Móvil</option>
-                                <option value="Transferencia">Transferencia</option>
-                                <option value="Efectivo">Efectivo</option>
+                                <option value="">Seleccione la forma de pago...</option>
+                                <option value="Binance">Binance (USDT / Binance Pay)</option>
+                                <option value="Zelle">Zelle (USD)</option>
+                                <option value="Pago Móvil">Pago Móvil (Bs.)</option>
+                                <option value="Transferencia">Transferencia Bancaria</option>
+                                <option value="Efectivo">Efectivo (Divisas / Taquilla)</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-semibold small">Referencia / TxID <span class="text-danger">*</span></label>
-                            <input type="text" name="referencia_pago" id="pago_referencia" class="form-control" placeholder="Ej: 984512369 / TxID" required>
+                    </div>
+
+                    <div id="avisoSeleccionarMetodo" class="text-center text-muted border rounded-3 py-4 mt-3 bg-light">
+                        <i class="fas fa-hand-pointer fa-lg mb-2 d-block text-secondary"></i>
+                        <span class="small">Seleccione primero el <strong>Método de Pago</strong> para desplegar los campos requeridos.</span>
+                    </div>
+
+                    <div id="bloqueCamposDinamicosPago" class="row g-3 mt-1" style="display: none;">
+                        <!-- Campo dinámico: Banco Emisor (Pago Móvil / Transferencia) -->
+                        <div class="col-md-6" id="wrapBanco" style="display: none;">
+                            <label class="form-label fw-semibold small" id="lblPagoBanco">Banco Emisor <span class="text-danger">*</span></label>
+                            <select name="banco_emisor" id="pago_banco_emisor" class="form-select">
+                                <option value="">Seleccione banco...</option>
+                                <option value="Banesco (0134)">Banesco (0134)</option>
+                                <option value="Banco de Venezuela (0102)">Banco de Venezuela (0102)</option>
+                                <option value="Mercantil (0105)">Mercantil (0105)</option>
+                                <option value="BBVA Provincial (0108)">BBVA Provincial (0108)</option>
+                                <option value="BNC (0191)">BNC (0191)</option>
+                                <option value="Bancamiga (0172)">Bancamiga (0172)</option>
+                                <option value="Banplus (0174)">Banplus (0174)</option>
+                                <option value="BFC (0151)">BFC Fondo Común (0151)</option>
+                                <option value="Venezolano de Crédito (0104)">Venezolano de Crédito (0104)</option>
+                                <option value="Bancaribe (0114)">Bancaribe (0114)</option>
+                                <option value="Banco Exterior (0115)">Banco Exterior (0115)</option>
+                                <option value="Otro Banco">Otro Banco</option>
+                            </select>
                         </div>
-                        <div class="col-md-6">
+
+                        <!-- Campo dinámico: Referencia / TxID / Confirmación -->
+                        <div class="col-md-6" id="wrapReferencia">
+                            <label class="form-label fw-semibold small" id="lblPagoReferencia">Referencia / TxID <span class="text-danger">*</span></label>
+                            <input type="text" name="referencia_pago" id="pago_referencia" class="form-control" placeholder="Ej: 984512369 / TxID">
+                        </div>
+
+                        <!-- Campo dinámico: Titular / Correo / Entregado por -->
+                        <div class="col-md-6" id="wrapTitular" style="display: none;">
+                            <label class="form-label fw-semibold small" id="lblPagoTitular">Titular / Cuenta Emisora <span class="text-danger">*</span></label>
+                            <input type="text" name="titular_emisor" id="pago_titular_emisor" class="form-control" placeholder="Nombre del titular o correo">
+                        </div>
+
+                        <!-- Campo dinámico: Teléfono y Cédula/RIF (Pago Móvil) -->
+                        <div class="col-md-6" id="wrapTelefonoEmisor" style="display: none;">
+                            <label class="form-label fw-semibold small" id="lblPagoTelefono">Teléfono y Cédula/RIF Emisor <span class="text-danger">*</span></label>
+                            <input type="text" name="telefono_emisor" id="pago_telefono_emisor" class="form-control" placeholder="Ej: 0414-1234567 / V-12345678">
+                        </div>
+
+                        <!-- Campo dinámico: Monto en Bolívares (Pago Móvil / Transferencia) -->
+                        <div class="col-md-6" id="wrapMontoBs" style="display: none;">
+                            <label class="form-label fw-semibold small" id="lblPagoMontoBs">Monto Pagado en Bs. <span class="text-muted fw-normal">(Opcional)</span></label>
+                            <input type="text" name="monto_bs" id="pago_monto_bs" class="form-control" placeholder="Ej: 1.450,00 Bs">
+                        </div>
+
+                        <!-- Fecha del Pago -->
+                        <div class="col-md-6" id="wrapFechaPago">
                             <label class="form-label fw-semibold small">Fecha del Pago <span class="text-danger">*</span></label>
                             <input type="date" name="fecha_pago" id="pago_fecha" class="form-control" value="<?= date('Y-m-d') ?>" required>
                         </div>
+
                         <?php if ($es_master): ?>
-                        <div class="col-md-6">
+                        <div class="col-md-6" id="wrapEstadoDestino">
                             <label class="form-label fw-semibold small">Estado Inicial del Reporte</label>
                             <select name="estado_destino" id="pago_estado_destino" class="form-select">
                                 <option value="EN_REVISION" selected>PAGADA - PEND. REVISIÓN (Verificar ingreso luego)</option>
@@ -388,14 +438,16 @@ if ($res_sedes) {
                             </select>
                         </div>
                         <?php endif; ?>
+
                         <div class="col-12">
-                            <label class="form-label fw-semibold small">Comprobante Adjunto (Imagen o PDF)</label>
+                            <label class="form-label fw-semibold small" id="lblPagoComprobante">Comprobante Adjunto (Imagen o PDF)</label>
                             <input type="file" name="comprobante" id="pago_comprobante" class="form-control" accept=".jpg,.jpeg,.png,.webp,.pdf">
                             <small class="text-muted">Formatos aceptados: JPG, PNG, WEBP o PDF (Máx. 10MB).</small>
                         </div>
+
                         <div class="col-12">
-                            <label class="form-label fw-semibold small">Notas / Observaciones</label>
-                            <textarea name="notas_pago" id="pago_notas" class="form-control" rows="2" placeholder="Titular de la cuenta, banco emisor o comentarios adicionales..."></textarea>
+                            <label class="form-label fw-semibold small">Notas / Observaciones Adicionales</label>
+                            <textarea name="notas_pago" id="pago_notas" class="form-control" rows="2" placeholder="Comentarios adicionales sobre el pago..."></textarea>
                         </div>
                     </div>
                 </div>
@@ -709,6 +761,83 @@ $(document).ready(function() {
         }, 'json');
     });
 
+    // Lógica de Campos Dinámicos según Forma de Pago [FAC-02]
+    function actualizarCamposMetodoPago(metodo) {
+        if (!metodo) {
+            $('#avisoSeleccionarMetodo').show();
+            $('#bloqueCamposDinamicosPago').hide();
+            $('#pago_referencia, #pago_banco_emisor, #pago_titular_emisor, #pago_telefono_emisor').prop('required', false);
+            return;
+        }
+
+        $('#avisoSeleccionarMetodo').hide();
+        $('#bloqueCamposDinamicosPago').fadeIn(150);
+
+        // Resetear visibilidad y obligatoriedad de campos específicos
+        $('#wrapBanco, #wrapTitular, #wrapTelefonoEmisor, #wrapMontoBs').hide();
+        $('#pago_banco_emisor, #pago_titular_emisor, #pago_telefono_emisor, #pago_referencia').prop('required', false);
+        $('#wrapReferencia').show();
+
+        if (metodo === 'Binance') {
+            $('#lblPagoReferencia').html('TxID / ID de Orden Binance <span class="text-danger">*</span>');
+            $('#pago_referencia').attr('placeholder', 'Ej: 284910293847102938 / TxID').prop('required', true);
+
+            $('#wrapTitular').show();
+            $('#lblPagoTitular').html('Correo o Binance ID Emisor <span class="text-danger">*</span>');
+            $('#pago_titular_emisor').attr('placeholder', 'Ej: usuario@gmail.com o Pay ID').prop('required', true);
+
+            $('#lblPagoComprobante').text('Captura de Pantalla Binance (Imagen o PDF)');
+        } else if (metodo === 'Zelle') {
+            $('#lblPagoReferencia').html('Código de Confirmación Zelle <span class="text-danger">*</span>');
+            $('#pago_referencia').attr('placeholder', 'Ej: 094812394 / Confirmation #').prop('required', true);
+
+            $('#wrapTitular').show();
+            $('#lblPagoTitular').html('Titular de la Cuenta / Correo Zelle <span class="text-danger">*</span>');
+            $('#pago_titular_emisor').attr('placeholder', 'Ej: Juan Pérez (juan@email.com)').prop('required', true);
+
+            $('#lblPagoComprobante').text('Captura del Comprobante Zelle (Imagen o PDF)');
+        } else if (metodo === 'Pago Móvil') {
+            $('#wrapBanco').show();
+            $('#pago_banco_emisor').prop('required', true);
+
+            $('#lblPagoReferencia').html('Número de Referencia <span class="text-danger">*</span>');
+            $('#pago_referencia').attr('placeholder', 'Ej: 004829103842 (últimos 6-12 dígitos)').prop('required', true);
+
+            $('#wrapTelefonoEmisor').show();
+            $('#lblPagoTelefono').html('Teléfono y Cédula/RIF Emisor <span class="text-danger">*</span>');
+            $('#pago_telefono_emisor').attr('placeholder', 'Ej: 0414-1234567 / V-12345678').prop('required', true);
+
+            $('#wrapMontoBs').show();
+            $('#lblPagoComprobante').text('Captura de Pago Móvil (Imagen o PDF)');
+        } else if (metodo === 'Transferencia') {
+            $('#wrapBanco').show();
+            $('#pago_banco_emisor').prop('required', true);
+
+            $('#lblPagoReferencia').html('Número de Referencia / Operación <span class="text-danger">*</span>');
+            $('#pago_referencia').attr('placeholder', 'Ej: 984512369').prop('required', true);
+
+            $('#wrapTitular').show();
+            $('#lblPagoTitular').html('Titular / RIF de la Cuenta Emisora <span class="text-danger">*</span>');
+            $('#pago_titular_emisor').attr('placeholder', 'Ej: Inversiones XYZ, C.A. / J-12345678-9').prop('required', true);
+
+            $('#wrapMontoBs').show();
+            $('#lblPagoComprobante').text('Comprobante de Transferencia (Imagen o PDF)');
+        } else if (metodo === 'Efectivo') {
+            $('#wrapTitular').show();
+            $('#lblPagoTitular').html('Entregado por / Recibido por <span class="text-danger">*</span>');
+            $('#pago_titular_emisor').attr('placeholder', 'Ej: Entregado por Gerente a Administración').prop('required', true);
+
+            $('#lblPagoReferencia').html('Nº de Recibo o Seriales de Billetes <span class="text-muted fw-normal">(Opcional)</span>');
+            $('#pago_referencia').attr('placeholder', 'Ej: Recibo #045 / Seriales USD').prop('required', false);
+
+            $('#lblPagoComprobante').text('Foto de Recibo o Billetes (Opcional)');
+        }
+    }
+
+    $('#pago_metodo').on('change', function() {
+        actualizarCamposMetodoPago($(this).val());
+    });
+
     // Abrir Modal para Registrar / Reportar Pago [FAC-02]
     $(document).on('click', '.btn-pagar', function() {
         let id_orden = $(this).data('id');
@@ -722,10 +851,13 @@ $(document).ready(function() {
         $('#lblPagoMontoTotal').text('$' + parseFloat(o.monto_total || 0).toFixed(2) + ' USD');
 
         if (o.metodo_pago) $('#pago_metodo').val(o.metodo_pago);
-        if (o.referencia_pago) $('#pago_referencia').val(o.referencia_pago);
+        if (o.referencia_pago && o.referencia_pago !== 'Entrega en Efectivo') {
+            $('#pago_referencia').val(o.referencia_pago);
+        }
         if (o.fecha_pago) $('#pago_fecha').val(o.fecha_pago.substring(0, 10));
         if (o.notas_pago) $('#pago_notas').val(o.notas_pago);
 
+        actualizarCamposMetodoPago($('#pago_metodo').val());
         $('#modalPagoOrden').modal('show');
     });
 

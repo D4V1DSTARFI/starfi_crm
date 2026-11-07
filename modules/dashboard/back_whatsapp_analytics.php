@@ -1,7 +1,7 @@
 <?php
 date_default_timezone_set('America/Caracas');
-define('WABA_BILLING_LIB_ONLY', true);
-require_once __DIR__ . '/back_waba_billing.php';
+require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../config/database.php';
 
 requireAuth();
 header('Content-Type: application/json; charset=utf-8');
@@ -21,10 +21,20 @@ if ($action === 'get_analytics') {
     $fecha_desde = $_POST['fecha_desde'] ?? date('Y-m-01');
     $fecha_hasta = $_POST['fecha_hasta'] ?? date('Y-m-t');
 
+    // Usar límites diarios deterministas (evita invalidar el caché cada segundo con time())
+    $hoy_ymd = date('Y-m-d');
+    $fecha_hasta_meta = ($fecha_hasta > $hoy_ymd) ? $hoy_ymd : $fecha_hasta;
     $start_ts = strtotime($fecha_desde . " 00:00:00");
-    $end_ts   = strtotime($fecha_hasta . " 23:59:59");
+    $end_ts   = strtotime($fecha_hasta_meta . " 23:59:59");
+    if ($start_ts > $end_ts) {
+        $start_ts = strtotime('-7 days', $end_ts);
+    }
 
     $id_plantilla = trim($_POST['id_plantilla'] ?? '');
+
+    // Liberar bloqueo de sesión antes de abrir conexión a BD y llamadas de red
+    $session_cache_snapshot = $_SESSION ?? [];
+    session_write_close();
 
     $con = getDbConnection();
     if (!$con) {
@@ -56,14 +66,35 @@ if ($action === 'get_analytics') {
 
         $url = "https://graph.facebook.com/v23.0/$waba_id?fields=$fields";
 
-        $curl = curl_init();
-        curl_setopt($curl, CURLOPT_URL, $url);
-        curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curl, CURLOPT_TIMEOUT, 20);
-        $raw_exec = curl_exec($curl);
-        $resp = json_decode($raw_exec, true);
-        curl_close($curl);
+        // Caché de sesión determinista (180 seg) para respuesta instantánea entre recargas
+        $cache_key = 'waba_analytics_' . md5($url);
+        if (isset($session_cache_snapshot[$cache_key]) && (time() - ($session_cache_snapshot[$cache_key]['ts'] ?? 0) < 180)) {
+            $resp = $session_cache_snapshot[$cache_key]['resp'];
+        } else {
+            $curl = curl_init();
+            curl_setopt($curl, CURLOPT_URL, $url);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
+            curl_setopt($curl, CURLOPT_TIMEOUT, 6);
+            $raw_exec = curl_exec($curl);
+            $resp = json_decode($raw_exec, true);
+            curl_close($curl);
+
+            if (is_array($resp) && !isset($resp['error'])) {
+                @session_start();
+                // Limpiar entradas antiguas de caché para no inflar el archivo de sesión
+                foreach (array_keys($_SESSION) as $k) {
+                    if (strpos($k, 'waba_analytics_') === 0 && $k !== $cache_key) {
+                        unset($_SESSION[$k]);
+                    }
+                }
+                $_SESSION[$cache_key] = ['ts' => time(), 'resp' => $resp];
+                session_write_close();
+            }
+        }
 
         // Auditoría híbrida local (mensajes_y_eventos + campanas_difusion_destinatarios)
         $local_audit = [
@@ -90,7 +121,8 @@ if ($action === 'get_analytics') {
         $desde_dt = $con->real_escape_string($fecha_desde) . " 00:00:00";
         $hasta_dt = $con->real_escape_string($fecha_hasta) . " 23:59:59";
 
-        // 1. Cruzar campanas_difusion_destinatarios
+        // 1. Cruzar campanas_difusion_destinatarios y recolectar id_campana activos para usar idx_campana
+        $camp_ids_active = [];
         $chk_camp = $con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
         $has_camp_table = ($chk_camp && $chk_camp->num_rows > 0);
         if ($has_camp_table) {
@@ -99,12 +131,15 @@ if ($action === 'get_analytics') {
                                 UPPER(COALESCE(NULLIF(c.template_category, ''), 'MARKETING')) AS cat,
                                 d.estado_envio,
                                 COUNT(d.id) AS total,
-                                SUM(CASE WHEN d.costo_usd > 0 THEN d.costo_usd WHEN c.costo_unitario_usd > 0 THEN c.costo_unitario_usd ELSE 0.0700 END) AS costo_sum
+                                SUM(CASE WHEN d.costo_usd > 0 THEN d.costo_usd WHEN c.costo_unitario_usd > 0 THEN c.costo_unitario_usd ELSE 0.0700 END) AS costo_sum,
+                                GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
                              FROM campanas_difusion_destinatarios d
                              LEFT JOIN campanas_difusion c ON d.id_campana = c.id
                              WHERE d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')
-                               AND COALESCE(d.fecha_envio, d.fecha_entrega, c.fecha_creacion) >= '$desde_dt'
-                               AND COALESCE(d.fecha_envio, d.fecha_entrega, c.fecha_creacion) <= '$hasta_dt'
+                               AND (
+                                   (d.fecha_envio >= '$desde_dt' AND d.fecha_envio <= '$hasta_dt')
+                                   OR (d.fecha_envio IS NULL AND c.fecha_creacion >= '$desde_dt' AND c.fecha_creacion <= '$hasta_dt')
+                               )
                                $where_camp_sede
                              GROUP BY cat, d.estado_envio";
             $res_ca = $con->query($q_camp_audit);
@@ -113,6 +148,15 @@ if ($action === 'get_analytics') {
                     $tot = intval($rca['total']);
                     $cat = $rca['cat'] ?: 'MARKETING';
                     $est = strtoupper($rca['estado_envio'] ?? 'ENVIADO');
+
+                    if (!empty($rca['camp_ids'])) {
+                        foreach (explode(',', $rca['camp_ids']) as $cid) {
+                            $cid_int = intval($cid);
+                            if ($cid_int > 0) {
+                                $camp_ids_active[$cid_int] = $cid_int;
+                            }
+                        }
+                    }
 
                     $local_audit['enviados'] += $tot;
                     if (in_array($est, ['ENTREGADO', 'LEIDO', 'RESPONDIDO'], true)) {
@@ -133,16 +177,25 @@ if ($action === 'get_analytics') {
             }
         }
 
-        // 2. Cruzar mensajes_y_eventos (excluyendo wamids de campañas para evitar doble conteo)
+        // 2. Cruzar mensajes_y_eventos (evaluando NOT EXISTS solo en origen API_TRANSACCIONAL y usando idx_campana)
         $where_sede = "";
         if ($id_sede > 0) {
             $where_sede = " AND c.id_linea IN (SELECT id FROM lineas_whatsapp WHERE id_sede = $id_sede) ";
         }
         $exclude_wamid = "";
-        if ($has_camp_table) {
-            $exclude_wamid = " AND (m.id_mensaje_meta IS NULL OR m.id_mensaje_meta = '' OR NOT EXISTS (
-                SELECT 1 FROM campanas_difusion_destinatarios d2 WHERE d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
-            )) ";
+        if ($has_camp_table && !empty($camp_ids_active)) {
+            $camp_ids_csv = implode(',', $camp_ids_active);
+            $exclude_wamid = " AND (
+                m.origen != 'API_TRANSACCIONAL'
+                OR m.id_mensaje_meta IS NULL
+                OR m.id_mensaje_meta = ''
+                OR NOT EXISTS (
+                    SELECT 1 FROM campanas_difusion_destinatarios d2 
+                    WHERE d2.id_campana IN ($camp_ids_csv)
+                      AND (d2.id_conversacion = m.id_conversacion OR d2.id_conversacion = 0)
+                      AND d2.id_mensaje_meta COLLATE utf8mb4_unicode_ci = m.id_mensaje_meta COLLATE utf8mb4_unicode_ci
+                )
+            ) ";
         }
 
         $query_audit = "SELECT 
