@@ -62,12 +62,18 @@ $(document).ready(function () {
         }
     });
 
-    // Búsqueda en tiempo real
-    $('.search-bar input').on('keyup', function () {
-        let val = $(this).val().toLowerCase();
+    // Búsqueda híbrida: filtrado visual inmediato + búsqueda en servidor (con debounce de 350ms)
+    let searchDebounceTimer = null;
+    $('.search-bar input').on('input', function () {
+        let val = $(this).val().trim();
+        let valLower = val.toLowerCase();
         $('#chatList .chat-item').filter(function () {
-            $(this).toggle($(this).text().toLowerCase().indexOf(val) > -1)
+            $(this).toggle($(this).text().toLowerCase().indexOf(valLower) > -1);
         });
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(function () {
+            loadChats(false, 1);
+        }, 350);
     });
 
     // 1. Emoji Picker (Nativo Ligero sin dependencias)
@@ -531,6 +537,23 @@ function loadOperadoresFilter() {
 let currentChatPage = 1;
 let hasMoreChats = false;
 let isLoadingChats = false;
+let currentChatsXHR = null;
+
+// Generador local de avatares SVG en memoria (evita 20 peticiones HTTP externas a ui-avatars.com)
+function getLocalAvatarSvg(name) {
+    let clean = String(name || 'C').trim();
+    let parts = clean.split(/\s+/);
+    let initials = '';
+    if (parts.length >= 2) {
+        initials = (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    } else {
+        initials = clean.substring(0, 2).toUpperCase();
+    }
+    initials = initials.replace(/[^A-Z0-9ÁÉÍÓÚÑ+]/gi, '') || 'CL';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="#F1F5F9"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#37414A" font-family="Arial, sans-serif" font-size="24" font-weight="bold">${initials}</text></svg>`;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
 let pendingDeepLinkChat = (function () {
     const sp = new URLSearchParams(window.location.search);
     const search = (sp.get('search') || '').trim();
@@ -540,11 +563,19 @@ let pendingDeepLinkChat = (function () {
     return { search, convId, clienteId };
 })();
 
-function loadChats(append = false) {
-    if (isLoadingChats) return;
+function loadChats(append = false, targetPage = null) {
+    // Si hay una petición en curso y el usuario cambió de filtro/página/búsqueda, abortar la anterior
+    if (currentChatsXHR && currentChatsXHR.readyState !== 4) {
+        if (!append) {
+            currentChatsXHR.abort();
+            isLoadingChats = false;
+        } else {
+            return;
+        }
+    }
 
     if (!append) {
-        currentChatPage = 1;
+        currentChatPage = (targetPage && targetPage > 0) ? targetPage : 1;
         $('#chatList').html('<div class="text-center p-4"><div class="spinner-border text-secondary mb-2" role="status"></div><p class="text-muted" style="font-size: 0.85rem;">Cargando conversaciones recientes...</p></div>');
     } else {
         currentChatPage++;
@@ -553,8 +584,9 @@ function loadChats(append = false) {
     isLoadingChats = true;
     const id_sede = $('#filterSede').val() || '';
     const id_agente = $('#filterOperador').val() || '';
+    const search_query = ($('.search-bar input').val() || '').trim();
 
-    $.ajax({
+    currentChatsXHR = $.ajax({
         url: 'back_bandeja.php',
         type: 'POST',
         dataType: 'json',
@@ -564,7 +596,8 @@ function loadChats(append = false) {
             id_sede: id_sede, 
             id_agente: id_agente,
             page: currentChatPage,
-            limit: 30,
+            limit: 20,
+            search_query: search_query,
             target_conv_id: pendingDeepLinkChat ? (pendingDeepLinkChat.convId || 0) : 0,
             search_phone: pendingDeepLinkChat ? (pendingDeepLinkChat.search || '') : ''
         },
@@ -573,6 +606,9 @@ function loadChats(append = false) {
             if (response.status === 'success') {
                 hasMoreChats = !!response.has_more;
                 renderChatList(response.data, append, hasMoreChats);
+                if (!append) {
+                    $('#chatList').scrollTop(0);
+                }
                 if (pendingDeepLinkChat) {
                     const dl = pendingDeepLinkChat;
                     pendingDeepLinkChat = null;
@@ -604,7 +640,7 @@ function loadChats(append = false) {
         },
         error: function (xhr, status, error) {
             isLoadingChats = false;
-            if (xhr.status === 401) return; // Se maneja globalmente
+            if (status === 'abort' || xhr.status === 401) return;
             console.error("AJAX Error:", status, error, xhr.responseText);
             if (!append) {
                 let resp = xhr.responseText ? xhr.responseText.replace(/</g, '&lt;').substring(0, 200) : error;
@@ -622,7 +658,11 @@ function renderChatList(chats, append = false, has_more = false) {
 
     if (!append) {
         if (chats.length === 0) {
-            list.html('<div class="p-4 text-center text-muted" style="font-size:0.85rem;"><i class="fa-solid fa-mug-hot fs-3 mb-2 d-block"></i> No hay conversaciones aquí.</div>');
+            let emptyHtml = '<div class="p-4 text-center text-muted" style="font-size:0.85rem;"><i class="fa-solid fa-mug-hot fs-3 mb-2 d-block"></i> No hay conversaciones aquí.</div>';
+            if (currentChatPage > 1) {
+                emptyHtml += `<div class="px-3 text-center"><button class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="loadChats(false, ${currentChatPage - 1})"><i class="fa-solid fa-chevron-left me-1"></i> Volver a página ${currentChatPage - 1}</button></div>`;
+            }
+            list.html(emptyHtml);
             $('#badgeNoLeidos').hide();
             return;
         }
@@ -701,7 +741,7 @@ function renderChatList(chats, append = false, has_more = false) {
         let html = `
             <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}">
                 <div class="chat-avatar">
-                    <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A" alt="Avatar">
+                    <img src="${getLocalAvatarSvg(name)}" alt="Avatar">
                 </div>
                 <div class="chat-summary">
                     <div class="chat-top">
@@ -726,17 +766,47 @@ function renderChatList(chats, append = false, has_more = false) {
         list.append(html);
     });
 
-    if (has_more) {
+    // Barra de Paginación (20 por página) + opción de acumular en lista
+    if (currentChatPage > 1 || has_more) {
+        let prevDisabled = (currentChatPage <= 1) ? 'disabled' : '';
+        let nextDisabled = (!has_more) ? 'disabled' : '';
+        let loadMoreBtnHtml = has_more ? `
+            <button id="btnLoadMoreChats" class="btn btn-sm btn-light border text-secondary w-100 mt-2 py-1" style="border-radius: 16px; font-size: 0.78rem; font-weight: 600;">
+                <i class="fa-solid fa-plus-circle me-1"></i> Cargar 20 más en esta misma lista
+            </button>
+        ` : '';
+
         list.append(`
-            <div id="btnLoadMoreContainer" class="p-3 text-center">
-                <button id="btnLoadMoreChats" class="btn btn-sm btn-outline-secondary w-100 py-2" style="border-radius: 20px; font-weight: 600;">
-                    <i class="fa-solid fa-circle-chevron-down me-1"></i> Cargar más conversaciones
-                </button>
+            <div id="btnLoadMoreContainer" class="p-3 text-center border-top bg-white mx-2 my-2 rounded-3 shadow-sm">
+                <div class="d-flex justify-content-between align-items-center gap-2">
+                    <button type="button" id="btnPrevChatPage" class="btn btn-sm btn-outline-secondary px-3" style="border-radius: 16px; font-weight: 600; font-size: 0.8rem;" ${prevDisabled}>
+                        <i class="fa-solid fa-chevron-left me-1"></i> Anterior
+                    </button>
+                    <span class="badge bg-light text-dark border px-3 py-2" style="font-size: 0.78rem;">
+                        Pág. <strong>${currentChatPage}</strong> <span class="text-muted fw-normal">(20/pág)</span>
+                    </span>
+                    <button type="button" id="btnNextChatPage" class="btn btn-sm btn-outline-primary px-3" style="border-radius: 16px; font-weight: 600; font-size: 0.8rem;" ${nextDisabled}>
+                        Siguiente <i class="fa-solid fa-chevron-right ms-1"></i>
+                    </button>
+                </div>
+                ${loadMoreBtnHtml}
             </div>
         `);
 
+        $('#chatList').off('click', '#btnPrevChatPage').on('click', '#btnPrevChatPage', function() {
+            if (currentChatPage > 1) {
+                loadChats(false, currentChatPage - 1);
+            }
+        });
+
+        $('#chatList').off('click', '#btnNextChatPage').on('click', '#btnNextChatPage', function() {
+            if (hasMoreChats) {
+                loadChats(false, currentChatPage + 1);
+            }
+        });
+
         $('#chatList').off('click', '#btnLoadMoreChats').on('click', '#btnLoadMoreChats', function() {
-            $(this).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Cargando conversaciones...').prop('disabled', true);
+            $(this).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Cargando 20 más...').prop('disabled', true);
             loadChats(true);
         });
     }
@@ -887,7 +957,7 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor, no_leidos)
 
     $('#chatHeaderName').text(name);
     $('#chatHeaderPhone').text(`+${phone}`);
-    $('#chatHeaderImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=F3F4F6&color=37414A`);
+    $('#chatHeaderImg').attr('src', getLocalAvatarSvg(name));
 
     if (nombre_sede) {
         $('#chatHeaderSede span').text(nombre_sede);

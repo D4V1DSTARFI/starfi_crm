@@ -5,9 +5,23 @@ requireAuth();
 header('Content-Type: application/json');
 
 $con = getDbConnection();
-@mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
-@mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
-@mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
+$agente_info_global = getAgenteInfo();
+$agente_id = intval($_SESSION['agente_id'] ?? ($agente_info_global['id'] ?? 0));
+// Liberar bloqueo de sesión inmediatamente para que load_chats, get_agents y sse_updates corran en paralelo sin bloquearse
+session_write_close();
+
+// Ejecutar migraciones ligeras e indexación de alto rendimiento una sola vez
+$migration_flag = sys_get_temp_dir() . '/starfi_bandeja_migrated_v3.flag';
+if (!file_exists($migration_flag)) {
+    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
+    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
+    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN ultimo_msg_id INT NOT NULL DEFAULT 0");
+    @mysqli_query($con, "ALTER TABLE conversaciones ADD INDEX idx_ultimo_msg (ultimo_msg_id, id)");
+    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
+    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD INDEX idx_conv_origen (id_conversacion, origen)");
+    @mysqli_query($con, "UPDATE conversaciones c SET c.ultimo_msg_id = IFNULL((SELECT MAX(m.id) FROM mensajes_y_eventos m WHERE m.id_conversacion = c.id), 0) WHERE c.ultimo_msg_id = 0");
+    @file_put_contents($migration_flag, date('Y-m-d H:i:s'));
+}
 
 function parse_meta_error_detail($res_meta, $status_code = 0) {
     if (isset($res_meta['error'])) {
@@ -103,58 +117,32 @@ switch ($action) {
             $join_condition = ""; // Permite listar conversaciones tanto abiertas como cerradas
         }
 
-        $query = "
-            SELECT 
-                IFNULL(c.id, 0) as id, 
-                cl.id as id_cliente, 
-                cl.nombre as cliente_nombre, 
-                cl.numero_whatsapp, 
-                IFNULL(c.estado, 'SIN INICIAR') as estado, 
-                IFNULL(c.fecha_inicio, cl.fecha_registro) as fecha_inicio,
-                (SELECT MAX(timestamp) FROM mensajes_y_eventos WHERE id_conversacion = c.id) as ultimo_mensaje_ts,
-                (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = c.id ORDER BY id DESC LIMIT 1) as ultimo_mensaje_texto,
-                (SELECT origen FROM mensajes_y_eventos WHERE id_conversacion = c.id ORDER BY id DESC LIMIT 1) as ultimo_mensaje_origen,
-                IFNULL(c.mensajes_no_leidos, 0) as no_leidos,
-                IFNULL(s.nombre_sede, 'Sede Principal') as nombre_sede,
-                up.nombre as nombre_asesor,
-                IFNULL(cl.calificacion_calidad, 0) as calificacion_calidad,
-                (EXISTS(SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%') OR c.resultado_comercial = 'VENTA_CERRADA' OR c.fecha_cierre_venta IS NOT NULL) as es_venta,
-                EXISTS(SELECT 1 FROM mensajes_y_eventos me_c WHERE me_c.id_conversacion = c.id AND me_c.origen = 'API_TRANSACCIONAL' AND (me_c.contenido LIKE '%starfi_difusion_directa%' OR me_c.contenido LIKE '%| Texto:%')) as es_campana
-            FROM clientes_contactos cl
-            JOIN conversaciones c ON cl.id = c.id_cliente $join_condition
-            LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
-            LEFT JOIN sedes s ON l.id_sede = s.id
-            LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
-            WHERE cl.id_empresa = 1
-        ";
+        // FASE 1: Paginación indexada ligera (sin escanear textos de mensajes_y_eventos en toda la tabla)
+        // Nota: En InnoDB, KEY(id_conversacion) incluye implícitamente el PRIMARY KEY(id) -> (id_conversacion, id),
+        // por lo que (SELECT MAX(id) FROM mensajes_y_eventos WHERE id_conversacion = c.id) es un lookup O(1) "Using index".
+        $where_clauses = "WHERE cl.id_empresa = 1";
         
         if ($filter === 'mis-chats') {
-            $query .= " AND c.id_agente = $agente_id";
+            $where_clauses .= " AND c.id_agente = $agente_id";
         } elseif ($filter === 'clientes') {
-            // Conversaciones iniciadas por clientes/personas reales
-            $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
+            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
         } elseif ($filter === 'campanas') {
-            // Conversaciones con mensajes de difusión masiva enviados
-            $query .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%| Texto:%'))";
+            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%| Texto:%'))";
         } elseif ($filter === 'ventas') {
-            // Conversaciones de Ventas / Notificaciones transaccionales o cierres comerciales por venta (abiertas o cerradas)
-            $query .= " AND (
-                EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND (me.origen = 'API_TRANSACCIONAL' OR me.tipo = 'VENTA')) 
-                OR c.resultado_comercial = 'VENTA_CERRADA' 
+            $where_clauses .= " AND (
+                c.resultado_comercial = 'VENTA_CERRADA' 
                 OR c.resultado_comercial LIKE '%VENTA%'
                 OR c.fecha_cierre_venta IS NOT NULL
-                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me2 WHERE me2.id_conversacion = c.id AND (me2.contenido LIKE '%venta%' OR me2.contenido LIKE '%pedido%' OR me2.contenido LIKE '%orden%' OR me2.contenido LIKE '%factura%' OR me2.contenido LIKE '%confirmacion_de_compr%'))
+                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%')
             )";
         } elseif ($filter === 'no-leido') {
-            $query .= " AND c.mensajes_no_leidos > 0";
+            $where_clauses .= " AND c.mensajes_no_leidos > 0";
         } elseif ($filter === 'cerrados') {
-            $query .= " AND c.estado = 'CERRADO'";
-        } elseif ($filter === 'todos') {
-            // Todos los chats
+            $where_clauses .= " AND c.estado = 'CERRADO'";
         }
         
-        $agente = getAgenteInfo();
-        $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
+        $agente = $agente_info_global;
+        $agente_id_actual = intval($agente['id'] ?? $agente_id);
         $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
         $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
         $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
@@ -164,48 +152,100 @@ switch ($action) {
         // RESTRICCIÓN PARA OPERADOR: No puede ver Ventas ni Clientes, y sólo puede ver mensajes asignados a él
         if ($is_operador) {
             if ($filter === 'ventas' || $filter === 'clientes') {
-                echo json_encode(['status' => 'success', 'data' => []]);
+                echo json_encode(['status' => 'success', 'data' => [], 'page' => 1, 'limit' => 20, 'has_more' => false]);
                 break;
             }
-            $query .= " AND c.id_agente = $agente_id_actual";
+            $where_clauses .= " AND c.id_agente = $agente_id_actual";
         } else {
-            // Para Master y Administrador: Si seleccionaron un operador específico en el filtro
             $selected_agente = intval($_POST['id_agente'] ?? 0);
             if ($selected_agente > 0) {
-                $query .= " AND c.id_agente = $selected_agente";
+                $where_clauses .= " AND c.id_agente = $selected_agente";
             }
         }
 
         if (!$is_master && $user_sede > 0) {
-            // Operadores y Administradores filtran por su sede/tienda asignada
-            $query .= " AND l.id_sede = $user_sede";
+            $where_clauses .= " AND l.id_sede = $user_sede";
         } else {
-            // Master ve todas las sedes (a menos que aplique un filtro manual de sede)
             $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
             if ($id_sede > 0) {
-                $query .= " AND l.id_sede = $id_sede";
+                $where_clauses .= " AND l.id_sede = $id_sede";
             }
         }
 
+        $search_query = trim($_POST['search_query'] ?? '');
         $search_phone = preg_replace('/[^0-9]/', '', trim($_POST['search_phone'] ?? ''));
         $target_conv_id = intval($_POST['target_conv_id'] ?? 0);
+
         if ($target_conv_id > 0) {
-            $query .= " AND c.id = $target_conv_id";
+            $where_clauses .= " AND c.id = $target_conv_id";
+        } elseif ($search_query !== '') {
+            $sq_esc = $con->real_escape_string($search_query);
+            $sq_digits = preg_replace('/[^0-9]/', '', $search_query);
+            if ($sq_digits !== '') {
+                $sq_digits_esc = $con->real_escape_string($sq_digits);
+                $where_clauses .= " AND (cl.nombre LIKE '%$sq_esc%' OR cl.numero_whatsapp LIKE '%$sq_digits_esc%')";
+            } else {
+                $where_clauses .= " AND (cl.nombre LIKE '%$sq_esc%' OR cl.numero_whatsapp LIKE '%$sq_esc%')";
+            }
         } elseif ($search_phone !== '') {
             $search_esc = $con->real_escape_string($search_phone);
-            $query .= " AND cl.numero_whatsapp LIKE '%$search_esc%'";
+            $where_clauses .= " AND cl.numero_whatsapp LIKE '%$search_esc%'";
         }
 
         $page = max(1, intval($_POST['page'] ?? 1));
-        $limit = max(1, min(100, intval($_POST['limit'] ?? 30)));
+        $limit = max(1, min(50, intval($_POST['limit'] ?? 20)));
         $offset = ($page - 1) * $limit;
         $fetch_limit = $limit + 1;
 
-        $query .= " ORDER BY IFNULL(ultimo_mensaje_ts, c.fecha_inicio) DESC LIMIT $fetch_limit OFFSET $offset";
+        // Sincronización incremental O(1) de ultimo_msg_id para mensajes nuevos (webhook, difusión o chat)
+        $resSync = $con->query("SELECT (SELECT IFNULL(MAX(id), 0) FROM mensajes_y_eventos) AS max_msg, (SELECT IFNULL(MAX(ultimo_msg_id), 0) FROM conversaciones) AS max_sync");
+        if ($resSync && ($rowSync = $resSync->fetch_assoc())) {
+            $max_msg  = intval($rowSync['max_msg']);
+            $max_sync = intval($rowSync['max_sync']);
+            if ($max_msg > $max_sync) {
+                $con->query("
+                    UPDATE conversaciones c
+                    JOIN (
+                        SELECT id_conversacion, MAX(id) AS nuevo_max
+                        FROM mensajes_y_eventos
+                        WHERE id > $max_sync
+                        GROUP BY id_conversacion
+                    ) m_new ON c.id = m_new.id_conversacion
+                    SET c.ultimo_msg_id = m_new.nuevo_max
+                    WHERE m_new.nuevo_max > c.ultimo_msg_id
+                ");
+            }
+        }
+
+        $query = "
+            SELECT 
+                c.id, 
+                cl.id AS id_cliente, 
+                cl.nombre AS cliente_nombre, 
+                cl.numero_whatsapp, 
+                IFNULL(c.estado, 'SIN INICIAR') AS estado, 
+                IFNULL(c.fecha_inicio, cl.fecha_registro) AS fecha_inicio,
+                IFNULL(c.mensajes_no_leidos, 0) AS no_leidos,
+                IFNULL(s.nombre_sede, 'Sede Principal') AS nombre_sede,
+                up.nombre AS nombre_asesor,
+                IFNULL(cl.calificacion_calidad, 0) AS calificacion_calidad,
+                c.resultado_comercial,
+                c.fecha_cierre_venta,
+                c.ultimo_msg_id
+            FROM conversaciones c
+            JOIN clientes_contactos cl ON cl.id = c.id_cliente $join_condition
+            LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+            LEFT JOIN sedes s ON l.id_sede = s.id
+            LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
+            $where_clauses
+            ORDER BY c.ultimo_msg_id DESC, c.id DESC
+            LIMIT $fetch_limit OFFSET $offset
+        ";
+
         $res = $con->query($query);
         
         $chats = [];
-        if($res){
+        if ($res) {
             while ($row = $res->fetch_assoc()) {
                 $chats[] = $row;
             }
@@ -215,6 +255,69 @@ switch ($action) {
         if (count($chats) > $limit) {
             $has_more = true;
             array_pop($chats);
+        }
+
+        // FASE 2: Enriquecer ÚNICAMENTE las 20 conversaciones de la página actual (evita escanear miles de filas)
+        if (!empty($chats)) {
+            $conv_ids = [];
+            $last_msg_ids = [];
+            foreach ($chats as $ch) {
+                $cid = intval($ch['id']);
+                if ($cid > 0) $conv_ids[] = $cid;
+                $mid = intval($ch['ultimo_msg_id'] ?? 0);
+                if ($mid > 0) $last_msg_ids[] = $mid;
+            }
+
+            // 2A. Obtener texto, timestamp y origen del último mensaje por PRIMARY KEY (instantáneo)
+            $last_msgs_map = [];
+            if (!empty($last_msg_ids)) {
+                $mids_csv = implode(',', array_unique($last_msg_ids));
+                $resLast = $con->query("SELECT id, id_conversacion, timestamp, contenido, origen FROM mensajes_y_eventos WHERE id IN ($mids_csv)");
+                if ($resLast) {
+                    while ($rm = $resLast->fetch_assoc()) {
+                        $last_msgs_map[intval($rm['id'])] = $rm;
+                    }
+                }
+            }
+
+            // 2B. Detectar banderas es_campana y es_venta solo para las 20 conversaciones visibles
+            $flags_map = [];
+            if (!empty($conv_ids)) {
+                $cids_csv = implode(',', array_unique($conv_ids));
+                $resFlags = $con->query("
+                    SELECT 
+                        id_conversacion,
+                        MAX(CASE WHEN contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%| Texto:%' THEN 1 ELSE 0 END) AS flag_campana,
+                        MAX(CASE WHEN contenido NOT LIKE '%starfi_difusion_directa%' THEN 1 ELSE 0 END) AS flag_venta
+                    FROM mensajes_y_eventos
+                    WHERE id_conversacion IN ($cids_csv)
+                      AND origen = 'API_TRANSACCIONAL'
+                    GROUP BY id_conversacion
+                ");
+                if ($resFlags) {
+                    while ($rf = $resFlags->fetch_assoc()) {
+                        $flags_map[intval($rf['id_conversacion'])] = $rf;
+                    }
+                }
+            }
+
+            foreach ($chats as &$ch) {
+                $cid = intval($ch['id']);
+                $mid = intval($ch['ultimo_msg_id'] ?? 0);
+                $lm = ($mid > 0 && isset($last_msgs_map[$mid])) ? $last_msgs_map[$mid] : null;
+                $fl = isset($flags_map[$cid]) ? $flags_map[$cid] : null;
+
+                $ch['ultimo_mensaje_ts']     = $lm ? $lm['timestamp'] : $ch['fecha_inicio'];
+                $ch['ultimo_mensaje_texto']  = $lm ? $lm['contenido'] : null;
+                $ch['ultimo_mensaje_origen'] = $lm ? $lm['origen'] : null;
+
+                $es_venta_comercial = ($ch['resultado_comercial'] === 'VENTA_CERRADA' || !empty($ch['fecha_cierre_venta']));
+                $ch['es_campana'] = ($fl && intval($fl['flag_campana']) === 1) ? 1 : 0;
+                $ch['es_venta']   = ($es_venta_comercial || ($fl && intval($fl['flag_venta']) === 1)) ? 1 : 0;
+
+                unset($ch['ultimo_msg_id'], $ch['resultado_comercial'], $ch['fecha_cierre_venta']);
+            }
+            unset($ch);
         }
 
         echo json_encode([
