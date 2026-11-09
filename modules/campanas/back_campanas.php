@@ -2,9 +2,21 @@
 // modules/campanas/back_campanas.php
 // Ecosistema Independiente de Campañas de Difusión Masiva | STARFI CRM
 date_default_timezone_set('America/Caracas');
+@ini_set('display_errors', '0');
+@error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED);
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
 requirePermission('campanas');
+
+// Liberar el candado del archivo de sesión de PHP tras leer los datos del operador para no bloquear peticiones AJAX concurrentes ni causar timeouts en cURL hacia Meta
+$agente = getAgenteInfo();
+$id_usuario = intval($agente['id'] ?? 1);
+$rol_usuario = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
+$id_sede_usuario = intval($agente['id_sede'] ?? 0);
+$waba_sub_cache = $_SESSION ?? [];
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -14,10 +26,6 @@ if (!$con) {
     exit;
 }
 
-$agente = getAgenteInfo();
-$id_usuario = intval($agente['id'] ?? 1);
-$rol_usuario = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
-$id_sede_usuario = intval($agente['id_sede'] ?? 0);
 // Solo MASTER y MASTER CI (o usuario sin sede asignada con rol MASTER) tienen visión global multi-sede.
 // Los Gerentes de Tienda (ADMINISTRADOR con id_sede > 0) y Operadores quedan estrictamente vinculados a su sede.
 $es_global = ($id_usuario === 1 || $rol_usuario === 'MASTER' || $rol_usuario === 'MASTER CI' || ($rol_usuario === 'ADMIN' && $id_sede_usuario === 0));
@@ -135,7 +143,24 @@ function ensureCampaignTables($con) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 }
 
-ensureCampaignTables($con);
+$action_init = $_POST['action'] ?? $_GET['action'] ?? '';
+if ($action_init !== 'dispatch_queue_item' && $action_init !== 'check_autopilot_due') {
+    ensureCampaignTables($con);
+}
+
+/**
+ * Actualización rápida de contadores de campaña tras despachar un ítem (sin recorrer ni cruzar toda la tabla de mensajes_y_eventos en cada mensaje).
+ */
+function actualizarContadoresRapidosCampana($con, $id_campana) {
+    $id_campana = intval($id_campana);
+    if ($id_campana <= 0) return;
+    mysqli_query($con, "UPDATE campanas_difusion c SET 
+        pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'PENDIENTE'),
+        enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
+        fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'FALLIDO'),
+        costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
+        WHERE c.id = $id_campana");
+}
 
 function recalcularMetricasCampana($con, $id_campana) {
     $id_campana = intval($id_campana);
@@ -1342,6 +1367,8 @@ switch ($action) {
 
         $cola = [];
         if ($disponibles_hoy > 0 && !$esperar_hora_programada) {
+            // Liberar filas atascadas en PROCESANDO sin wamid de intentos anteriores
+            @mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE' WHERE id_campana = $id_campana AND estado_envio = 'PROCESANDO' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '')");
             $res_pend = mysqli_query($con, "SELECT id AS id_destinatario, id_cliente, nombre, telefono, numero_tanda, fecha_programada 
                                             FROM campanas_difusion_destinatarios 
                                             WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' 
@@ -1815,17 +1842,16 @@ switch ($action) {
         $waba_id_linea = trim($linea['id_negocio'] ?? '');
         $token = !empty($linea['meta_token']) ? trim($linea['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
 
-        // Garantizar que el WABA de la sede esté suscrito a los webhooks de la App para recibir estados de entrega/lectura/fallo
-        if (!empty($waba_id_linea) && !empty($token) && empty($_SESSION['waba_sub_verified_' . $waba_id_linea])) {
+        // Garantizar que el WABA de la sede esté suscrito a los webhooks de la App (solo 1 vez al iniciar el primer ítem de la campaña, sin bloquear cada mensaje)
+        if (!empty($waba_id_linea) && !empty($token) && intval($camp['enviados'] ?? 0) === 0 && empty($waba_sub_cache['waba_sub_verified_' . $waba_id_linea])) {
             $ch_sub = curl_init("https://graph.facebook.com/v23.0/{$waba_id_linea}/subscribed_apps");
             curl_setopt($ch_sub, CURLOPT_POST, true);
             curl_setopt($ch_sub, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
             curl_setopt($ch_sub, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch_sub, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch_sub, CURLOPT_TIMEOUT, 5);
+            curl_setopt($ch_sub, CURLOPT_TIMEOUT, 3);
             @curl_exec($ch_sub);
             curl_close($ch_sub);
-            $_SESSION['waba_sub_verified_' . $waba_id_linea] = true;
         }
 
         // Formatear teléfono destino (normalizar 04xx Venezuela a 584xx)
@@ -1880,7 +1906,7 @@ switch ($action) {
                                 SET estado_envio = 'ENVIADO', 
                                     error_detalle = 'Omitido automáticamente: número ya recibió esta difusión hoy (protección anti-duplicado).' 
                                 WHERE id = $id_destinatario");
-            recalcularMetricasCampana($con, $id_campana);
+            actualizarContadoresRapidosCampana($con, $id_campana);
             echo json_encode([
                 'status' => 'already_processed',
                 'skipped' => true,
@@ -2154,7 +2180,7 @@ switch ($action) {
                                     error_detalle = NULL
                                 WHERE id = $id_destinatario");
 
-            recalcularMetricasCampana($con, $id_campana);
+            actualizarContadoresRapidosCampana($con, $id_campana);
 
             echo json_encode([
                 'status' => 'success',
@@ -2165,6 +2191,7 @@ switch ($action) {
                 'limite_diario_sede' => $limite_diario
             ]);
         } else {
+            // Si falló por timeout de red de cURL ($http_code === 0), devolver a PENDIENTE para que no quede bloqueado en PROCESANDO y pueda reintentarse
             $err_details = $resp_data['error']['error_data']['details'] ?? '';
             $err_msg_base = $curl_err ?: ($resp_data['error']['message'] ?? 'Error desconocido devuelto por Meta API');
             $err_code = intval($resp_data['error']['code'] ?? $http_code);
@@ -2179,13 +2206,14 @@ switch ($action) {
             mysqli_query($con, "INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status)
                                 VALUES ('$template_name', '$fecha_hoy', '$hora_actual', '$phone_id', '$telefono_limpio', '$contenido_log_esc', 'ERROR')");
 
+            $estado_fallo = ($http_code === 0 && !empty($curl_err)) ? 'PENDIENTE' : 'FALLIDO';
             mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
-                                SET estado_envio = 'FALLIDO',
+                                SET estado_envio = '$estado_fallo',
                                     error_detalle = '$err_esc',
                                     fecha_envio = NOW()
                                 WHERE id = $id_destinatario");
 
-            recalcularMetricasCampana($con, $id_campana);
+            actualizarContadoresRapidosCampana($con, $id_campana);
 
             echo json_encode([
                 'status' => 'failed',
@@ -2334,6 +2362,9 @@ switch ($action) {
             ]);
             exit;
         }
+
+        // Liberar filas atascadas en PROCESANDO sin wamid de intentos previos interrumpidos por red
+        @mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE' WHERE id_campana = $id_campana AND estado_envio = 'PROCESANDO' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '')");
 
         $res_pend = mysqli_query($con, "SELECT id AS id_destinatario, id_cliente, nombre, telefono, numero_tanda, fecha_programada FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' ORDER BY numero_tanda ASC, id ASC LIMIT $disponibles_hoy");
         $cola = [];

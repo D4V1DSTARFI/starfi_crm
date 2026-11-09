@@ -2197,7 +2197,18 @@ async function procesarColaDeEnvio(idCampana, cola, cadenciaMs, langCode = 'es')
             fd.append('language_code', langCode);
 
             const r = await fetch('back_campanas.php', { method: 'POST', body: fd });
-            const res = await r.json();
+            const rawText = await r.text();
+            let res = null;
+            try {
+                res = JSON.parse(rawText);
+            } catch (parseErr) {
+                const jsonMatch = rawText.match(/\{[\s\S]*\}$/);
+                if (jsonMatch) {
+                    res = JSON.parse(jsonMatch[0]);
+                } else {
+                    throw new Error(rawText ? rawText.substring(0, 120) : `HTTP ${r.status}`);
+                }
+            }
 
             if (res.status === 'success') {
                 enviadosOk++;
@@ -2214,7 +2225,8 @@ async function procesarColaDeEnvio(idCampana, cola, cadenciaMs, langCode = 'es')
             }
         } catch (e) {
             fallidos++;
-            logDiv.innerHTML = `<div class="text-danger">✖ Error de red enviando a ${escapeHtml(item.telefono)}</div>` + logDiv.innerHTML;
+            const errDet = (e && e.message) ? ` (${escapeHtml(e.message)})` : '';
+            logDiv.innerHTML = `<div class="text-danger">✖ Error de red enviando a ${escapeHtml(item.telefono)}${errDet}</div>` + logDiv.innerHTML;
         }
 
         if (i < total - 1 && !ECO_STATE.detenerSolicitado) {
