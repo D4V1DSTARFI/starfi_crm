@@ -31,9 +31,14 @@ if (!$con) {
 $es_global = ($id_usuario === 1 || $rol_usuario === 'MASTER' || $rol_usuario === 'MASTER CI' || ($rol_usuario === 'ADMIN' && $id_sede_usuario === 0));
 
 // =========================================================================
-// 0. AUTO-MIGRACIÓN DEL ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN
+// 0. AUTO-MIGRACIÓN DEL ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN (OPTIMIZADA CON CACHÉ E ÍNDICES)
 // =========================================================================
 function ensureCampaignTables($con) {
+    $lock_file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'starfi_crm_camp_schema_v4.ok';
+    if (@file_exists($lock_file) && (time() - @filemtime($lock_file)) < 86400) {
+        return;
+    }
+
     // 1. Tabla maestra de campañas
     mysqli_query($con, "CREATE TABLE IF NOT EXISTS campanas_difusion (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -41,14 +46,21 @@ function ensureCampaignTables($con) {
         id_usuario INT NOT NULL DEFAULT 1,
         nombre_campana VARCHAR(160) NOT NULL,
         template_name VARCHAR(120) NOT NULL DEFAULT 'starfi_difusion_directa',
+        template_language VARCHAR(20) NOT NULL DEFAULT 'es',
+        template_category VARCHAR(30) NOT NULL DEFAULT 'MARKETING',
+        header_format VARCHAR(30) NOT NULL DEFAULT 'IMAGE',
         param_cuerpo TEXT NULL,
         param_eslogan TEXT NULL,
+        template_params_json TEXT NULL,
+        header_imagen_path VARCHAR(255) NULL,
+        header_media_id VARCHAR(120) NULL,
         costo_unitario_usd DECIMAL(10,4) NOT NULL DEFAULT 0.0700,
         presupuesto_max_usd DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         costo_estimado_usd DECIMAL(10,4) NOT NULL DEFAULT 0.0000,
         costo_real_usd DECIMAL(10,4) NOT NULL DEFAULT 0.0000,
         cuota_diaria_programada INT NOT NULL DEFAULT 250,
         total_tandas INT NOT NULL DEFAULT 1,
+        hora_programada TIME NOT NULL DEFAULT '09:00:00',
         piloto_automatico TINYINT(1) NOT NULL DEFAULT 1,
         aprobado_por INT NULL,
         fecha_aprobacion DATETIME NULL,
@@ -61,10 +73,19 @@ function ensureCampaignTables($con) {
         fallidos INT NOT NULL DEFAULT 0,
         estado VARCHAR(40) NOT NULL DEFAULT 'PENDIENTE_APROBACION',
         fecha_creacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        fecha_fin DATETIME NULL
+        fecha_fin DATETIME NULL,
+        INDEX idx_sede_id (id_sede, id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-    // Asegurar columnas nuevas si la tabla ya existía de una versión previa
+    // Asegurar columnas nuevas en una sola lectura de esquema
+    $existing_cols = [];
+    $res_cols = @mysqli_query($con, "SHOW COLUMNS FROM campanas_difusion");
+    if ($res_cols) {
+        while ($rc = mysqli_fetch_assoc($res_cols)) {
+            $existing_cols[$rc['Field']] = true;
+        }
+    }
+
     $cols_needed = [
         'template_language' => "ALTER TABLE campanas_difusion ADD COLUMN template_language VARCHAR(20) NOT NULL DEFAULT 'es' AFTER template_name",
         'template_category' => "ALTER TABLE campanas_difusion ADD COLUMN template_category VARCHAR(30) NOT NULL DEFAULT 'MARKETING' AFTER template_language",
@@ -88,9 +109,8 @@ function ensureCampaignTables($con) {
         'respondidos' => "ALTER TABLE campanas_difusion ADD COLUMN respondidos INT NOT NULL DEFAULT 0 AFTER leidos"
     ];
     foreach ($cols_needed as $col_name => $alter_sql) {
-        $chk = mysqli_query($con, "SHOW COLUMNS FROM campanas_difusion LIKE '$col_name'");
-        if ($chk && mysqli_num_rows($chk) === 0) {
-            mysqli_query($con, $alter_sql);
+        if (!isset($existing_cols[$col_name])) {
+            @mysqli_query($con, $alter_sql);
         }
     }
 
@@ -116,21 +136,42 @@ function ensureCampaignTables($con) {
         fecha_lectura DATETIME NULL,
         fecha_respuesta DATETIME NULL,
         INDEX idx_campana (id_campana),
+        INDEX idx_campana_estado (id_campana, estado_envio),
         INDEX idx_sede_fecha (id_sede, fecha_envio),
         INDEX idx_meta_msg (id_mensaje_meta),
-        INDEX idx_telefono (telefono)
+        INDEX idx_telefono (telefono),
+        INDEX idx_conversacion (id_conversacion)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
+    $existing_dest_cols = [];
+    $res_dcols = @mysqli_query($con, "SHOW COLUMNS FROM campanas_difusion_destinatarios");
+    if ($res_dcols) {
+        while ($rdc = mysqli_fetch_assoc($res_dcols)) {
+            $existing_dest_cols[$rdc['Field']] = true;
+        }
+    }
     $cols_dest = [
         'numero_tanda' => "ALTER TABLE campanas_difusion_destinatarios ADD COLUMN numero_tanda INT NOT NULL DEFAULT 1 AFTER telefono",
         'fecha_programada' => "ALTER TABLE campanas_difusion_destinatarios ADD COLUMN fecha_programada DATE NULL AFTER numero_tanda"
     ];
     foreach ($cols_dest as $c_dest => $sql_alter_dest) {
-        $chk_d = mysqli_query($con, "SHOW COLUMNS FROM campanas_difusion_destinatarios LIKE '$c_dest'");
-        if ($chk_d && mysqli_num_rows($chk_d) === 0) {
-            mysqli_query($con, $sql_alter_dest);
+        if (!isset($existing_dest_cols[$c_dest])) {
+            @mysqli_query($con, $sql_alter_dest);
         }
     }
+
+    // Asegurar índices de alto rendimiento en tablas auxiliares para evitar Full Table Scans y errores 524
+    $ensureIdx = function($table, $idxName, $colsDef) use ($con) {
+        $r = @mysqli_query($con, "SHOW INDEX FROM `$table` WHERE Key_name = '$idxName'");
+        if ($r && mysqli_num_rows($r) === 0) {
+            @mysqli_query($con, "ALTER TABLE `$table` ADD INDEX `$idxName` ($colsDef)");
+        }
+    };
+    $ensureIdx('campanas_difusion_destinatarios', 'idx_campana_estado', 'id_campana, estado_envio');
+    $ensureIdx('campanas_difusion_destinatarios', 'idx_conversacion', 'id_conversacion');
+    $ensureIdx('mensajes_y_eventos', 'idx_meta_wamid', 'id_mensaje_meta(100)');
+    $ensureIdx('mensajes_y_eventos', 'idx_conv_origen_ts', 'id_conversacion, origen, timestamp');
+    $ensureIdx('conversaciones', 'idx_cliente_linea', 'id_cliente, id_linea, fecha_inicio');
 
     // 3. Tabla de Control de Flujo Diario Anti-Bloqueo y Tarifas Meta por Sede
     mysqli_query($con, "CREATE TABLE IF NOT EXISTS campanas_cuotas_sede (
@@ -141,6 +182,8 @@ function ensureCampaignTables($con) {
         costo_utility_usd DECIMAL(10,4) NOT NULL DEFAULT 0.0150,
         actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    @file_put_contents($lock_file, (string)time());
 }
 
 $action_init = $_POST['action'] ?? $_GET['action'] ?? '';
@@ -149,16 +192,26 @@ if ($action_init !== 'dispatch_queue_item' && $action_init !== 'check_autopilot_
 }
 
 /**
- * Actualización rápida de contadores de campaña tras despachar un ítem (sin recorrer ni cruzar toda la tabla de mensajes_y_eventos en cada mensaje).
+ * Actualización rápida de contadores de campaña en 1 sola pasada agregada.
  */
 function actualizarContadoresRapidosCampana($con, $id_campana) {
     $id_campana = intval($id_campana);
     if ($id_campana <= 0) return;
-    mysqli_query($con, "UPDATE campanas_difusion c SET 
-        pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'PENDIENTE'),
-        enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
-        fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'FALLIDO'),
-        costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
+    mysqli_query($con, "UPDATE campanas_difusion c
+        INNER JOIN (
+            SELECT id_campana,
+                   SUM(estado_envio = 'PENDIENTE') AS pend,
+                   SUM(estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')) AS env,
+                   SUM(estado_envio = 'FALLIDO') AS fall,
+                   IFNULL(SUM(CASE WHEN estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') THEN costo_usd ELSE 0 END), 0) AS costo_real
+            FROM campanas_difusion_destinatarios
+            WHERE id_campana = $id_campana
+            GROUP BY id_campana
+        ) agg ON agg.id_campana = c.id
+        SET c.pendientes = agg.pend,
+            c.enviados = agg.env,
+            c.fallidos = agg.fall,
+            c.costo_real_usd = agg.costo_real
         WHERE c.id = $id_campana");
 }
 
@@ -166,10 +219,11 @@ function recalcularMetricasCampana($con, $id_campana) {
     $id_campana = intval($id_campana);
     if ($id_campana <= 0) return;
 
-    // 1. Sincronizar estados reales (ENTREGADO, LEIDO, FALLIDO) desde mensajes_y_eventos por id_mensaje_meta (wamid)
+    // 1. Sincronizar estados reales (ENTREGADO, LEIDO, FALLIDO) desde mensajes_y_eventos usando el índice de id_mensaje_meta
+    // (Se aplica CONVERT únicamente del lado de destinatarios para que MySQL utilice el índice nativo en mensajes_y_eventos.id_mensaje_meta)
     @mysqli_query($con, "UPDATE campanas_difusion_destinatarios d
-        INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta COLLATE utf8mb4_unicode_ci = d.id_mensaje_meta COLLATE utf8mb4_unicode_ci
-        LEFT JOIN campanas_difusion c ON c.id = d.id_campana
+        INNER JOIN campanas_difusion c ON c.id = d.id_campana
+        INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta = CONVERT(d.id_mensaje_meta USING utf8mb4)
         SET d.estado_envio = CASE
                 WHEN m.estado_envio = 'FALLIDO' THEN 'FALLIDO'
                 WHEN d.respondido = 1 THEN 'RESPONDIDO'
@@ -196,60 +250,61 @@ function recalcularMetricasCampana($con, $id_campana) {
             END
         WHERE d.id_campana = $id_campana
           AND d.id_mensaje_meta IS NOT NULL
-          AND d.id_mensaje_meta != ''");
+          AND d.id_mensaje_meta != ''
+          AND d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO')");
 
-    // 2. Sincronizar respuestas de clientes recibidas en mensajes_y_eventos después del envío de la campaña
-    $res_dest_env = @mysqli_query($con, "SELECT id, id_conversacion, id_cliente, fecha_envio 
-                                         FROM campanas_difusion_destinatarios 
-                                         WHERE id_campana = $id_campana 
-                                           AND respondido = 0 
-                                           AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO') 
-                                           AND fecha_envio IS NOT NULL");
-    if ($res_dest_env) {
-        while ($rd = mysqli_fetch_assoc($res_dest_env)) {
-            $id_d = intval($rd['id']);
-            $id_conv_d = intval($rd['id_conversacion']);
-            $id_cli_d = intval($rd['id_cliente']);
-            $f_env = mysqli_real_escape_string($con, $rd['fecha_envio']);
-            $cond_conv = [];
-            if ($id_conv_d > 0) $cond_conv[] = "m.id_conversacion = $id_conv_d";
-            if ($id_cli_d > 0) $cond_conv[] = "conv.id_cliente = $id_cli_d";
-            if (empty($cond_conv)) continue;
-            $where_conv_or = implode(' OR ', $cond_conv);
+    // 2. Sincronizar respuestas de clientes en bloque (sin bucle N+1 por destinatario)
+    // 2a. Primero asegurar id_conversacion si algún destinatario enviado tenía id_cliente pero id_conversacion = 0
+    @mysqli_query($con, "UPDATE campanas_difusion_destinatarios d
+        INNER JOIN conversaciones conv ON conv.id_cliente = d.id_cliente
+        SET d.id_conversacion = conv.id
+        WHERE d.id_campana = $id_campana
+          AND d.id_conversacion = 0
+          AND d.id_cliente > 0
+          AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO')");
 
-            $res_reply = @mysqli_query($con, "SELECT m.contenido, m.timestamp 
-                                              FROM mensajes_y_eventos m
-                                              LEFT JOIN conversaciones conv ON conv.id = m.id_conversacion
-                                              WHERE ($where_conv_or)
-                                                AND m.origen = 'CLIENTE'
-                                                AND m.timestamp >= '$f_env'
-                                              ORDER BY m.id ASC LIMIT 1");
-            if ($res_reply && mysqli_num_rows($res_reply) > 0) {
-                $r_rep = mysqli_fetch_assoc($res_reply);
-                $txt_rep = mysqli_real_escape_string($con, mb_substr(strip_tags($r_rep['contenido'] ?? ''), 0, 250));
-                $ts_rep = mysqli_real_escape_string($con, $r_rep['timestamp'] ?: date('Y-m-d H:i:s'));
-                @mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
-                                     SET respondido = 1,
-                                         estado_envio = 'RESPONDIDO',
-                                         respuesta_texto = '$txt_rep',
-                                         fecha_entrega = IFNULL(fecha_entrega, '$ts_rep'),
-                                         fecha_lectura = IFNULL(fecha_lectura, '$ts_rep'),
-                                         fecha_respuesta = '$ts_rep'
-                                     WHERE id = $id_d");
-            }
-        }
-    }
+    // 2b. Cruzar en 1 sola consulta indexada por id_conversacion los mensajes entrantes del cliente posteriores a fecha_envio
+    @mysqli_query($con, "UPDATE campanas_difusion_destinatarios d
+        INNER JOIN mensajes_y_eventos m
+           ON m.id_conversacion = d.id_conversacion
+          AND m.origen = 'CLIENTE'
+          AND m.timestamp >= d.fecha_envio
+        SET d.respondido = 1,
+            d.estado_envio = 'RESPONDIDO',
+            d.respuesta_texto = LEFT( IFNULL(m.contenido, ''), 250 ),
+            d.fecha_entrega = IFNULL(d.fecha_entrega, m.timestamp),
+            d.fecha_lectura = IFNULL(d.fecha_lectura, m.timestamp),
+            d.fecha_respuesta = IFNULL(d.fecha_respuesta, m.timestamp)
+        WHERE d.id_campana = $id_campana
+          AND d.respondido = 0
+          AND d.id_conversacion > 0
+          AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO')
+          AND d.fecha_envio IS NOT NULL");
 
-    // 3. Recalcular embudo consolidado en campanas_difusion
-    mysqli_query($con, "UPDATE campanas_difusion c SET 
-        total_destinatarios = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana),
-        pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'PENDIENTE'),
-        enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
-        entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
-        leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
-        respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.respondido = 1),
-        fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'FALLIDO'),
-        costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
+    // 3. Recalcular embudo consolidado en campanas_difusion en 1 sola pasada agregada (sin 8 subconsultas correlacionadas)
+    mysqli_query($con, "UPDATE campanas_difusion c
+        INNER JOIN (
+            SELECT id_campana,
+                   COUNT(*) AS tot,
+                   SUM(estado_envio = 'PENDIENTE') AS pend,
+                   SUM(estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')) AS env,
+                   SUM(fecha_entrega IS NOT NULL OR estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO')) AS ent,
+                   SUM(fecha_lectura IS NOT NULL OR estado_envio IN ('LEIDO','RESPONDIDO')) AS lei,
+                   SUM(respondido = 1) AS resp,
+                   SUM(estado_envio = 'FALLIDO') AS fall,
+                   IFNULL(SUM(CASE WHEN estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') THEN costo_usd ELSE 0 END), 0) AS costo_real
+            FROM campanas_difusion_destinatarios
+            WHERE id_campana = $id_campana
+            GROUP BY id_campana
+        ) agg ON agg.id_campana = c.id
+        SET c.total_destinatarios = agg.tot,
+            c.pendientes = agg.pend,
+            c.enviados = agg.env,
+            c.entregados = agg.ent,
+            c.leidos = agg.lei,
+            c.respondidos = agg.resp,
+            c.fallidos = agg.fall,
+            c.costo_real_usd = agg.costo_real
         WHERE c.id = $id_campana");
 }
 
@@ -421,6 +476,8 @@ switch ($action) {
         }
 
         // 1.1 Cargar sedes y su línea de WhatsApp asignada + configuración de flujo diario + tarifa configurada por sede (waba_tarifas_sede)
+        $inicio_hoy = date('Y-m-d 00:00:00');
+        $fin_hoy = date('Y-m-d 23:59:59');
         $where_sede = (!$es_global && $id_sede_usuario > 0) ? "WHERE s.id = $id_sede_usuario" : "";
         $sql_sedes = "SELECT s.id, s.nombre_sede, s.ciudad, s.bot_activo, s.estado AS estado_sede,
                              l.id AS id_linea, l.descripcion AS descripcion_linea, l.numero_telefono, l.meta_app_id, l.id_negocio, l.meta_token, l.estado AS estado_linea, l.limite_solicitudes,
@@ -430,18 +487,21 @@ switch ($action) {
                              IFNULL(q.costo_utility_usd, 0.0150) AS costo_utility_base_usd,
                              IFNULL(wt.tipo_tarifa, 'PORCENTAJE') AS waba_tipo_tarifa,
                              IFNULL(wt.valor, 10.00) AS waba_valor_tarifa,
-                             (SELECT COUNT(*) FROM campanas_difusion_destinatarios d 
-                              WHERE d.id_sede = s.id 
-                                AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') 
-                                AND DATE(d.fecha_envio) = CURDATE()) AS enviados_hoy,
-                             (SELECT IFNULL(SUM(d2.costo_usd), 0) FROM campanas_difusion_destinatarios d2
-                              WHERE d2.id_sede = s.id
-                                AND d2.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')
-                                AND DATE(d2.fecha_envio) = CURDATE()) AS gasto_hoy_usd
+                             IFNULL(dh.enviados_hoy, 0) AS enviados_hoy,
+                             IFNULL(dh.gasto_hoy_usd, 0) AS gasto_hoy_usd
                       FROM sedes s
                       LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id AND l.estado = 'ACTIVO'
                       LEFT JOIN campanas_cuotas_sede q ON q.id_sede = s.id
                       LEFT JOIN waba_tarifas_sede wt ON wt.id_sede = s.id
+                      LEFT JOIN (
+                          SELECT id_sede,
+                                 COUNT(*) AS enviados_hoy,
+                                 IFNULL(SUM(costo_usd), 0) AS gasto_hoy_usd
+                          FROM campanas_difusion_destinatarios
+                          WHERE fecha_envio >= '$inicio_hoy' AND fecha_envio <= '$fin_hoy'
+                            AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')
+                          GROUP BY id_sede
+                      ) dh ON dh.id_sede = s.id
                       $where_sede
                       ORDER BY (l.id IS NULL) ASC, s.nombre_sede ASC";
         $res_sedes = mysqli_query($con, $sql_sedes);
@@ -541,13 +601,18 @@ switch ($action) {
             }
 
             $sql_clientes = "SELECT c.id, c.id_sede, c.numero_whatsapp AS telefono, c.nombre, c.etiquetas, c.notas_internas, c.fecha_registro, c.ultimo_contacto,
-                                    GROUP_CONCAT(DISTINCT lw.id_sede SEPARATOR ',') AS sedes_ids,
-                                    MAX(conv.fecha_inicio) AS ultima_conv
+                                    conv_agg.sedes_ids,
+                                    conv_agg.ultima_conv
                              FROM clientes_contactos c
-                             LEFT JOIN conversaciones conv ON conv.id_cliente = c.id
-                             LEFT JOIN lineas_whatsapp lw ON lw.id = conv.id_linea
+                             LEFT JOIN (
+                                 SELECT conv.id_cliente,
+                                        GROUP_CONCAT(DISTINCT lw.id_sede SEPARATOR ',') AS sedes_ids,
+                                        MAX(conv.fecha_inicio) AS ultima_conv
+                                 FROM conversaciones conv
+                                 INNER JOIN lineas_whatsapp lw ON lw.id = conv.id_linea
+                                 GROUP BY conv.id_cliente
+                             ) conv_agg ON conv_agg.id_cliente = c.id
                              $where_clientes
-                             GROUP BY c.id
                              ORDER BY c.id DESC";
             $res_cli = mysqli_query($con, $sql_clientes);
             $etiquetas_map = [];
@@ -603,8 +668,13 @@ switch ($action) {
             sort($etiquetas, SORT_NATURAL | SORT_FLAG_CASE);
 
             // 1.4 Cargar Campañas de Difusión y KPIs por Sede seleccionada
+            // (Solo recalcular en tiempo real las últimas 5 campañas activas o recientes de los últimos 7 días para evitar timeouts 524)
             $where_camp = "WHERE c.id_sede = $filtro_sede";
-            $res_sync = @mysqli_query($con, "SELECT c.id FROM campanas_difusion c $where_camp ORDER BY c.id DESC LIMIT 25");
+            $res_sync = @mysqli_query($con, "SELECT c.id FROM campanas_difusion c
+                                             WHERE c.id_sede = $filtro_sede
+                                               AND (c.estado IN ('APROBADA_EN_PROCESO', 'PILOTO_AUTOMATICO', 'EN_COLA_DIARIA')
+                                                    OR c.fecha_creacion >= DATE_SUB(NOW(), INTERVAL 7 DAY))
+                                             ORDER BY c.id DESC LIMIT 5");
             if ($res_sync) {
                 while ($r_s = mysqli_fetch_assoc($res_sync)) {
                     recalcularMetricasCampana($con, intval($r_s['id']));

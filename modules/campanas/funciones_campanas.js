@@ -244,9 +244,17 @@ async function recargarEcosistema(forzarSedeId = null) {
     }
     try {
         const resp = await fetch(`back_campanas.php?action=get_ecosystem_data&id_sede=${sedeParam}`);
-        const data = await resp.json();
-        if (data.status !== 'success') {
-            mostrarToastStarfi(data.message || 'Error al cargar el ecosistema de campañas.', 'danger');
+        const rawText = await resp.text();
+        let data = null;
+        try {
+            data = JSON.parse(rawText);
+        } catch (jsonErr) {
+            console.error(`Respuesta no JSON (HTTP ${resp.status}) en recargarEcosistema:`, rawText.slice(0, 200));
+            mostrarToastStarfi(`El servidor tardó demasiado en responder o devolvió un error (HTTP ${resp.status}). Intente de nuevo.`, 'danger');
+            return;
+        }
+        if (!data || data.status !== 'success') {
+            mostrarToastStarfi((data && data.message) || 'Error al cargar el ecosistema de campañas.', 'danger');
             return;
         }
 

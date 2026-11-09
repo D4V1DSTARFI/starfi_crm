@@ -115,8 +115,8 @@ function recalcularCampanaCron($con, $id_campana) {
     $id_campana = intval($id_campana);
     if ($id_campana <= 0) return;
     @mysqli_query($con, "UPDATE campanas_difusion_destinatarios d
-        INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta COLLATE utf8mb4_unicode_ci = d.id_mensaje_meta COLLATE utf8mb4_unicode_ci
-        LEFT JOIN campanas_difusion c ON c.id = d.id_campana
+        INNER JOIN campanas_difusion c ON c.id = d.id_campana
+        INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta = CONVERT(d.id_mensaje_meta USING utf8mb4)
         SET d.estado_envio = CASE
                 WHEN m.estado_envio = 'FALLIDO' THEN 'FALLIDO'
                 WHEN d.respondido = 1 THEN 'RESPONDIDO'
@@ -143,17 +143,32 @@ function recalcularCampanaCron($con, $id_campana) {
             END
         WHERE d.id_campana = $id_campana
           AND d.id_mensaje_meta IS NOT NULL
-          AND d.id_mensaje_meta != ''");
+          AND d.id_mensaje_meta != ''
+          AND d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO')");
 
-    mysqli_query($con, "UPDATE campanas_difusion c SET 
-        total_destinatarios = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana),
-        pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'PENDIENTE'),
-        enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
-        entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
-        leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
-        respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.respondido = 1),
-        fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio = 'FALLIDO'),
-        costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_campana AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
+    mysqli_query($con, "UPDATE campanas_difusion c
+        INNER JOIN (
+            SELECT id_campana,
+                   COUNT(*) AS tot,
+                   SUM(estado_envio = 'PENDIENTE') AS pend,
+                   SUM(estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')) AS env,
+                   SUM(fecha_entrega IS NOT NULL OR estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO')) AS ent,
+                   SUM(fecha_lectura IS NOT NULL OR estado_envio IN ('LEIDO','RESPONDIDO')) AS lei,
+                   SUM(respondido = 1) AS resp,
+                   SUM(estado_envio = 'FALLIDO') AS fall,
+                   IFNULL(SUM(CASE WHEN estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') THEN costo_usd ELSE 0 END), 0) AS costo_real
+            FROM campanas_difusion_destinatarios
+            WHERE id_campana = $id_campana
+            GROUP BY id_campana
+        ) agg ON agg.id_campana = c.id
+        SET c.total_destinatarios = agg.tot,
+            c.pendientes = agg.pend,
+            c.enviados = agg.env,
+            c.entregados = agg.ent,
+            c.leidos = agg.lei,
+            c.respondidos = agg.resp,
+            c.fallidos = agg.fall,
+            c.costo_real_usd = agg.costo_real
         WHERE c.id = $id_campana");
 }
 
