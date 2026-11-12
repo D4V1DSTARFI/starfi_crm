@@ -10,17 +10,28 @@ $agente_id = intval($_SESSION['agente_id'] ?? ($agente_info_global['id'] ?? 0));
 // Liberar bloqueo de sesión inmediatamente para que load_chats, get_agents y sse_updates corran en paralelo sin bloquearse
 session_write_close();
 
-// Ejecutar migraciones ligeras e indexación de alto rendimiento una sola vez
-$migration_flag = sys_get_temp_dir() . '/starfi_bandeja_migrated_v3.flag';
+// Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez
+$migration_flag = sys_get_temp_dir() . '/starfi_bandeja_migrated_v4.flag';
 if (!file_exists($migration_flag)) {
     @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
     @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
     @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN ultimo_msg_id INT NOT NULL DEFAULT 0");
     @mysqli_query($con, "ALTER TABLE conversaciones ADD INDEX idx_ultimo_msg (ultimo_msg_id, id)");
     @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
+    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN categoria_meta VARCHAR(50) DEFAULT NULL");
     @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD INDEX idx_conv_origen (id_conversacion, origen)");
-    @mysqli_query($con, "UPDATE conversaciones c SET c.ultimo_msg_id = IFNULL((SELECT MAX(m.id) FROM mensajes_y_eventos m WHERE m.id_conversacion = c.id), 0) WHERE c.ultimo_msg_id = 0");
+    @mysqli_query($con, "UPDATE conversaciones c JOIN (SELECT id_conversacion, MAX(id) AS max_id FROM mensajes_y_eventos GROUP BY id_conversacion) m ON c.id = m.id_conversacion SET c.ultimo_msg_id = m.max_id WHERE c.ultimo_msg_id < m.max_id");
+    @mysqli_query($con, "DROP TRIGGER IF EXISTS trg_mensajes_ultimo_msg_ai");
+    @mysqli_query($con, "CREATE TRIGGER trg_mensajes_ultimo_msg_ai AFTER INSERT ON mensajes_y_eventos FOR EACH ROW UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), NEW.id) WHERE id = NEW.id_conversacion");
     @file_put_contents($migration_flag, date('Y-m-d H:i:s'));
+}
+
+function sync_ultimo_msg_conversacion($con, $id_conversacion, $msg_id) {
+    $cid = intval($id_conversacion);
+    $mid = intval($msg_id);
+    if ($cid > 0 && $mid > 0) {
+        $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $mid) WHERE id = $cid AND ultimo_msg_id < $mid");
+    }
 }
 
 function parse_meta_error_detail($res_meta, $status_code = 0) {
@@ -45,7 +56,6 @@ function parse_meta_error_detail($res_meta, $status_code = 0) {
 }
 
 $action = $_POST['action'] ?? '';
-$agente_id = intval($_SESSION['agente_id']);
 
 switch ($action) {
     case 'get_respuestas_rapidas':
@@ -60,7 +70,7 @@ switch ($action) {
         break;
 
     case 'get_bot_respuestas':
-        $agente = getAgenteInfo();
+        $agente = $agente_info_global;
         $rol = $agente['rol'] ?? 'AGENTE';
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
@@ -87,7 +97,7 @@ switch ($action) {
         $titulo = trim($_POST['titulo'] ?? '');
         $mensaje = trim($_POST['mensaje'] ?? '');
         if (!empty($titulo) && !empty($mensaje)) {
-            $agente = getAgenteInfo();
+            $agente = $agente_info_global;
             $id_sede = $agente['id_sede'] ?? 1; // Fallback to 1 if no sede is found
 
             $stmt = $con->prepare("INSERT INTO respuestas_rapidas (id_sede, titulo, mensaje, estado) VALUES (?, ?, ?, 'ACTIVO')");
@@ -127,13 +137,13 @@ switch ($action) {
         } elseif ($filter === 'clientes') {
             $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
         } elseif ($filter === 'campanas') {
-            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%| Texto:%'))";
+            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%[DIFUSIÓN:%' OR me_camp.contenido LIKE '%| Texto:%' OR IFNULL(me_camp.categoria_meta, '') = 'MARKETING'))";
         } elseif ($filter === 'ventas') {
             $where_clauses .= " AND (
                 c.resultado_comercial = 'VENTA_CERRADA' 
                 OR c.resultado_comercial LIKE '%VENTA%'
                 OR c.fecha_cierre_venta IS NOT NULL
-                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%')
+                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%' AND me.contenido NOT LIKE '%[DIFUSIÓN:%' AND me.contenido NOT LIKE '%| Texto:%' AND IFNULL(me.categoria_meta, '') != 'MARKETING')
             )";
         } elseif ($filter === 'no-leido') {
             $where_clauses .= " AND c.mensajes_no_leidos > 0";
@@ -196,26 +206,6 @@ switch ($action) {
         $limit = max(1, min(50, intval($_POST['limit'] ?? 20)));
         $offset = ($page - 1) * $limit;
         $fetch_limit = $limit + 1;
-
-        // Sincronización incremental O(1) de ultimo_msg_id para mensajes nuevos (webhook, difusión o chat)
-        $resSync = $con->query("SELECT (SELECT IFNULL(MAX(id), 0) FROM mensajes_y_eventos) AS max_msg, (SELECT IFNULL(MAX(ultimo_msg_id), 0) FROM conversaciones) AS max_sync");
-        if ($resSync && ($rowSync = $resSync->fetch_assoc())) {
-            $max_msg  = intval($rowSync['max_msg']);
-            $max_sync = intval($rowSync['max_sync']);
-            if ($max_msg > $max_sync) {
-                $con->query("
-                    UPDATE conversaciones c
-                    JOIN (
-                        SELECT id_conversacion, MAX(id) AS nuevo_max
-                        FROM mensajes_y_eventos
-                        WHERE id > $max_sync
-                        GROUP BY id_conversacion
-                    ) m_new ON c.id = m_new.id_conversacion
-                    SET c.ultimo_msg_id = m_new.nuevo_max
-                    WHERE m_new.nuevo_max > c.ultimo_msg_id
-                ");
-            }
-        }
 
         $query = "
             SELECT 
@@ -287,8 +277,8 @@ switch ($action) {
                 $resFlags = $con->query("
                     SELECT 
                         id_conversacion,
-                        MAX(CASE WHEN contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%| Texto:%' THEN 1 ELSE 0 END) AS flag_campana,
-                        MAX(CASE WHEN contenido NOT LIKE '%starfi_difusion_directa%' THEN 1 ELSE 0 END) AS flag_venta
+                        MAX(CASE WHEN contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%[DIFUSIÓN:%' OR contenido LIKE '%| Texto:%' OR IFNULL(categoria_meta, '') = 'MARKETING' THEN 1 ELSE 0 END) AS flag_campana,
+                        MAX(CASE WHEN contenido NOT LIKE '%starfi_difusion_directa%' AND contenido NOT LIKE '%[DIFUSIÓN:%' AND contenido NOT LIKE '%| Texto:%' AND IFNULL(categoria_meta, '') != 'MARKETING' THEN 1 ELSE 0 END) AS flag_venta
                     FROM mensajes_y_eventos
                     WHERE id_conversacion IN ($cids_csv)
                       AND origen = 'API_TRANSACCIONAL'
@@ -331,8 +321,8 @@ switch ($action) {
 
     case 'load_messages':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
-        $agente = getAgenteInfo();
-        $agente_id_actual = intval($agente['id'] ?? $_SESSION['agente_id'] ?? 0);
+        $agente = $agente_info_global;
+        $agente_id_actual = intval($agente['id'] ?? $agente_id);
         $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
         $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
         $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
@@ -392,7 +382,7 @@ switch ($action) {
         $is_new_chat = false;
         // Si no hay conversación activa, la creamos respetando la sede del agente
         if ($conversacion_id <= 0 && $cliente_id > 0) {
-            $agente_info = getAgenteInfo();
+            $agente_info = $agente_info_global;
             $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
             
             $id_linea = null;
@@ -501,9 +491,10 @@ switch ($action) {
         if ($stmt) {
             $stmt->bind_param("ississssss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text, $estado_envio, $error_detalle);
             if ($stmt->execute()) {
-                // Al responder (ya sea Operador, Administrador o Master), la conversación se marca como leída
-                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
-                echo json_encode(['status' => 'success', 'message_id' => $stmt->insert_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
+                $new_msg_id = intval($stmt->insert_id);
+                // Al responder (ya sea Operador, Administrador o Master), la conversación se marca como leída y sincroniza ultimo_msg_id
+                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_msg_id) WHERE id = $conversacion_id");
+                echo json_encode(['status' => 'success', 'message_id' => $new_msg_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar mensaje en BD.']);
             }
@@ -540,7 +531,7 @@ switch ($action) {
             $is_new_chat = false;
             // Si no hay conversación activa, la creamos (Misma lógica que enviar mensaje)
             if ($conversacion_id <= 0 && $cliente_id > 0) {
-                $agente_info = getAgenteInfo();
+                $agente_info = $agente_info_global;
                 $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
                 
                 $id_linea = null;
@@ -656,8 +647,9 @@ switch ($action) {
             ");
             $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
             if ($stmt_msg->execute()) {
-                // Al enviar un archivo/multimedia, la conversación se marca como leída
-                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+                $new_media_msg_id = intval($stmt_msg->insert_id);
+                // Al enviar un archivo/multimedia, la conversación se marca como leída y sincroniza ultimo_msg_id
+                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_media_msg_id) WHERE id = $conversacion_id");
                 echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar en BD.']);
@@ -826,12 +818,14 @@ switch ($action) {
 
             $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo | Lead Scoring: $calidad estrellas";
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', '$evento_texto')");
+            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
             
             if (!empty($observacion)) {
-                $agente_id_actual = intval($_SESSION['agente_id']);
+                $agente_id_actual = $agente_id;
                 $stmt_obs = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, id_agente, tipo, contenido) VALUES (?, 'NOTA_INTERNA', ?, 'TEXTO', ?)");
                 $stmt_obs->bind_param("iis", $conversacion_id, $agente_id_actual, $observacion);
                 $stmt_obs->execute();
+                sync_ultimo_msg_conversacion($con, $conversacion_id, $stmt_obs->insert_id);
             }
             
             // AUTOMATIZACIÓN CSAT: Enviar la plantilla starfi_csat_survey al cliente
@@ -872,6 +866,7 @@ switch ($action) {
                     curl_close($ch_csat);
                     
                     $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Encuesta CSAT (starfi_csat_survey) enviada al cliente automáticamente.')");
+                    sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
                 }
             }
             
@@ -901,6 +896,7 @@ switch ($action) {
             $telefono_agente = trim($rowAgente['telefono'] ?? '');
 
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
+            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
 
             // Enviar notificación por WhatsApp al operador y a los administradores
             // Se elimina el fallback a cualquier línea global para evitar usar el número de otra sede
@@ -1075,7 +1071,7 @@ switch ($action) {
     case 'get_agents':
         $conversacion_id = intval($_POST['conversacion_id'] ?? $_GET['conversacion_id'] ?? 0);
         $posted_sede = intval($_POST['id_sede'] ?? $_GET['id_sede'] ?? 0);
-        $agente = getAgenteInfo();
+        $agente = $agente_info_global;
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         $target_sede = 0;

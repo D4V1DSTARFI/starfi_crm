@@ -32,10 +32,16 @@ $(document).ready(function () {
         evtSource.onmessage = function (event) {
             const data = JSON.parse(event.data);
             if (data.type === 'update') {
-                if (activeChatId !== null && activeChatId !== 0) {
-                    loadMessages(activeChatId, false);
+                if (data.reason === 'status_change') {
+                    if (activeChatId !== null && activeChatId !== 0) {
+                        loadMessages(activeChatId, false);
+                    }
+                    loadChats(false, currentChatPage, true);
                 } else {
-                    loadChats();
+                    loadChats(false, currentChatPage, true);
+                    if (activeChatId !== null && activeChatId !== 0) {
+                        loadMessages(activeChatId, false);
+                    }
                 }
             } else if (data.type === 'reconnect') {
                 evtSource.close();
@@ -563,10 +569,10 @@ let pendingDeepLinkChat = (function () {
     return { search, convId, clienteId };
 })();
 
-function loadChats(append = false, targetPage = null) {
+function loadChats(append = false, targetPage = null, silent = false) {
     // Si hay una petición en curso y el usuario cambió de filtro/página/búsqueda, abortar la anterior
     if (currentChatsXHR && currentChatsXHR.readyState !== 4) {
-        if (!append) {
+        if (!append && !silent) {
             currentChatsXHR.abort();
             isLoadingChats = false;
         } else {
@@ -576,7 +582,9 @@ function loadChats(append = false, targetPage = null) {
 
     if (!append) {
         currentChatPage = (targetPage && targetPage > 0) ? targetPage : 1;
-        $('#chatList').html('<div class="text-center p-4"><div class="spinner-border text-secondary mb-2" role="status"></div><p class="text-muted" style="font-size: 0.85rem;">Cargando conversaciones recientes...</p></div>');
+        if (!silent) {
+            $('#chatList').html('<div class="text-center p-4"><div class="spinner-border text-secondary mb-2" role="status"></div><p class="text-muted" style="font-size: 0.85rem;">Cargando conversaciones recientes...</p></div>');
+        }
     } else {
         currentChatPage++;
     }
@@ -606,7 +614,7 @@ function loadChats(append = false, targetPage = null) {
             if (response.status === 'success') {
                 hasMoreChats = !!response.has_more;
                 renderChatList(response.data, append, hasMoreChats);
-                if (!append) {
+                if (!append && !silent) {
                     $('#chatList').scrollTop(0);
                 }
                 if (pendingDeepLinkChat) {

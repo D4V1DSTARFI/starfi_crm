@@ -2235,6 +2235,10 @@ switch ($action) {
                 mysqli_query($con, "INSERT INTO mensajes_y_eventos 
                     (id_conversacion, id_mensaje_meta, tipo, origen, id_agente, contenido, url_archivo, estado_envio, categoria_meta, es_pagado, costo_meta_estimado, timestamp) 
                     VALUES ($id_conversacion, '$wamid_esc', '$tipo_msg_bandeja', 'API_TRANSACCIONAL', $id_usuario, '$contenido_log_esc', $url_arch_sql, 'ENVIADO', '$cat_meta_esc', 1, $costo_unit, '$now_full')");
+                $new_camp_msg_id = intval(mysqli_insert_id($con));
+                if ($new_camp_msg_id > 0) {
+                    mysqli_query($con, "UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_camp_msg_id) WHERE id = $id_conversacion AND ultimo_msg_id < $new_camp_msg_id");
+                }
             }
 
             // Actualizar fila en campanas_difusion_destinatarios
