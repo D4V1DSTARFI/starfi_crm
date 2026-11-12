@@ -30,6 +30,10 @@ if (!defined('META_APP_SECRET')) {
     define('META_APP_SECRET', $envGet('META_APP_SECRET', ''));
 }
 
+if (!defined('META_API_VERSION')) {
+    define('META_API_VERSION', $envGet('META_API_VERSION', 'v23.0'));
+}
+
 function getDbConnection($tipo = 'core')
 {
     global $env;

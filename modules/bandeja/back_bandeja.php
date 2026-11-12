@@ -526,7 +526,7 @@ switch ($action) {
                 $meta_token = $chat_data['meta_token'];
                 $phone_number_id = $chat_data['phone_number_id'];
 
-                $url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                $url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                 
                 $post_data = [
                     'messaging_product' => 'whatsapp',
@@ -671,7 +671,7 @@ switch ($action) {
                 $phone_number_id = $chat_data['phone_number_id'];
 
                 // 1. Subir archivo a los servidores de Meta para obtener un Media ID
-                $media_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/media";
+                $media_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/media";
                 $cfile = new CURLFile($dest_path, $mime, $filename);
                 $post_media = [
                     'messaging_product' => 'whatsapp',
@@ -693,7 +693,7 @@ switch ($action) {
                 // 2. Si la subida fue exitosa, enviar el mensaje con el Media ID
                 if (isset($media_data['id'])) {
                     $media_id = $media_data['id'];
-                    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                    $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                     
                     $meta_type = 'document';
                     if (strpos($mime, 'image') !== false) {
@@ -806,7 +806,7 @@ switch ($action) {
         $id_mensaje_meta = null;
         
         if ($msg['tipo'] === 'TEXTO') {
-            $url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+            $url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
             $post_data = [
                 'messaging_product' => 'whatsapp',
                 'recipient_type' => 'individual',
@@ -841,7 +841,7 @@ switch ($action) {
                 $mime = $msg['mime_type'];
                 $filename = basename($dest_path);
                 
-                $media_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/media";
+                $media_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/media";
                 $cfile = new CURLFile($dest_path, $mime, $filename);
                 $post_media = ['messaging_product' => 'whatsapp', 'file' => $cfile];
                 
@@ -856,7 +856,7 @@ switch ($action) {
                 $media_data = json_decode($media_response, true);
                 if (isset($media_data['id'])) {
                     $media_id = $media_data['id'];
-                    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                    $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                     
                     $meta_type = 'document';
                     if (strpos($mime, 'image') !== false) {
@@ -959,7 +959,7 @@ switch ($action) {
                     $meta_token = $rowChat['meta_token'];
                     $phone_number_id = $rowChat['phone_number_id'];
                     
-                    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                    $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                     $post_csat = [
                         'messaging_product' => 'whatsapp',
                         'to' => $numero_destino,
@@ -1090,7 +1090,7 @@ switch ($action) {
                 }
 
                 // Enviar la plantilla starfi_notificacion_interna a cada destinatario
-                $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+                $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                 foreach ($telefonos_destinatarios as $tel_dest) {
                     $post_payload = [
                         'messaging_product' => 'whatsapp',

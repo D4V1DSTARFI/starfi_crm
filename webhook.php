@@ -15,6 +15,9 @@ $envPath = __DIR__ . '/.env';
 $env = file_exists($envPath) ? (parse_ini_file($envPath) ?: []) : [];
 
 // Token de verificación exclusivo desde .env / variables de entorno (sin fallback en texto plano)
+if (!defined('META_API_VERSION')) {
+    define('META_API_VERSION', trim((string)($env['META_API_VERSION'] ?? getenv('META_API_VERSION') ?: 'v23.0')));
+}
 $token = trim((string)($env['WEBHOOK_VERIFY_TOKEN'] ?? getenv('WEBHOOK_VERIFY_TOKEN') ?: ''));
 $hubMode = $_GET['hub_mode'] ?? '';
 $palabraReto = $_GET['hub_challenge'] ?? '';
@@ -876,9 +879,19 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
         return;
     }
     
-    $url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/messages';
+    // Buscar nombre oficial de la sede en base de datos (sin marca fija)
+    $nombre_sede = 'STARFI CRM';
+    if ($id_sede > 0) {
+        $q_sede = mysqli_query($con, "SELECT nombre_sede FROM sedes WHERE id = " . intval($id_sede) . " LIMIT 1");
+        if ($q_sede && ($row_sede = mysqli_fetch_assoc($q_sede)) && !empty(trim($row_sede['nombre_sede'] ?? ''))) {
+            $nombre_sede = trim($row_sede['nombre_sede']);
+        }
+    }
+
+    $url = 'https://graph.facebook.com/' . META_API_VERSION . '/' . $telefonoID . '/messages';
     
     foreach ($asesores as $asesor) {
+        $nombre_asesor_limpio = trim((string)($asesor['nombre'] ?? 'Asesor'));
         $mensaje_contacto = json_encode([
             'messaging_product' => 'whatsapp',
             'to' => $telefono_cliente,
@@ -886,9 +899,9 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
             'contacts' => [
                 [
                     'name' => [
-                        'formatted_name' => $asesor['nombre'] . ' SuperFormica',
-                        'first_name' => $asesor['nombre'],
-                        'last_name' => 'SuperFormica'
+                        'formatted_name' => trim($nombre_asesor_limpio . ' ' . $nombre_sede),
+                        'first_name' => $nombre_asesor_limpio,
+                        'last_name' => $nombre_sede
                     ],
                     'phones' => [
                         [
@@ -1209,7 +1222,7 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
     $texto_notificacion = "Tienes un mensaje por responder de $cliente_nombre";
     
     // 4. Enviar plantilla 'starfi_notificacion_interna' vía API de Meta a los técnicos de starfi_soporte
-    $msg_url = "https://graph.facebook.com/v19.0/{$phone_number_id}/messages";
+    $msg_url = "https://graph.facebook.com/" . META_API_VERSION . "/{$phone_number_id}/messages";
     
     foreach ($telefonos_destinatarios as $tel_dest) {
         $post_payload = [

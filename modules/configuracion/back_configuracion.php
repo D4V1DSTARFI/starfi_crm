@@ -573,11 +573,12 @@ switch ($action) {
         $token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
 
         if (empty($waba_id) || empty($token)) {
-            echo json_encode(['status' => 'error', 'message' => 'El WABA ID es obligatorio, y el Token Global debe estar configurado en database.php.']);
+            echo json_encode(['status' => 'error', 'message' => 'El WABA ID es obligatorio, y el Token Global debe estar configurado en .env.']);
             exit;
         }
 
-        $url = "https://graph.facebook.com/v19.0/{$waba_id}/phone_numbers";
+        $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+        $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/phone_numbers";
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -608,7 +609,8 @@ switch ($action) {
             exit;
         }
 
-        $url = "https://graph.facebook.com/v19.0/{$phone_id}/register";
+        $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+        $url = "https://graph.facebook.com/{$api_ver_cfg}/{$phone_id}/register";
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -846,7 +848,8 @@ switch ($action) {
             $telefono_meta = $row['meta_app_id'];
             $token_meta = $row['meta_token'] ?? (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
             
-            $url = "https://graph.facebook.com/v19.0/{$telefono_meta}/messages";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$telefono_meta}/messages";
             $data = [
                 'messaging_product' => 'whatsapp',
                 'to' => str_replace(['+', ' '], '', $numero),
