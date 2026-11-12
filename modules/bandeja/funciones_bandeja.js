@@ -4,6 +4,27 @@ let activeChatId = null;
 let activeClientId = null;
 let currentFilter = 'todos';
 
+// --- [SPRINT 2] Estado global para Ventana Meta 24h, Semáforo SLA, Embudo USD y Round-Robin ---
+let serverClockOffsetSec = 0;
+let activeWindowExpiresAtEpoch = 0;
+let activeDealInfo = null;
+let metaTemplatesCache = [];
+let metaTemplatesSedeName = 'Nuestra Sede';
+let slaAlertedChatIds = new Set();
+let slaSoundEnabled = (localStorage.getItem('starfi_sla_sound') !== '0');
+let agentAvailable = (typeof window.initialDisponibleChat !== 'undefined') ? (parseInt(window.initialDisponibleChat, 10) === 1) : true;
+
+function syncServerClock(serverEpoch) {
+    const ep = parseInt(serverEpoch || 0, 10);
+    if (ep > 1700000000) {
+        serverClockOffsetSec = ep - Math.floor(Date.now() / 1000);
+    }
+}
+
+function getServerNowEpoch() {
+    return Math.floor(Date.now() / 1000) + serverClockOffsetSec;
+}
+
 $(document).ready(function () {
     // --- Sidebar Toggle ---
     $('#toggleSidebar').on('click', function() {
@@ -281,6 +302,11 @@ $(document).ready(function () {
                         $('.chat-item.active').attr('data-id', activeChatId);
                     }
                     loadMessages(activeChatId, true);
+                } else if (response.code === 'WINDOW_24H_EXPIRED') {
+                    activeWindowExpiresAtEpoch = 0;
+                    updateActiveWindow24hUI();
+                    loadMessages(activeChatId, true);
+                    promptWindow24hExpiredModal(response.message);
                 } else {
                     Swal.fire('Error', response.message || 'Error desconocido', 'error');
                     loadMessages(activeChatId, true);
@@ -307,6 +333,7 @@ $(document).ready(function () {
             $('#inputBoxContainer').css({ 'background-color': '', 'border-color': '' });
             $('#chatInput').attr('placeholder', 'Escribe un mensaje...');
         }
+        updateActiveWindow24hUI();
     });
 
     // Delegación de eventos para la lista de chats dinámica (Respaldo)
@@ -473,7 +500,10 @@ $(document).ready(function () {
             success: function (res) {
                 if (res.status === 'success') {
                     let options = {};
-                    res.data.forEach(ag => { options[ag.id] = ag.nombre_completo; });
+                    res.data.forEach(ag => {
+                        const onlineTag = (parseInt(ag.en_linea || 0, 10) === 1) ? '🟢 En línea' : '⚪ Desconectado';
+                        options[ag.id] = `${ag.nombre_completo} (${onlineTag})`;
+                    });
 
                     Swal.fire({
                         title: 'Reasignar Conversación',
@@ -510,6 +540,9 @@ $(document).ready(function () {
             }
         });
     });
+
+    // 5. Inicializar herramientas Enterprise Sprint 2 ([COM-01], [COM-02], [COM-03], [COM-04])
+    initSprint2EnterpriseTools();
 });
 
 function loadOperadoresFilter() {
@@ -612,6 +645,9 @@ function loadChats(append = false, targetPage = null, silent = false) {
         success: function (response) {
             isLoadingChats = false;
             if (response.status === 'success') {
+                if (response.server_now_epoch) {
+                    syncServerClock(response.server_now_epoch);
+                }
                 hasMoreChats = !!response.has_more;
                 renderChatList(response.data, append, hasMoreChats);
                 if (!append && !silent) {
@@ -672,6 +708,7 @@ function renderChatList(chats, append = false, has_more = false) {
             }
             list.html(emptyHtml);
             $('#badgeNoLeidos').hide();
+            refreshLiveSlaSemaphores(false);
             return;
         }
         list.empty();
@@ -746,8 +783,19 @@ function renderChatList(chats, append = false, has_more = false) {
             }
         }
 
+        let dealBadgeHtml = '';
+        if (chat.deal_etapa) {
+            const montoNum = parseFloat(chat.deal_monto_usd || 0);
+            const montoStr = montoNum > 0 ? ` · $${montoNum.toFixed(2)}` : '';
+            dealBadgeHtml = `<span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.63rem; margin-left: 4px; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE;"><i class="fa-solid fa-sack-dollar me-1"></i>${formatEtapaShort(chat.deal_etapa)}${montoStr}</span>`;
+        }
+
+        const slaSince = parseInt(chat.sla_wait_since_epoch || 0, 10);
+        const slaReplied = parseInt(chat.sla_human_replied || 0, 10);
+        const lastCliEp = parseInt(chat.last_client_epoch || 0, 10);
+
         let html = `
-            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}">
+            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${chat.deal_etapa || ''}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? chat.deal_monto_usd : ''}">
                 <div class="chat-avatar">
                     <img src="${getLocalAvatarSvg(name)}" alt="Avatar">
                 </div>
@@ -758,8 +806,10 @@ function renderChatList(chats, append = false, has_more = false) {
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
+                        <span class="sla-slot"></span>
                         ${tipoBadge}
                         ${estadoBadge}
+                        ${dealBadgeHtml}
                         ${asesorBadge}
                         ${starsHtml}
                     </div>
@@ -823,6 +873,9 @@ function renderChatList(chats, append = false, has_more = false) {
         if (totalUnread > 0) $('#badgeNoLeidos').text(totalUnread).show();
         else $('#badgeNoLeidos').hide();
     }
+
+    // Actualizar en vivo el Semáforo SLA y disparar alerta sonora si algún chat cruza >15m
+    refreshLiveSlaSemaphores(true);
 }
 
 // Variables de estado para modal de salida de mensajes no leídos (Administrador)
@@ -903,7 +956,8 @@ function promptAssignOperator(chatCtx, onDone) {
             if (res.status === 'success') {
                 let options = '<option value="">-- Selecciona un vendedor/operador --</option>';
                 res.data.forEach(ag => {
-                    options += `<option value="${ag.id}">${ag.nombre_completo}</option>`;
+                    const onlineTag = (parseInt(ag.en_linea || 0, 10) === 1) ? '🟢 En línea' : '⚪ Desconectado';
+                    options += `<option value="${ag.id}">${ag.nombre_completo} (${onlineTag})</option>`;
                 });
 
                 Swal.fire({
@@ -989,6 +1043,21 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor, no_leidos)
     if ($('#modalProfile360').hasClass('show')) {
         loadProfile360();
     }
+
+    // [COM-01] & [COM-02] Pre-sincronizar Ventana 24h y chip de Embudo desde la fila seleccionada sin parpadeo
+    const activeItem = $('.chat-item.active').first();
+    if (activeItem.length) {
+        const lastCliEp = parseInt(activeItem.attr('data-last-cli') || '0', 10);
+        activeWindowExpiresAtEpoch = lastCliEp > 0 ? (lastCliEp + 86400) : 0;
+        const dEtapa = activeItem.attr('data-deal-etapa') || '';
+        const dMonto = activeItem.attr('data-deal-monto');
+        activeDealInfo = dEtapa ? { etapa: dEtapa, monto_estimado_usd: parseFloat(dMonto || 0), titulo: '' } : null;
+    } else {
+        activeWindowExpiresAtEpoch = 0;
+        activeDealInfo = null;
+    }
+    updateActiveWindow24hUI();
+    updateHeaderDealChip(activeDealInfo);
 
     // Registrar si el Administrador abrió un chat NO LEÍDO
     const unreadCount = parseInt(no_leidos || 0);
@@ -1137,9 +1206,18 @@ function loadMessages(id, scrollToBottom = true) {
         url: 'back_bandeja.php',
         type: 'POST',
         dataType: 'json',
-        data: { action: 'load_messages', conversacion_id: id },
+        data: { action: 'load_messages', conversacion_id: id, cliente_id: activeClientId || 0 },
         success: function (response) {
             if (response.status === 'success') {
+                if (response.window_24h) {
+                    syncServerClock(response.window_24h.server_now_epoch);
+                    activeWindowExpiresAtEpoch = parseInt(response.window_24h.expires_at_epoch || 0, 10);
+                    updateActiveWindow24hUI();
+                }
+                if (typeof response.deal !== 'undefined') {
+                    activeDealInfo = response.deal || null;
+                    updateHeaderDealChip(activeDealInfo);
+                }
                 renderMessages(response.data, scrollToBottom);
                 if (currentFilter === 'no-leido' || $('#chatList').find('.chat-item[data-id="' + id + '"] div[style*="background:#e85b14"]').length > 0) {
                     loadChats();
@@ -1537,6 +1615,14 @@ function sendMessage() {
     if (text === '') return;
     
     const isInternal = $('#btnInternalNote').hasClass('note-mode') ? 1 : 0;
+
+    // [COM-01] Bloqueo preventivo en cliente si expiró la ventana de 24h y no es Nota Interna
+    if (!isInternal && activeWindowExpiresAtEpoch <= getServerNowEpoch()) {
+        updateActiveWindow24hUI();
+        promptWindow24hExpiredModal('La ventana gratuita de 24h de Meta ha expirado. Envía una Plantilla Oficial Meta para reactivar la conversación.');
+        return;
+    }
+
     const replyMetaId = window.currentReplyMetaId;
     const replyText = $('#replyTextPreview').text() || '';
 
@@ -1608,8 +1694,17 @@ function sendMessage() {
                     $('.chat-item.active').attr('data-id', activeChatId);
                 }
                 loadMessages(activeChatId, true);
+                if (!isInternal) {
+                    loadChats(false, currentChatPage, true);
+                }
+            } else if (response.code === 'WINDOW_24H_EXPIRED') {
+                activeWindowExpiresAtEpoch = 0;
+                updateActiveWindow24hUI();
+                loadMessages(activeChatId, true);
+                promptWindow24hExpiredModal(response.message);
+            } else {
+                Swal.fire('Error', response.message, 'error');
             }
-            else Swal.fire('Error', response.message, 'error');
         }
     });
 }
@@ -1705,3 +1800,600 @@ $(document).on('click', '#btnBackToChats', function() {
     activeClientId = null;
     $('.chat-item').removeClass('active');
 });
+
+// ============================================================================
+// [SPRINT 2] HERRAMIENTAS ENTERPRISE DE CIERRE COMERCIAL Y CONTROL SLA
+// [COM-01] Contador regresivo Ventana Meta 24h + Bloqueo + Plantilla Oficial
+// [COM-02] Integración rápida con Embudo de Ventas Kanban (USD)
+// [COM-03] Disponibilidad y Presencia en Línea para Enrutamiento Round-Robin
+// [COM-04] Semáforo SLA en vivo (<5m, 5-15m, >15m) con Alerta Sonora
+// ============================================================================
+
+function initSprint2EnterpriseTools() {
+    renderSlaSoundButton();
+    renderAvailabilityButton();
+
+    // Reloj maestro en vivo (1 seg) para cuenta regresiva 24h y Semáforo SLA
+    setInterval(function () {
+        if (activeChatId !== null) {
+            updateActiveWindow24hUI();
+        }
+        refreshLiveSlaSemaphores(true);
+    }, 1000);
+
+    // Heartbeat de presencia cada 45 seg para mantener al asesor elegible en Round-Robin ([COM-03])
+    setInterval(function () {
+        $.post('back_bandeja.php', { action: 'heartbeat' }, function (res) {
+            if (res && res.status === 'success') {
+                if (res.server_now_epoch) syncServerClock(res.server_now_epoch);
+                if (typeof res.disponible_chat !== 'undefined') {
+                    agentAvailable = (parseInt(res.disponible_chat, 10) === 1);
+                    renderAvailabilityButton();
+                }
+            }
+        }, 'json');
+    }, 45000);
+
+    // [COM-03] Toggle En Línea / Pausado para Round-Robin
+    $('#btnAvailabilityToggle').on('click', function () {
+        const nextVal = agentAvailable ? 0 : 1;
+        $(this).prop('disabled', true);
+        $.post('back_bandeja.php', { action: 'toggle_availability', disponible: nextVal }, function (res) {
+            $('#btnAvailabilityToggle').prop('disabled', false);
+            if (res && res.status === 'success') {
+                agentAvailable = (parseInt(res.disponible_chat, 10) === 1);
+                renderAvailabilityButton();
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: agentAvailable ? 'success' : 'info',
+                    title: agentAvailable
+                        ? 'En línea: recibirás leads automáticos por Round-Robin'
+                        : 'Pausado: no recibirás nuevas asignaciones automáticas',
+                    showConfirmButton: false,
+                    timer: 2600
+                });
+            }
+        }, 'json').fail(function () {
+            $('#btnAvailabilityToggle').prop('disabled', false);
+        });
+    });
+
+    // [COM-04] Toggle Alerta Sonora SLA
+    $('#btnSlaSoundToggle').on('click', function () {
+        slaSoundEnabled = !slaSoundEnabled;
+        localStorage.setItem('starfi_sla_sound', slaSoundEnabled ? '1' : '0');
+        renderSlaSoundButton();
+        if (slaSoundEnabled) {
+            playSlaAlertChime();
+        }
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'info',
+            title: slaSoundEnabled ? 'Alerta sonora SLA (>15 min) activada' : 'Alerta sonora SLA silenciada',
+            showConfirmButton: false,
+            timer: 1800
+        });
+    });
+
+    // [COM-04] Clic directo en contador rojo filtra pestaña SLA >15m
+    $('#slaQuickFilterRed').on('click', function () {
+        const tabCrit = $('.tabs .tab[data-target="sla-critico"]');
+        if (tabCrit.length) {
+            tabCrit.trigger('click');
+        }
+    });
+
+    // [COM-01] Abrir modal de Reactivación con Plantilla Oficial Meta
+    $('#btnReactivateTemplate, #btnHeaderMetaTemplate').on('click', function () {
+        if (activeChatId === null && !activeClientId) {
+            Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
+            return;
+        }
+        openMetaReactivateModal(false);
+    });
+
+    $('#btnRefreshMetaTpls').on('click', function () {
+        openMetaReactivateModal(true);
+    });
+
+    $('#selectMetaOfficialTpl').on('change', function () {
+        const idx = parseInt($(this).val() || '0', 10);
+        renderMetaTplSelection(idx);
+    });
+
+    $(document).on('input', '.meta-tpl-var-input, #metaTplHeaderInput', function () {
+        const idx = parseInt($('#selectMetaOfficialTpl').val() || '0', 10);
+        const tpl = metaTemplatesCache[idx];
+        if (tpl) {
+            $('#metaTplLivePreview').text(buildMetaTplPreviewText(tpl));
+        }
+    });
+
+    $('#btnSendMetaReactivate').on('click', function () {
+        submitMetaTemplateReactivation();
+    });
+
+    // [COM-02] Modal rápido de Embudo y Monto USD desde cabecera del chat
+    $('#btnQuickDeal').on('click', function () {
+        if (activeChatId === null && !activeClientId) return;
+        const clientName = ($('#chatHeaderName').text() || '').trim();
+        $('#qdTitulo').val((activeDealInfo && activeDealInfo.titulo) ? activeDealInfo.titulo : (clientName ? `Oportunidad - ${clientName}` : 'Oportunidad Comercial'));
+        $('#qdEtapa').val((activeDealInfo && activeDealInfo.etapa) ? activeDealInfo.etapa : 'NUEVO_LEAD');
+        $('#qdMontoUsd').val((activeDealInfo && activeDealInfo.monto_estimado_usd !== undefined) ? parseFloat(activeDealInfo.monto_estimado_usd).toFixed(2) : '0.00');
+        $('#modalQuickDeal').modal('show');
+    });
+
+    $('#btnSaveQuickDeal').on('click', function () {
+        const btn = $(this);
+        const etapa = $('#qdEtapa').val() || 'NUEVO_LEAD';
+        const monto = parseFloat($('#qdMontoUsd').val() || '0') || 0;
+        const titulo = ($('#qdTitulo').val() || '').trim();
+
+        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
+        $.post('back_bandeja.php', {
+            action: 'quick_save_deal',
+            conversacion_id: activeChatId || 0,
+            cliente_id: activeClientId || 0,
+            etapa: etapa,
+            monto_estimado_usd: monto.toFixed(2),
+            titulo: titulo
+        }, function (res) {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar en Embudo');
+            if (res && res.status === 'success') {
+                activeDealInfo = res.deal || { etapa: etapa, monto_estimado_usd: monto, titulo: titulo };
+                updateHeaderDealChip(activeDealInfo);
+                $('#modalQuickDeal').modal('hide');
+                if (activeChatId) loadMessages(activeChatId, true);
+                loadChats(false, currentChatPage, true);
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: 'Embudo actualizado ($' + monto.toFixed(2) + ' USD)',
+                    showConfirmButton: false,
+                    timer: 2200
+                });
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo actualizar el embudo.', 'error');
+            }
+        }, 'json').fail(function () {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar en Embudo');
+            Swal.fire('Error', 'Fallo de red al guardar la oportunidad.', 'error');
+        });
+    });
+}
+
+function renderAvailabilityButton() {
+    const btn = $('#btnAvailabilityToggle');
+    if (!btn.length) return;
+    if (agentAvailable) {
+        btn.css({ background: '#ECFDF5', color: '#059669', borderColor: '#A7F3D0' });
+        btn.find('span').text('En línea');
+    } else {
+        btn.css({ background: '#FEF2F2', color: '#DC2626', borderColor: '#FECACA' });
+        btn.find('span').text('Pausado');
+    }
+}
+
+function renderSlaSoundButton() {
+    const btn = $('#btnSlaSoundToggle');
+    if (!btn.length) return;
+    if (slaSoundEnabled) {
+        btn.html('<i class="fa-solid fa-volume-high text-success"></i>');
+    } else {
+        btn.html('<i class="fa-solid fa-volume-xmark text-muted"></i>');
+    }
+}
+
+function formatCountdownHMS(totalSeconds) {
+    const sec = Math.max(0, Math.floor(totalSeconds));
+    const h = String(Math.floor(sec / 3600)).padStart(2, '0');
+    const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+}
+
+function updateActiveWindow24hUI() {
+    const badge = $('#metaWindowBadge');
+    const timerText = $('#metaWindowTimerText');
+    const banner = $('#expiredWindowBanner');
+    const inputBox = $('#inputBoxContainer');
+    const chatInput = $('#chatInput');
+    const sendBtn = $('#sendBtn');
+    const btnAttach = $('#btnAttach');
+    const isNoteMode = $('#btnInternalNote').hasClass('note-mode');
+
+    if (activeChatId === null && !activeClientId) {
+        badge.hide();
+        banner.removeClass('active');
+        inputBox.removeClass('locked-24h');
+        chatInput.prop('disabled', false);
+        sendBtn.prop('disabled', false);
+        btnAttach.prop('disabled', false).css('opacity', '');
+        return;
+    }
+
+    const remaining = Math.max(0, activeWindowExpiresAtEpoch - getServerNowEpoch());
+    badge.removeClass('win-open win-warn win-crit win-expired').css('display', 'inline-flex');
+
+    if (remaining > 0) {
+        const hms = formatCountdownHMS(remaining);
+        if (remaining <= 1800) {
+            badge.addClass('win-crit');
+            timerText.text(`24h · ${hms}`);
+        } else if (remaining <= 7200) {
+            badge.addClass('win-warn');
+            timerText.text(`24h · ${hms}`);
+        } else {
+            badge.addClass('win-open');
+            timerText.text(`24h · ${hms}`);
+        }
+
+        banner.removeClass('active');
+        btnAttach.prop('disabled', false).css('opacity', '');
+        inputBox.removeClass('locked-24h');
+        chatInput.prop('disabled', false);
+        sendBtn.prop('disabled', false);
+        if (!isNoteMode) {
+            chatInput.attr('placeholder', 'Escribe un mensaje...');
+        }
+    } else {
+        badge.addClass('win-expired');
+        timerText.text('Ventana 24h Expirada');
+        banner.addClass('active');
+        btnAttach.prop('disabled', true).css('opacity', '0.45');
+
+        if (isNoteMode) {
+            // Permitir escribir Notas Internas privadas aunque la ventana de Meta haya expirado
+            inputBox.removeClass('locked-24h');
+            chatInput.prop('disabled', false).attr('placeholder', 'Escribiendo nota interna (oculta al cliente)...');
+            sendBtn.prop('disabled', false);
+        } else {
+            inputBox.addClass('locked-24h');
+            chatInput.prop('disabled', true).attr('placeholder', 'Ventana Meta 24h cerrada — Reactiva con Plantilla Oficial Meta o usa Nota Interna...');
+            sendBtn.prop('disabled', true);
+        }
+    }
+}
+
+function promptWindow24hExpiredModal(msg) {
+    Swal.fire({
+        icon: 'warning',
+        title: 'Ventana Meta de 24h Expirada',
+        text: msg || 'Han pasado más de 24 horas desde el último mensaje del cliente. Para volver a contactarlo debes enviar una Plantilla Oficial aprobada por Meta.',
+        showCancelButton: true,
+        confirmButtonColor: '#E85B14',
+        confirmButtonText: '<i class="fa-brands fa-whatsapp me-1"></i> Reactivar con Plantilla Oficial',
+        cancelButtonText: 'Cancelar'
+    }).then((res) => {
+        if (res.isConfirmed) {
+            openMetaReactivateModal(false);
+        }
+    });
+}
+
+function openMetaReactivateModal(forceSync) {
+    $('#modalReactivateMeta').modal('show');
+    $('#selectMetaOfficialTpl').html('<option value="">Cargando plantillas aprobadas de Meta...</option>').prop('disabled', true);
+    $('#metaTplVarsContainer').html('<div class="text-muted small py-3"><i class="fa-solid fa-spinner fa-spin me-2"></i>Consultando catálogo oficial de Meta...</div>');
+    $('#metaTplMetaBadges').empty();
+    $('#metaTplLivePreview').text('Cargando vista previa...');
+    $('#btnSendMetaReactivate').prop('disabled', true);
+
+    $.post('back_bandeja.php', {
+        action: 'get_meta_templates_bandeja',
+        conversacion_id: activeChatId || 0,
+        cliente_id: activeClientId || 0,
+        force_sync: forceSync ? 1 : 0
+    }, function (res) {
+        if (res && res.status === 'success' && Array.isArray(res.templates) && res.templates.length > 0) {
+            metaTemplatesCache = res.templates;
+            metaTemplatesSedeName = res.nombre_sede || 'Nuestra Sede';
+            let opts = '';
+            metaTemplatesCache.forEach((tpl, idx) => {
+                opts += `<option value="${idx}">${tpl.name} (${tpl.language} · ${tpl.category})</option>`;
+            });
+            $('#selectMetaOfficialTpl').html(opts).prop('disabled', false);
+            $('#btnSendMetaReactivate').prop('disabled', false);
+            renderMetaTplSelection(0);
+        } else {
+            $('#selectMetaOfficialTpl').html('<option value="">Sin plantillas disponibles</option>');
+            $('#metaTplVarsContainer').html(`<div class="alert alert-warning small mb-0">${(res && res.message) ? res.message : 'No se encontraron plantillas aprobadas para esta sede.'}</div>`);
+        }
+    }, 'json').fail(function () {
+        $('#metaTplVarsContainer').html('<div class="alert alert-danger small mb-0">Error de red al consultar las plantillas oficiales de Meta.</div>');
+    });
+}
+
+function extractPlaceholderNumbers(text) {
+    if (!text) return [];
+    const matches = String(text).match(/\{\{(\d+)\}\}/g) || [];
+    const nums = matches.map(m => parseInt(m.replace(/\D/g, ''), 10)).filter(n => n > 0);
+    return Array.from(new Set(nums)).sort((a, b) => a - b);
+}
+
+function renderMetaTplSelection(idx) {
+    const tpl = metaTemplatesCache[idx];
+    if (!tpl) return;
+
+    let badgesHtml = `
+        <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2.5 py-1"><i class="fa-solid fa-check-circle me-1"></i>APROBADA</span>
+        <span class="badge bg-light text-dark border rounded-pill px-2.5 py-1">${tpl.category || 'UTILITY'}</span>
+        <span class="badge bg-light text-secondary border rounded-pill px-2.5 py-1">Idioma: ${tpl.language || 'es'}</span>
+    `;
+    if (tpl.header_format && tpl.header_format !== 'NONE') {
+        badgesHtml += `<span class="badge bg-info-subtle text-info-emphasis border rounded-pill px-2.5 py-1">Encabezado: ${tpl.header_format}</span>`;
+    }
+    $('#metaTplMetaBadges').html(badgesHtml);
+
+    const container = $('#metaTplVarsContainer');
+    container.empty();
+
+    const rawClientName = ($('#chatHeaderName').text() || '').trim();
+    const cleanClientName = (rawClientName && !/^\+?\d+$/.test(rawClientName)) ? rawClientName : 'Cliente';
+
+    // Si el encabezado es TEXT y tiene {{1}}
+    if (tpl.header_format === 'TEXT' && tpl.header_text && tpl.header_text.indexOf('{{1}}') !== -1) {
+        container.append(`
+            <div class="mb-2">
+                <label class="form-label small fw-bold text-secondary mb-1">Variable de Encabezado {{1}}</label>
+                <input type="text" id="metaTplHeaderInput" class="form-control form-control-sm" value="${cleanClientName.replace(/"/g, '&quot;')}">
+            </div>
+        `);
+    }
+
+    const bodyVars = extractPlaceholderNumbers(tpl.body || '');
+    if (bodyVars.length === 0) {
+        container.append('<div class="alert alert-light border small text-muted mb-0"><i class="fa-solid fa-circle-check text-success me-1"></i>Esta plantilla no requiere variables adicionales. Lista para enviar.</div>');
+    } else {
+        container.append('<label class="form-label fw-bold text-dark small mb-2">2. Completa los parámetros de la plantilla</label>');
+        bodyVars.forEach((varNum, i) => {
+            let defVal = '';
+            if (varNum === 1) {
+                defVal = cleanClientName;
+            } else if (tpl.name === 'starfi_difusion_directa' && varNum === 2) {
+                defVal = 'retomar tu solicitud pendiente y brindarte atención inmediata';
+            } else if (tpl.name === 'starfi_difusion_directa' && varNum === 3) {
+                defVal = `${metaTemplatesSedeName} contamos con disponibilidad inmediata para ayudarte`;
+            } else if (Array.isArray(tpl.body_examples) && tpl.body_examples[i]) {
+                defVal = tpl.body_examples[i];
+            }
+            container.append(`
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text fw-bold bg-white text-primary">{{${varNum}}}</span>
+                    <input type="text" class="form-control meta-tpl-var-input" data-var="${varNum}" value="${String(defVal).replace(/"/g, '&quot;')}" placeholder="Valor para {{${varNum}}}...">
+                </div>
+            `);
+        });
+    }
+
+    $('#metaTplLivePreview').text(buildMetaTplPreviewText(tpl));
+}
+
+function buildMetaTplPreviewText(tpl) {
+    let headerPart = '';
+    if (tpl.header_format === 'TEXT' && tpl.header_text) {
+        headerPart = tpl.header_text;
+        const hVal = ($('#metaTplHeaderInput').val() || '').trim();
+        if (headerPart.indexOf('{{1}}') !== -1) {
+            headerPart = headerPart.replace(/\{\{1\}\}/g, hVal || '{{1}}');
+        }
+        headerPart += '\n\n';
+    }
+    let bodyPart = String(tpl.body || '');
+    $('.meta-tpl-var-input').each(function () {
+        const vNum = $(this).data('var');
+        const vVal = ($(this).val() || '').trim();
+        const regex = new RegExp('\\{\\{' + vNum + '\\}\\}', 'g');
+        bodyPart = bodyPart.replace(regex, vVal || `{{${vNum}}}`);
+    });
+    const footerPart = tpl.footer ? `\n\n${tpl.footer}` : '';
+    return `${headerPart}${bodyPart}${footerPart}`.trim();
+}
+
+function submitMetaTemplateReactivation() {
+    const idx = parseInt($('#selectMetaOfficialTpl').val() || '0', 10);
+    const tpl = metaTemplatesCache[idx];
+    if (!tpl) return;
+
+    const params = [];
+    let missing = false;
+    $('.meta-tpl-var-input').each(function () {
+        const val = ($(this).val() || '').trim();
+        if (!val) missing = true;
+        params.push(val);
+    });
+    if (missing) {
+        Swal.fire({ icon: 'warning', text: 'Completa todas las variables {{...}} de la plantilla antes de enviarla.' });
+        return;
+    }
+
+    const headerParam = ($('#metaTplHeaderInput').val() || '').trim();
+    const previewText = buildMetaTplPreviewText(tpl);
+    const btn = $('#btnSendMetaReactivate');
+    btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando a Meta...');
+
+    $.post('back_bandeja.php', {
+        action: 'send_meta_template_reactivate',
+        conversacion_id: activeChatId || 0,
+        cliente_id: activeClientId || 0,
+        template_name: tpl.name,
+        template_language: tpl.language || 'es',
+        template_category: tpl.category || 'UTILITY',
+        header_format: tpl.header_format || 'NONE',
+        header_param_text: headerParam,
+        body_params: JSON.stringify(params),
+        rendered_preview: previewText
+    }, function (res) {
+        btn.prop('disabled', false).html('<i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial');
+        if (res && res.new_chat_id && (!activeChatId || activeChatId === 0)) {
+            activeChatId = parseInt(res.new_chat_id, 10);
+            $('.chat-item.active').attr('data-id', activeChatId);
+        }
+        if (res && res.status === 'success') {
+            $('#modalReactivateMeta').modal('hide');
+            if (activeChatId) loadMessages(activeChatId, true);
+            loadChats(false, currentChatPage, true);
+            Swal.fire({
+                icon: 'success',
+                title: 'Plantilla Oficial Enviada',
+                text: res.message || 'Plantilla entregada a WhatsApp Cloud API. Al responder el cliente se reabrirán las 24h gratuitas.',
+                confirmButtonColor: '#10B981'
+            });
+        } else {
+            if (activeChatId) loadMessages(activeChatId, true);
+            Swal.fire('Aviso de Meta Cloud API', (res && res.message) ? res.message : 'No se pudo entregar la plantilla.', 'error');
+        }
+    }, 'json').fail(function () {
+        btn.prop('disabled', false).html('<i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial');
+        Swal.fire('Error', 'Fallo de conexión al enviar la plantilla oficial.', 'error');
+    });
+}
+
+function formatEtapaShort(etapa) {
+    const map = {
+        'NUEVO_LEAD': 'Nuevo Lead',
+        'COTIZADO': 'Cotizado',
+        'EN_NEGOCIACION': 'En Negociación',
+        'PAGO_PENDIENTE': 'Pago Pendiente',
+        'GANADO': 'Ganado',
+        'PERDIDO': 'Perdido'
+    };
+    return map[String(etapa || '').toUpperCase()] || 'Nuevo Lead';
+}
+
+function updateHeaderDealChip(deal) {
+    const chipText = $('#chatDealChipText');
+    if (!chipText.length) return;
+    if (deal && deal.etapa) {
+        const monto = parseFloat(deal.monto_estimado_usd || 0) || 0;
+        chipText.text(`${formatEtapaShort(deal.etapa)} · $${monto.toFixed(2)} USD`);
+    } else {
+        chipText.text('Nuevo Lead · $0.00 USD');
+    }
+}
+
+function formatSlaDuration(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    if (s < 60) return '<1m';
+    const mins = Math.floor(s / 60);
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    const remM = mins % 60;
+    if (hrs < 24) return remM > 0 ? `${hrs}h ${remM}m` : `${hrs}h`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ${hrs % 24}h`;
+}
+
+function refreshLiveSlaSemaphores(canTriggerAudio) {
+    const nowEp = getServerNowEpoch();
+    let greenCount = 0;
+    let yellowCount = 0;
+    let redCount = 0;
+    const newlyBreached = [];
+
+    $('#chatList .chat-item').each(function () {
+        const $item = $(this);
+        const chatId = parseInt($item.attr('data-id') || '0', 10);
+        const slaSince = parseInt($item.attr('data-sla-since') || '0', 10);
+        const slaReplied = parseInt($item.attr('data-sla-replied') || '0', 10);
+        const $slot = $item.find('.sla-slot');
+
+        $item.removeClass('sla-item-yellow sla-item-red');
+
+        if (slaSince > 0) {
+            const waitSec = Math.max(0, nowEp - slaSince);
+            const dur = formatSlaDuration(waitSec);
+            if (waitSec < 300) {
+                // Verde (<5 min)
+                greenCount++;
+                $slot.html(`<span class="sla-pill sla-green" title="SLA Verde (<5 min sin respuesta humana)">🟢 ${dur}</span>`);
+                if (chatId > 0) slaAlertedChatIds.delete(chatId);
+            } else if (waitSec <= 900) {
+                // Amarillo (5-15 min)
+                yellowCount++;
+                $item.addClass('sla-item-yellow');
+                $slot.html(`<span class="sla-pill sla-yellow" title="SLA Amarillo (5–15 min sin respuesta humana)">🟡 ${dur}</span>`);
+                if (chatId > 0) slaAlertedChatIds.delete(chatId);
+            } else {
+                // Rojo (>15 min sin respuesta humana)
+                redCount++;
+                $item.addClass('sla-item-red');
+                $slot.html(`<span class="sla-pill sla-red" title="SLA Rojo Crítico (>15 min sin respuesta humana)">🔴 ${dur}</span>`);
+                if (chatId > 0 && !slaAlertedChatIds.has(chatId)) {
+                    slaAlertedChatIds.add(chatId);
+                    newlyBreached.push($item.attr('data-name') || (`Chat #${chatId}`));
+                }
+            }
+        } else if (slaReplied === 1) {
+            $slot.html('<span class="sla-pill sla-replied" title="Respondido por asesor humano">✓ Al día</span>');
+            if (chatId > 0) slaAlertedChatIds.delete(chatId);
+        } else {
+            $slot.empty();
+        }
+    });
+
+    $('#slaCountGreen').text(greenCount);
+    $('#slaCountYellow').text(yellowCount);
+    $('#slaCountRed').text(redCount);
+
+    const badgeCrit = $('#badgeSlaCritico');
+    if (redCount > 0) {
+        badgeCrit.text(redCount).show();
+    } else {
+        badgeCrit.hide();
+    }
+
+    if (canTriggerAudio && newlyBreached.length > 0) {
+        if (slaSoundEnabled) {
+            playSlaAlertChime();
+        }
+        const sampleNames = newlyBreached.slice(0, 2).join(', ');
+        const extra = newlyBreached.length > 2 ? ` (+${newlyBreached.length - 2} más)` : '';
+        Swal.fire({
+            toast: true,
+            position: 'bottom-end',
+            icon: 'warning',
+            title: `🔴 Alerta SLA (>15 min): ${sampleNames}${extra}`,
+            showConfirmButton: false,
+            timer: 4500
+        });
+    }
+}
+
+let sharedSlaAudioCtx = null;
+function playSlaAlertChime() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!sharedSlaAudioCtx) {
+            sharedSlaAudioCtx = new AudioCtx();
+        }
+        if (sharedSlaAudioCtx.state === 'suspended') {
+            sharedSlaAudioCtx.resume().catch(() => {});
+        }
+        const now = sharedSlaAudioCtx.currentTime;
+        const notes = [
+            { freq: 880, start: 0.0, dur: 0.13 },
+            { freq: 1174.66, start: 0.16, dur: 0.16 },
+            { freq: 880, start: 0.35, dur: 0.20 }
+        ];
+        notes.forEach(n => {
+            const osc = sharedSlaAudioCtx.createOscillator();
+            const gain = sharedSlaAudioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(n.freq, now + n.start);
+            gain.gain.setValueAtTime(0.0001, now + n.start);
+            gain.gain.exponentialRampToValueAtTime(0.18, now + n.start + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + n.start + n.dur);
+            osc.connect(gain);
+            gain.connect(sharedSlaAudioCtx.destination);
+            osc.start(now + n.start);
+            osc.stop(now + n.start + n.dur + 0.02);
+        });
+    } catch (e) {
+        // Ignorar bloqueo de autoplay del navegador antes de la primera interacción
+    }
+}

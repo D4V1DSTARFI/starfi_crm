@@ -27,6 +27,7 @@ $es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) =
 
 $modulos_definidos = [
     'bandeja' => 'Centro de Mensajes',
+    'pipeline' => 'Embudo de Ventas (Kanban)',
     'campanas' => 'Campañas de Difusión',
     'perfil_empresa' => 'Perfil de Empresa',
     'directorio' => 'Directorio 360',
@@ -52,18 +53,18 @@ switch ($action) {
         $res_roles = mysqli_query($con, $sql_roles);
         $roles = [];
 
-        
+
         if ($res_roles) {
             while ($row = mysqli_fetch_assoc($res_roles)) {
-                $role_id = (int)$row['id'];
-                
+                $role_id = (int) $row['id'];
+
                 // Cargar los permisos del rol actual
                 $permisos = [];
                 foreach ($modulos_definidos as $mod_key => $mod_name) {
                     $res_p = mysqli_query($con, "SELECT permitido FROM permisos_roles WHERE id_rol = $role_id AND modulo = '$mod_key' LIMIT 1");
                     $status = 0;
                     if ($res_p && $row_p = mysqli_fetch_assoc($res_p)) {
-                        $status = (int)$row_p['permitido'];
+                        $status = (int) $row_p['permitido'];
                     } else {
                         // Si no existe, insertar por defecto como inactivo
                         mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($role_id, '$mod_key', 0)");
@@ -74,7 +75,7 @@ switch ($action) {
                         'permitido' => $status
                     ];
                 }
-                
+
                 $roles[] = [
                     'id' => $role_id,
                     'nombre' => $row['nombre'],
@@ -82,7 +83,7 @@ switch ($action) {
                 ];
             }
         }
-        
+
         echo json_encode([
             'success' => true,
             'roles' => $roles
@@ -95,7 +96,7 @@ switch ($action) {
             echo json_encode(['success' => false, 'message' => 'El nombre del rol no puede estar vacío.']);
             exit();
         }
-        
+
         $stmt_check = $con->prepare("SELECT id FROM roles WHERE nombre = ?");
         $stmt_check->bind_param("s", $nombre_rol);
         $stmt_check->execute();
@@ -105,12 +106,12 @@ switch ($action) {
             exit();
         }
         $stmt_check->close();
-        
+
         $stmt_ins = $con->prepare("INSERT INTO roles (nombre) VALUES (?)");
         $stmt_ins->bind_param("s", $nombre_rol);
         if ($stmt_ins->execute()) {
             $nuevo_id_rol = $stmt_ins->insert_id;
-            
+
             // Asignar permisos predeterminados (todos 1 excepto whatsapp_analytics)
             foreach ($modulos_definidos as $mod_key => $mod_name) {
                 $permitido = ($mod_key === 'whatsapp_analytics' || $mod_key === 'waba_ordenes') ? 0 : 1;
@@ -119,7 +120,7 @@ switch ($action) {
                 $stmt_p->execute();
                 $stmt_p->close();
             }
-            
+
             echo json_encode(['success' => true, 'id' => $nuevo_id_rol, 'message' => 'Rol creado con éxito.']);
         } else {
             echo json_encode(['success' => false, 'message' => 'Error al crear el rol en base de datos.']);
@@ -127,14 +128,14 @@ switch ($action) {
         break;
 
     case 'toggle_permission':
-        $role_id = (int)($_POST['role_id'] ?? 0);
+        $role_id = (int) ($_POST['role_id'] ?? 0);
         $modulo = trim($_POST['modulo'] ?? '');
-        
+
         if ($role_id <= 0 || !array_key_exists($modulo, $modulos_definidos)) {
             echo json_encode(['success' => false, 'message' => 'Parámetros inválidos.']);
             exit();
         }
-        
+
         // Cargar estado actual
         $res = mysqli_query($con, "SELECT permitido FROM permisos_roles WHERE id_rol = $role_id AND modulo = '$modulo' LIMIT 1");
         $nuevo_estado = 1;
@@ -144,7 +145,7 @@ switch ($action) {
         } else {
             mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($role_id, '$modulo', 1)");
         }
-        
+
         echo json_encode([
             'success' => true,
             'nuevo_estado' => $nuevo_estado,

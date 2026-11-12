@@ -10,6 +10,8 @@ $agente_id = intval($_SESSION['agente_id'] ?? ($agente_info_global['id'] ?? 0));
 // Liberar bloqueo de sesión inmediatamente para que load_chats, get_agents y sse_updates corran en paralelo sin bloquearse
 session_write_close();
 
+starfi_ensure_sprint2_schema($con);
+
 // Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez
 $migration_flag = sys_get_temp_dir() . '/starfi_bandeja_migrated_v4.flag';
 if (!file_exists($migration_flag)) {
@@ -32,6 +34,73 @@ function sync_ultimo_msg_conversacion($con, $id_conversacion, $msg_id) {
     if ($cid > 0 && $mid > 0) {
         $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $mid) WHERE id = $cid AND ultimo_msg_id < $mid");
     }
+}
+
+/**
+ * [COM-01] Calcula en tiempo real el estado de la Ventana Gratuita de 24h de Meta (basada en el último mensaje entrante del CLIENTE).
+ */
+function get_conversacion_window_24h($con, $conversacion_id) {
+    $cid = intval($conversacion_id);
+    $now_epoch = time();
+    $res_now = $con->query("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
+    if ($res_now && ($rn = $res_now->fetch_assoc())) {
+        $now_epoch = intval($rn['now_ep']);
+    }
+    $last_cli_epoch = 0;
+    if ($cid > 0) {
+        $stmt_w = $con->prepare("SELECT MAX(UNIX_TIMESTAMP(timestamp)) AS last_cli FROM mensajes_y_eventos WHERE id_conversacion = ? AND origen = 'CLIENTE'");
+        if ($stmt_w) {
+            $stmt_w->bind_param("i", $cid);
+            $stmt_w->execute();
+            $rw = $stmt_w->get_result()->fetch_assoc();
+            $stmt_w->close();
+            if ($rw && !empty($rw['last_cli'])) {
+                $last_cli_epoch = intval($rw['last_cli']);
+            }
+        }
+    }
+    $expires_at = ($last_cli_epoch > 0) ? ($last_cli_epoch + 86400) : 0;
+    $remaining = ($expires_at > $now_epoch) ? ($expires_at - $now_epoch) : 0;
+    return [
+        'server_now_epoch' => $now_epoch,
+        'last_client_epoch' => $last_cli_epoch,
+        'expires_at_epoch' => $expires_at,
+        'remaining_sec' => $remaining,
+        'is_open' => ($remaining > 0)
+    ];
+}
+
+/**
+ * [COM-02] Obtiene la oportunidad del Embudo Kanban vinculada a la conversación o al cliente.
+ */
+function get_conversacion_deal_info($con, $conversacion_id, $cliente_id = 0) {
+    $cid = intval($conversacion_id);
+    $clid = intval($cliente_id);
+    if ($cid <= 0 && $clid <= 0) {
+        return null;
+    }
+    $where = ($cid > 0 && $clid > 0)
+        ? "(id_conversacion = $cid OR id_cliente = $clid)"
+        : ($cid > 0 ? "id_conversacion = $cid" : "id_cliente = $clid");
+    $order = ($cid > 0) ? "ORDER BY (id_conversacion = $cid) DESC, id DESC LIMIT 1" : "ORDER BY id DESC LIMIT 1";
+    $res = @$con->query("SELECT id, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE $where $order");
+    if ($res && ($row = $res->fetch_assoc())) {
+        return [
+            'id' => intval($row['id']),
+            'etapa' => $row['etapa'],
+            'monto_estimado_usd' => round(floatval($row['monto_estimado_usd']), 2),
+            'titulo' => $row['titulo'],
+            'probabilidad' => intval($row['probabilidad'])
+        ];
+    }
+    return null;
+}
+
+function sanitize_bandeja_tpl_param($text) {
+    $clean = str_replace(["\r\n", "\r", "\n", "\t"], ' ', (string)$text);
+    $clean = preg_replace('/\s{2,}/', ' ', $clean);
+    $clean = trim($clean);
+    return $clean !== '' ? $clean : 'Cliente';
 }
 
 /**
@@ -244,6 +313,19 @@ switch ($action) {
             )";
         } elseif ($filter === 'no-leido') {
             $where_clauses .= " AND c.mensajes_no_leidos > 0";
+        } elseif ($filter === 'sla-critico') {
+            $where_clauses .= " AND c.estado NOT IN ('CERRADO', 'RESUELTO') AND EXISTS (
+                SELECT 1 FROM mensajes_y_eventos mc
+                WHERE mc.id_conversacion = c.id
+                  AND mc.origen = 'CLIENTE'
+                  AND mc.timestamp <= (NOW() - INTERVAL 15 MINUTE)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mensajes_y_eventos ma
+                      WHERE ma.id_conversacion = c.id
+                        AND ma.origen = 'AGENTE'
+                        AND ma.timestamp >= mc.timestamp
+                  )
+            )";
         } elseif ($filter === 'cerrados') {
             $where_clauses .= " AND c.estado = 'CERRADO'";
         }
@@ -344,6 +426,13 @@ switch ($action) {
             array_pop($chats);
         }
 
+        // Reloj del servidor en epoch para sincronización exacta de Ventana Meta 24h ([COM-01]) y Semáforo SLA ([COM-04])
+        $server_now_epoch = time();
+        $resNow = $con->query("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
+        if ($resNow && ($rn = $resNow->fetch_assoc())) {
+            $server_now_epoch = intval($rn['now_ep']);
+        }
+
         // FASE 2: Enriquecer ÚNICAMENTE las 20 conversaciones de la página actual (evita escanear miles de filas)
         if (!empty($chats)) {
             $conv_ids = [];
@@ -369,6 +458,12 @@ switch ($action) {
 
             // 2B. Detectar banderas es_campana y es_venta solo para las 20 conversaciones visibles
             $flags_map = [];
+            // 2C. [COM-01] Ventana Meta 24h y [COM-04] Semáforo SLA sin respuesta humana (usando idx_conv_origen_ts)
+            $win_sla_map = [];
+            $sla_wait_map = [];
+            // 2D. [COM-02] Etapa y Monto USD del Embudo de Ventas
+            $deals_map = [];
+
             if (!empty($conv_ids)) {
                 $cids_csv = implode(',', array_unique($conv_ids));
                 $resFlags = $con->query("
@@ -386,6 +481,60 @@ switch ($action) {
                         $flags_map[intval($rf['id_conversacion'])] = $rf;
                     }
                 }
+
+                $resWinSla = $con->query("
+                    SELECT 
+                        id_conversacion,
+                        MAX(CASE WHEN origen = 'CLIENTE' THEN UNIX_TIMESTAMP(timestamp) ELSE NULL END) AS last_cli_ep,
+                        MAX(CASE WHEN origen = 'AGENTE' THEN UNIX_TIMESTAMP(timestamp) ELSE NULL END) AS last_ag_ep
+                    FROM mensajes_y_eventos
+                    WHERE id_conversacion IN ($cids_csv)
+                      AND origen IN ('CLIENTE', 'AGENTE')
+                    GROUP BY id_conversacion
+                ");
+                if ($resWinSla) {
+                    while ($rw = $resWinSla->fetch_assoc()) {
+                        $win_sla_map[intval($rw['id_conversacion'])] = $rw;
+                    }
+                }
+
+                $resSlaWait = $con->query("
+                    SELECT m.id_conversacion,
+                           MIN(UNIX_TIMESTAMP(m.timestamp)) AS wait_since_ep
+                    FROM mensajes_y_eventos m
+                    LEFT JOIN (
+                        SELECT id_conversacion, MAX(timestamp) AS max_ag_ts
+                        FROM mensajes_y_eventos
+                        WHERE id_conversacion IN ($cids_csv)
+                          AND origen = 'AGENTE'
+                        GROUP BY id_conversacion
+                    ) ag ON ag.id_conversacion = m.id_conversacion
+                    WHERE m.id_conversacion IN ($cids_csv)
+                      AND m.origen = 'CLIENTE'
+                      AND (ag.max_ag_ts IS NULL OR m.timestamp > ag.max_ag_ts)
+                    GROUP BY m.id_conversacion
+                ");
+                if ($resSlaWait) {
+                    while ($rsw = $resSlaWait->fetch_assoc()) {
+                        $sla_wait_map[intval($rsw['id_conversacion'])] = intval($rsw['wait_since_ep']);
+                    }
+                }
+
+                $resDeals = @$con->query("
+                    SELECT p.id, p.id_conversacion, p.etapa, p.monto_estimado_usd
+                    FROM pipeline_oportunidades p
+                    INNER JOIN (
+                        SELECT id_conversacion, MAX(id) AS max_pid
+                        FROM pipeline_oportunidades
+                        WHERE id_conversacion IN ($cids_csv)
+                        GROUP BY id_conversacion
+                    ) pm ON pm.max_pid = p.id
+                ");
+                if ($resDeals) {
+                    while ($rd = $resDeals->fetch_assoc()) {
+                        $deals_map[intval($rd['id_conversacion'])] = $rd;
+                    }
+                }
             }
 
             foreach ($chats as &$ch) {
@@ -393,6 +542,8 @@ switch ($action) {
                 $mid = intval($ch['ultimo_msg_id'] ?? 0);
                 $lm = ($mid > 0 && isset($last_msgs_map[$mid])) ? $last_msgs_map[$mid] : null;
                 $fl = isset($flags_map[$cid]) ? $flags_map[$cid] : null;
+                $ws = isset($win_sla_map[$cid]) ? $win_sla_map[$cid] : null;
+                $dl = isset($deals_map[$cid]) ? $deals_map[$cid] : null;
 
                 $ch['ultimo_mensaje_ts']     = $lm ? $lm['timestamp'] : $ch['fecha_inicio'];
                 $ch['ultimo_mensaje_texto']  = $lm ? $lm['contenido'] : null;
@@ -401,6 +552,26 @@ switch ($action) {
                 $es_venta_comercial = ($ch['resultado_comercial'] === 'VENTA_CERRADA' || !empty($ch['fecha_cierre_venta']));
                 $ch['es_campana'] = ($fl && intval($fl['flag_campana']) === 1) ? 1 : 0;
                 $ch['es_venta']   = ($es_venta_comercial || ($fl && intval($fl['flag_venta']) === 1)) ? 1 : 0;
+
+                // [COM-01] Ventana Meta 24h
+                $last_cli_ep = ($ws && !empty($ws['last_cli_ep'])) ? intval($ws['last_cli_ep']) : 0;
+                $last_ag_ep  = ($ws && !empty($ws['last_ag_ep'])) ? intval($ws['last_ag_ep']) : 0;
+                $exp_ep      = ($last_cli_ep > 0) ? ($last_cli_ep + 86400) : 0;
+                $rem_sec     = ($exp_ep > $server_now_epoch) ? ($exp_ep - $server_now_epoch) : 0;
+                $ch['last_client_epoch']        = $last_cli_ep;
+                $ch['window_24h_open']          = ($rem_sec > 0) ? 1 : 0;
+                $ch['window_24h_remaining_sec'] = $rem_sec;
+
+                // [COM-04] Semáforo SLA en vivo (solo conversaciones abiertas)
+                $is_closed = in_array(strtoupper((string)$ch['estado']), ['CERRADO', 'RESUELTO'], true);
+                $wait_since_ep = (!$is_closed && isset($sla_wait_map[$cid])) ? intval($sla_wait_map[$cid]) : 0;
+                $ch['sla_wait_since_epoch'] = $wait_since_ep;
+                $ch['sla_human_replied']    = (!$is_closed && $last_cli_ep > 0 && $wait_since_ep === 0 && $last_ag_ep >= $last_cli_ep) ? 1 : 0;
+
+                // [COM-02] Embudo Kanban
+                $ch['deal_id']        = $dl ? intval($dl['id']) : 0;
+                $ch['deal_etapa']     = $dl ? $dl['etapa'] : null;
+                $ch['deal_monto_usd'] = $dl ? round(floatval($dl['monto_estimado_usd']), 2) : null;
 
                 unset($ch['ultimo_msg_id'], $ch['resultado_comercial'], $ch['fecha_cierre_venta']);
             }
@@ -412,7 +583,8 @@ switch ($action) {
             'data' => $chats,
             'page' => $page,
             'limit' => $limit,
-            'has_more' => $has_more
+            'has_more' => $has_more,
+            'server_now_epoch' => $server_now_epoch
         ]);
         break;
 
@@ -458,7 +630,14 @@ switch ($action) {
                 }
                 $messages[] = $row;
             }
-            echo json_encode(['status' => 'success', 'data' => $messages]);
+            $win24 = get_conversacion_window_24h($con, $conversacion_id);
+            $deal_info = get_conversacion_deal_info($con, $conversacion_id, intval($_POST['cliente_id'] ?? 0));
+            echo json_encode([
+                'status' => 'success',
+                'data' => $messages,
+                'window_24h' => $win24,
+                'deal' => $deal_info
+            ]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Error preparando consulta.']);
         }
@@ -468,10 +647,38 @@ switch ($action) {
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         $contenido = trim($_POST['contenido'] ?? '');
+        $is_internal = intval($_POST['is_internal'] ?? 0);
         
         if (empty($contenido) || ($conversacion_id <= 0 && $cliente_id <= 0)) {
             echo json_encode(['status' => 'error', 'message' => 'Datos incompletos.']);
             exit;
+        }
+
+        // [COM-01] Bloqueo automático estricto si la Ventana Meta 24h está cerrada (salvo Notas Internas privadas)
+        if ($is_internal !== 1) {
+            if ($conversacion_id > 0) {
+                if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+                    http_response_code(403);
+                    echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para responder en esta conversación o sede.']);
+                    exit;
+                }
+                $win_chk = get_conversacion_window_24h($con, $conversacion_id);
+                if (!$win_chk['is_open']) {
+                    echo json_encode([
+                        'status' => 'error',
+                        'code' => 'WINDOW_24H_EXPIRED',
+                        'message' => 'La ventana gratuita de 24h de Meta ha expirado. Usa el botón "Reactivar con Plantilla Oficial Meta" para volver a escribirle al cliente.'
+                    ]);
+                    exit;
+                }
+            } else {
+                echo json_encode([
+                    'status' => 'error',
+                    'code' => 'WINDOW_24H_EXPIRED',
+                    'message' => 'Este contacto aún no tiene ventana activa de 24h. Inicia o reactiva la conversación con una Plantilla Oficial Meta.'
+                ]);
+                exit;
+            }
         }
 
         $is_new_chat = false;
@@ -630,6 +837,15 @@ switch ($action) {
         if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
             http_response_code(403);
             echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
+            exit;
+        }
+        // [COM-01] Bloquear adjuntos fuera de la ventana de 24h de Meta
+        if ($conversacion_id <= 0 || !get_conversacion_window_24h($con, $conversacion_id)['is_open']) {
+            echo json_encode([
+                'status' => 'error',
+                'code' => 'WINDOW_24H_EXPIRED',
+                'message' => 'La ventana gratuita de 24h de Meta ha expirado. Reactiva primero la conversación con una Plantilla Oficial Meta.'
+            ]);
             exit;
         }
         $id_linea_upload = null;
@@ -973,6 +1189,13 @@ switch ($action) {
             $stmt = $con->prepare($update_conv);
             $stmt->bind_param("si", $motivo, $conversacion_id);
             $stmt->execute();
+
+            // [COM-02] Sincronizar cierre comercial con el Tablero Kanban de Embudo de Ventas
+            if ($motivo === 'VENTA_CERRADA') {
+                @$con->query("UPDATE pipeline_oportunidades SET etapa = 'GANADO', probabilidad = 100, fecha_cierre = NOW() WHERE (id_conversacion = $conversacion_id OR (id_cliente = $cliente_id AND $cliente_id > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+            } elseif ($motivo === 'NO_INTERESADO') {
+                @$con->query("UPDATE pipeline_oportunidades SET etapa = 'PERDIDO', probabilidad = 0, motivo_perdida = 'Cerrado como No Interesado en Bandeja', fecha_cierre = NOW() WHERE (id_conversacion = $conversacion_id OR (id_cliente = $cliente_id AND $cliente_id > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+            }
             
             if ($calidad > 0) {
                 $stmt_cli = $con->prepare("UPDATE clientes_contactos cl JOIN conversaciones c ON c.id_cliente = cl.id SET cl.calificacion_calidad = ? WHERE c.id = ?");
@@ -1396,30 +1619,501 @@ switch ($action) {
         }
 
         $query = "
-            SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre_completo 
+            SELECT u.id,
+                   u.usuario,
+                   up.nombre AS up_nombre,
+                   (CASE WHEN IFNULL(u.disponible_chat, 1) = 1 AND u.ultima_actividad IS NOT NULL AND u.ultima_actividad >= (NOW() - INTERVAL 5 MINUTE) THEN 1 ELSE 0 END) AS en_linea
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
-            LEFT JOIN roles r ON (u.rol = r.id OR u.rol = r.nombre)
-            WHERE (u.estado = 'ACTIVO' OR u.estado = 1)
+            LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
+            WHERE (u.estado = 'ACTIVO' OR CAST(u.estado AS CHAR) = '1')
               AND u.id != 1
               AND u.usuario != 'master'
-              AND (UPPER(COALESCE(r.nombre, u.rol)) = 'OPERADOR' OR u.rol = '3' OR u.rol = 3)
+              AND (UPPER(TRIM(IFNULL(r.nombre, ''))) = 'OPERADOR' OR UPPER(TRIM(IFNULL(CAST(u.rol AS CHAR), ''))) IN ('3', 'OPERADOR'))
         ";
 
         if ($target_sede > 0) {
             $query .= " AND u.id_sede = " . intval($target_sede);
         }
 
-        $query .= " ORDER BY nombre_completo ASC";
+        $query .= " ORDER BY en_linea DESC, up.nombre ASC, u.usuario ASC";
 
         $res = $con->query($query);
         $agents = [];
         if ($res) {
             while ($row = $res->fetch_assoc()) {
-                $agents[] = $row;
+                $nom = trim((string)($row['up_nombre'] ?? ''));
+                $agents[] = [
+                    'id' => $row['id'],
+                    'nombre_completo' => ($nom !== '') ? $nom : $row['usuario'],
+                    'en_linea' => intval($row['en_linea'] ?? 0),
+                ];
             }
         }
         echo json_encode(['status' => 'success', 'data' => $agents]);
+        break;
+
+    case 'heartbeat':
+        if ($agente_id > 1) {
+            starfi_touch_agent_presence($con, $agente_id, true);
+        }
+        $disp = 1;
+        if ($agente_id > 1) {
+            $rDisp = $con->query("SELECT IFNULL(disponible_chat, 1) AS disp FROM usuario WHERE id = $agente_id LIMIT 1");
+            if ($rDisp && ($rd = $rDisp->fetch_assoc())) {
+                $disp = intval($rd['disp']);
+            }
+        }
+        echo json_encode(['status' => 'success', 'disponible_chat' => $disp, 'server_now_epoch' => time()]);
+        break;
+
+    case 'toggle_availability':
+        if ($agente_id <= 1) {
+            echo json_encode(['status' => 'success', 'disponible_chat' => 1]);
+            break;
+        }
+        $nuevo_disp = isset($_POST['disponible']) ? (intval($_POST['disponible']) === 1 ? 1 : 0) : 1;
+        $con->query("UPDATE usuario SET disponible_chat = $nuevo_disp, ultima_actividad = NOW() WHERE id = $agente_id");
+        echo json_encode(['status' => 'success', 'disponible_chat' => $nuevo_disp]);
+        break;
+
+    case 'get_meta_templates_bandeja':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? $_GET['conversacion_id'] ?? 0);
+        $cliente_id = intval($_POST['cliente_id'] ?? $_GET['cliente_id'] ?? 0);
+        $force_sync = intval($_POST['force_sync'] ?? 0) === 1;
+
+        if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
+            exit;
+        }
+        if ($conversacion_id <= 0 && $cliente_id > 0 && !authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+            exit;
+        }
+
+        // Resolver sede y línea activa
+        $sede_tpl = intval($agente_info_global['id_sede'] ?? 0);
+        if ($conversacion_id > 0) {
+            $rL = $con->query("SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id LEFT JOIN sedes s ON l.id_sede = s.id WHERE c.id = $conversacion_id LIMIT 1");
+            $lin = ($rL && $rL->num_rows > 0) ? $rL->fetch_assoc() : null;
+        } else {
+            if ($sede_tpl <= 0 && $cliente_id > 0) {
+                $rCs = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
+                if ($rCs && ($rcs = $rCs->fetch_assoc())) {
+                    $sede_tpl = intval($rcs['id_sede'] ?? 0);
+                }
+            }
+            $rL = ($sede_tpl > 0) ? $con->query("SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id_sede = $sede_tpl AND l.estado = 'ACTIVO' LIMIT 1") : false;
+            $lin = ($rL && $rL->num_rows > 0) ? $rL->fetch_assoc() : null;
+        }
+
+        $sede_id_eff = intval($lin['id_sede'] ?? $sede_tpl);
+        $nombre_sede_eff = trim((string)($lin['nombre_sede'] ?? 'Nuestra Sede'));
+        $waba_id = trim((string)($lin['id_negocio'] ?? ''));
+        $token = !empty($lin['meta_token']) ? trim((string)$lin['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+
+        $cache_file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . "starfi_bandeja_tpls_sede_{$sede_id_eff}.json";
+        $templates = [];
+
+        if (!$force_sync && $sede_id_eff > 0 && @file_exists($cache_file) && (time() - @filemtime($cache_file)) < 300) {
+            $cached = json_decode((string)@file_get_contents($cache_file), true);
+            if (is_array($cached) && !empty($cached)) {
+                $templates = $cached;
+            }
+        }
+
+        if (empty($templates) && $waba_id !== '' && $token !== '' && $token !== 'temp_token') {
+            $api_ver = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver}/{$waba_id}/message_templates?fields=name,status,language,category,components&limit=100";
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+            $resp = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($code >= 200 && $code < 300 && $resp) {
+                $json = json_decode($resp, true);
+                foreach (($json['data'] ?? []) as $tpl) {
+                    $st = strtoupper($tpl['status'] ?? '');
+                    if ($st !== 'APPROVED' && $st !== 'ACTIVE') {
+                        continue;
+                    }
+                    $body_txt = '';
+                    $header_fmt = 'NONE';
+                    $header_txt = '';
+                    $footer_txt = '';
+                    $body_examples = [];
+                    foreach (($tpl['components'] ?? []) as $comp) {
+                        $c_type = strtoupper($comp['type'] ?? '');
+                        if ($c_type === 'BODY') {
+                            $body_txt = $comp['text'] ?? '';
+                            if (!empty($comp['example']['body_text'][0]) && is_array($comp['example']['body_text'][0])) {
+                                $body_examples = array_values(array_map('strval', $comp['example']['body_text'][0]));
+                            }
+                        } elseif ($c_type === 'HEADER') {
+                            $header_fmt = strtoupper($comp['format'] ?? 'TEXT');
+                            if ($header_fmt === 'TEXT') {
+                                $header_txt = $comp['text'] ?? '';
+                            }
+                        } elseif ($c_type === 'FOOTER') {
+                            $footer_txt = $comp['text'] ?? '';
+                        }
+                    }
+                    $templates[] = [
+                        'name' => $tpl['name'],
+                        'language' => $tpl['language'] ?? 'es',
+                        'category' => strtoupper($tpl['category'] ?? 'UTILITY'),
+                        'header_format' => $header_fmt,
+                        'header_text' => $header_txt,
+                        'body' => $body_txt,
+                        'body_examples' => $body_examples,
+                        'footer' => $footer_txt
+                    ];
+                }
+                if (!empty($templates) && $sede_id_eff > 0) {
+                    @file_put_contents($cache_file, json_encode($templates, JSON_UNESCAPED_UNICODE));
+                }
+            }
+        }
+
+        // Fallback local desde tabla plantillas_whatsapp + plantillas oficiales aprobadas de STARFI
+        if (empty($templates)) {
+            if ($sede_id_eff > 0) {
+                $rDbTpl = @$con->query("SELECT name, category, language, status FROM plantillas_whatsapp WHERE id_sede = $sede_id_eff AND UPPER(status) IN ('APPROVED','ACTIVE') ORDER BY name ASC LIMIT 40");
+                if ($rDbTpl) {
+                    while ($rt = $rDbTpl->fetch_assoc()) {
+                        $tName = $rt['name'];
+                        $defBody = "Hola {{1}}, nos comunicamos desde {$nombre_sede_eff} respecto a {{2}}.";
+                        if ($tName === 'starfi_difusion_directa') {
+                            $defBody = "👋¡Hola {{1}}!\nHoy queremos {{2}}.\nRecuerda que en {{3}}.\n📲 Responde a este mensaje para obtener más información👇";
+                        } elseif ($tName === 'starfi_csat_survey') {
+                            $defBody = "¡Hola! Califícanos del 1 al 5 para mejorar nuestra atención en {$nombre_sede_eff}.";
+                        } elseif ($tName === 'starfi_notificacion_interna') {
+                            $defBody = "{{1}}";
+                        }
+                        $templates[] = [
+                            'name' => $tName,
+                            'language' => $rt['language'] ?: 'es',
+                            'category' => strtoupper($rt['category'] ?: 'MARKETING'),
+                            'header_format' => 'NONE',
+                            'header_text' => '',
+                            'body' => $defBody,
+                            'body_examples' => [],
+                            'footer' => ''
+                        ];
+                    }
+                }
+            }
+            if (empty($templates)) {
+                $templates[] = [
+                    'name' => 'starfi_difusion_directa',
+                    'language' => 'es',
+                    'category' => 'MARKETING',
+                    'header_format' => 'NONE',
+                    'header_text' => '',
+                    'body' => "👋¡Hola {{1}}!\nHoy queremos {{2}}.\nRecuerda que en {{3}}.\n📲 Responde a este mensaje para obtener más información👇",
+                    'body_examples' => ['Cliente', 'retomar tu solicitud de cotización y brindarte atención inmediata', $nombre_sede_eff . ' estamos listos para ayudarte'],
+                    'footer' => 'Servicio de mensajería inteligente de STARFI CRM'
+                ];
+            }
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'nombre_sede' => $nombre_sede_eff,
+            'templates' => $templates
+        ]);
+        break;
+
+    case 'send_meta_template_reactivate':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $tpl_name = preg_replace('/[^a-zA-Z0-9_]/', '', trim((string)($_POST['template_name'] ?? '')));
+        $tpl_lang = preg_replace('/[^a-zA-Z0-9_]/', '', trim((string)($_POST['template_language'] ?? 'es')));
+        $tpl_cat = strtoupper(trim((string)($_POST['template_category'] ?? 'UTILITY')));
+        $header_fmt = strtoupper(trim((string)($_POST['header_format'] ?? 'NONE')));
+        $header_text_param = trim((string)($_POST['header_param_text'] ?? ''));
+        $body_params_raw = $_POST['body_params'] ?? '[]';
+        $rendered_preview = trim((string)($_POST['rendered_preview'] ?? ''));
+
+        if ($tpl_name === '' || ($conversacion_id <= 0 && $cliente_id <= 0)) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona una plantilla oficial válida.']);
+            exit;
+        }
+
+        $body_params = is_array($body_params_raw) ? $body_params_raw : json_decode((string)$body_params_raw, true);
+        if (!is_array($body_params)) {
+            $body_params = [];
+        }
+        $clean_params = array_values(array_map('sanitize_bandeja_tpl_param', $body_params));
+
+        $is_new_chat = false;
+        if ($conversacion_id <= 0 && $cliente_id > 0) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
+            $user_sede_r = intval($agente_info_global['id_sede'] ?? 0);
+            if ($user_sede_r <= 0) {
+                $rCs = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
+                if ($rCs && ($rcs = $rCs->fetch_assoc())) {
+                    $user_sede_r = intval($rcs['id_sede'] ?? 0);
+                }
+            }
+            $resL = ($user_sede_r > 0) ? $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede_r AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO') LIMIT 1") : false;
+            if (!$resL || $resL->num_rows === 0) {
+                echo json_encode(['status' => 'error', 'message' => 'No hay línea activa configurada para esta sede.']);
+                exit;
+            }
+            $id_linea_new = intval($resL->fetch_assoc()['id']);
+            $stmtIns = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
+            $stmtIns->bind_param("iii", $id_linea_new, $cliente_id, $agente_id);
+            $stmtIns->execute();
+            $conversacion_id = intval($stmtIns->insert_id);
+            $stmtIns->close();
+            $is_new_chat = true;
+        } else {
+            if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para reactivar esta conversación o sede.']);
+                exit;
+            }
+        }
+
+        $resChat = $con->query("
+            SELECT c.id_cliente, cl.numero_whatsapp, l.id_sede, l.meta_token, l.meta_app_id AS phone_number_id
+            FROM conversaciones c
+            JOIN clientes_contactos cl ON c.id_cliente = cl.id
+            JOIN lineas_whatsapp l ON c.id_linea = l.id
+            WHERE c.id = $conversacion_id
+            LIMIT 1
+        ");
+        $chat_data = ($resChat && $resChat->num_rows > 0) ? $resChat->fetch_assoc() : null;
+        if (!$chat_data) {
+            echo json_encode(['status' => 'error', 'message' => 'Datos de línea o conversación no encontrados.']);
+            exit;
+        }
+
+        $numero_destino = preg_replace('/[^0-9]/', '', (string)$chat_data['numero_whatsapp']);
+        $meta_token = !empty($chat_data['meta_token']) ? trim((string)$chat_data['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+        $phone_number_id = trim((string)($chat_data['phone_number_id'] ?? ''));
+
+        $components = [];
+        if ($header_fmt === 'TEXT' && $header_text_param !== '') {
+            $components[] = [
+                'type' => 'header',
+                'parameters' => [
+                    ['type' => 'text', 'text' => sanitize_bandeja_tpl_param($header_text_param)]
+                ]
+            ];
+        } elseif ($header_fmt === 'IMAGE' && !empty($meta_token) && $meta_token !== 'temp_token' && !empty($phone_number_id)) {
+            // Si la plantilla requiere HEADER IMAGE, subir el logo corporativo de respaldo si no se adjuntó imagen
+            $logo_candidates = [
+                realpath(__DIR__ . '/../../docs/identidad_visual/logos/logo_starfi.png'),
+                realpath(__DIR__ . '/../../docs/identidad_visual/logos/isologo.png')
+            ];
+            $img_path = null;
+            foreach ($logo_candidates as $cand) {
+                if ($cand && file_exists($cand)) {
+                    $img_path = $cand;
+                    break;
+                }
+            }
+            if ($img_path) {
+                $api_ver = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+                $ch_m = curl_init("https://graph.facebook.com/{$api_ver}/{$phone_number_id}/media");
+                curl_setopt($ch_m, CURLOPT_POST, true);
+                curl_setopt($ch_m, CURLOPT_POSTFIELDS, [
+                    'messaging_product' => 'whatsapp',
+                    'type' => 'image/png',
+                    'file' => new CURLFile($img_path, 'image/png', basename($img_path))
+                ]);
+                curl_setopt($ch_m, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
+                curl_setopt($ch_m, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch_m, CURLOPT_SSL_VERIFYPEER, true);
+                curl_setopt($ch_m, CURLOPT_TIMEOUT, 12);
+                $m_resp = json_decode((string)curl_exec($ch_m), true);
+                curl_close($ch_m);
+                if (!empty($m_resp['id'])) {
+                    $components[] = [
+                        'type' => 'header',
+                        'parameters' => [
+                            ['type' => 'image', 'image' => ['id' => $m_resp['id']]]
+                        ]
+                    ];
+                }
+            }
+        }
+
+        if (!empty($clean_params)) {
+            $body_param_objs = [];
+            foreach ($clean_params as $cp) {
+                $body_param_objs[] = ['type' => 'text', 'text' => $cp];
+            }
+            $components[] = [
+                'type' => 'body',
+                'parameters' => $body_param_objs
+            ];
+        }
+
+        $tpl_payload = [
+            'name' => $tpl_name,
+            'language' => ['code' => $tpl_lang ?: 'es']
+        ];
+        if (!empty($components)) {
+            $tpl_payload['components'] = $components;
+        }
+
+        $post_data = [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $numero_destino,
+            'type' => 'template',
+            'template' => $tpl_payload
+        ];
+
+        $id_mensaje_meta = null;
+        $estado_envio = 'PENDIENTE';
+        $error_detalle = null;
+
+        if (!empty($meta_token) && $meta_token !== 'temp_token' && !empty($phone_number_id)) {
+            $api_ver = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver}/{$phone_number_id}/messages";
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_POST, 1);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_data, JSON_UNESCAPED_UNICODE));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Authorization: Bearer ' . $meta_token,
+                'Content-Type: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            $response = curl_exec($ch);
+            $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            $res_meta = json_decode((string)$response, true);
+            if (!empty($res_meta['messages'][0]['id'])) {
+                $id_mensaje_meta = $res_meta['messages'][0]['id'];
+                $estado_envio = 'ENVIADO';
+            } else {
+                $estado_envio = 'FALLIDO';
+                $error_detalle = parse_meta_error_detail($res_meta, $status_code);
+            }
+        } else {
+            $estado_envio = 'FALLIDO';
+            $error_detalle = 'Línea WhatsApp sin token Meta configurado en el servidor.';
+        }
+
+        $contenido_log = "Envío dinámico de plantilla: {$tpl_name}. Params: " . json_encode($clean_params, JSON_UNESCAPED_UNICODE);
+        if ($rendered_preview !== '') {
+            $contenido_log .= " | Texto: " . $rendered_preview;
+        }
+
+        $stmt_log = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, id_agente, contenido, id_mensaje_meta, estado_envio, error_detalle, categoria_meta) VALUES (?, 'TEXTO', 'API_TRANSACCIONAL', ?, ?, ?, ?, ?, ?)");
+        $new_msg_id = 0;
+        if ($stmt_log) {
+            $stmt_log->bind_param("iisssss", $conversacion_id, $agente_id, $contenido_log, $id_mensaje_meta, $estado_envio, $error_detalle, $tpl_cat);
+            $stmt_log->execute();
+            $new_msg_id = intval($stmt_log->insert_id);
+            $stmt_log->close();
+        }
+
+        $con->query("UPDATE conversaciones SET estado = CASE WHEN estado IN ('CERRADO','RESUELTO','ESPERA_ASIGNACION') THEN 'ATENDIENDO' ELSE estado END, id_agente = IFNULL(id_agente, $agente_id), mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_msg_id) WHERE id = $conversacion_id");
+
+        starfi_ensure_pipeline_lead($con, intval($chat_data['id_sede'] ?? 0), intval($chat_data['id_cliente'] ?? 0), $conversacion_id, $agente_id);
+
+        if ($estado_envio === 'FALLIDO') {
+            echo json_encode([
+                'status' => 'error',
+                'message' => $error_detalle ?: 'Meta rechazó el envío de la plantilla.',
+                'new_chat_id' => ($is_new_chat ? $conversacion_id : null)
+            ]);
+        } else {
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'Plantilla Oficial enviada con éxito. Cuando el cliente responda se abrirá nuevamente la ventana gratuita de 24h.',
+                'message_id' => $new_msg_id,
+                'wamid' => $id_mensaje_meta,
+                'new_chat_id' => ($is_new_chat ? $conversacion_id : null)
+            ]);
+        }
+        break;
+
+    case 'quick_save_deal':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $etapa = strtoupper(trim((string)($_POST['etapa'] ?? 'NUEVO_LEAD')));
+        $monto = max(0, round(floatval($_POST['monto_estimado_usd'] ?? 0), 2));
+        $titulo = trim((string)($_POST['titulo'] ?? ''));
+
+        $etapas_validas = ['NUEVO_LEAD', 'COTIZADO', 'EN_NEGOCIACION', 'PAGO_PENDIENTE', 'GANADO', 'PERDIDO'];
+        if (!in_array($etapa, $etapas_validas, true)) {
+            echo json_encode(['status' => 'error', 'message' => 'Etapa inválida.']);
+            exit;
+        }
+        if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Sin autorización para esta conversación o sede.']);
+            exit;
+        }
+        if ($conversacion_id <= 0 && $cliente_id > 0 && !authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Sin autorización para este cliente o sede.']);
+            exit;
+        }
+
+        $sede_deal = intval($agente_info_global['id_sede'] ?? 0);
+        if ($conversacion_id > 0) {
+            $rC = $con->query("SELECT c.id_cliente, c.id_agente, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
+            if ($rC && ($rc = $rC->fetch_assoc())) {
+                $sede_deal = intval($rc['id_sede'] ?? $sede_deal);
+                if ($cliente_id <= 0) $cliente_id = intval($rc['id_cliente']);
+            }
+        }
+
+        $prob_map = [
+            'NUEVO_LEAD' => 20,
+            'COTIZADO' => 45,
+            'EN_NEGOCIACION' => 70,
+            'PAGO_PENDIENTE' => 90,
+            'GANADO' => 100,
+            'PERDIDO' => 0
+        ];
+        $prob = $prob_map[$etapa] ?? 20;
+
+        $deal_id = starfi_ensure_pipeline_lead($con, $sede_deal, $cliente_id, $conversacion_id, $agente_id, $titulo);
+        if ($deal_id <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'No se pudo crear o localizar la oportunidad.']);
+            exit;
+        }
+
+        $cierre_sql = in_array($etapa, ['GANADO', 'PERDIDO'], true) ? ", fecha_cierre = NOW()" : ", fecha_cierre = NULL";
+        $tit_sql = ($titulo !== '') ? ", titulo = '" . $con->real_escape_string(mb_substr($titulo, 0, 195)) . "'" : "";
+        $con->query("UPDATE pipeline_oportunidades SET etapa = '$etapa', monto_estimado_usd = $monto, probabilidad = $prob $tit_sql $cierre_sql WHERE id = $deal_id");
+
+        if ($conversacion_id > 0) {
+            if ($etapa === 'GANADO') {
+                $con->query("UPDATE conversaciones SET resultado_comercial = 'VENTA_CERRADA', fecha_cierre_venta = IFNULL(fecha_cierre_venta, NOW()) WHERE id = $conversacion_id");
+            }
+            $etapa_pretty = str_replace('_', ' ', $etapa);
+            $monto_fmt = number_format($monto, 2);
+            $ev_msg = $con->real_escape_string("💼 Embudo actualizado a [$etapa_pretty] · Monto estimado: \$$monto_fmt USD.");
+            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', '$ev_msg')");
+            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'deal' => get_conversacion_deal_info($con, $conversacion_id, $cliente_id)
+        ]);
         break;
 
     default:

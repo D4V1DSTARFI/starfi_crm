@@ -76,6 +76,11 @@ for ($i = 0; $i < $max_loops; $i++) {
         break;
     }
 
+    // Mantener presencia en línea actualizada para enrutamiento Round-Robin ([COM-03])
+    if (($i === 0 || $i === 10) && $agente_id > 1) {
+        starfi_touch_agent_presence($con, $agente_id, true);
+    }
+
     $has_new_msg = false;
     $query_new = "
         SELECT MAX(m.id) AS nuevo_max_id

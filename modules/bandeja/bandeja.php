@@ -265,6 +265,124 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             transform: scale(1.2);
             background: #F1F5F9;
         }
+
+        /* [COM-04] Semáforo SLA en vivo */
+        @keyframes pulseSlaRed {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .sla-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+        .sla-pill.sla-green {
+            background-color: #ECFDF5;
+            color: #047857;
+            border: 1px solid #A7F3D0;
+        }
+        .sla-pill.sla-yellow {
+            background-color: #FFFBEB;
+            color: #B45309;
+            border: 1px solid #FDE68A;
+        }
+        .sla-pill.sla-red {
+            background-color: #FEF2F2;
+            color: #DC2626;
+            border: 1px solid #FECACA;
+            animation: pulseSlaRed 1.8s infinite;
+        }
+        .sla-pill.sla-replied {
+            background-color: #F8FAFC;
+            color: #64748B;
+            border: 1px solid #E2E8F0;
+            font-weight: 600;
+        }
+        .chat-item.sla-item-yellow {
+            border-left: 3.5px solid #F59E0B !important;
+        }
+        .chat-item.sla-item-red {
+            border-left: 4px solid #EF4444 !important;
+            background-color: #FFFDFD !important;
+        }
+
+        /* [COM-01] Contador regresivo Ventana Meta 24h y Bloqueo Automático */
+        .meta-window-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 0.76rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            transition: all 0.2s ease;
+        }
+        .meta-window-pill.win-open {
+            background-color: #ECFDF5;
+            color: #059669;
+            border: 1px solid #A7F3D0;
+        }
+        .meta-window-pill.win-warn {
+            background-color: #FFFBEB;
+            color: #D97706;
+            border: 1px solid #FDE68A;
+        }
+        .meta-window-pill.win-crit {
+            background-color: #FEF2F2;
+            color: #DC2626;
+            border: 1px solid #FECACA;
+            animation: pulseSlaRed 1.5s infinite;
+        }
+        .meta-window-pill.win-expired {
+            background-color: #FEF2F2;
+            color: #B91C1C;
+            border: 1px solid #FCA5A5;
+        }
+        .expired-window-banner {
+            display: none;
+            background: linear-gradient(135deg, #FFF7ED 0%, #FEF2F2 100%);
+            border: 1px solid #FDBA74;
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .expired-window-banner.active {
+            display: flex;
+        }
+        .input-box.locked-24h {
+            opacity: 0.55;
+            background-color: #F1F5F9 !important;
+            pointer-events: none;
+        }
+        .deal-header-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border-radius: 999px;
+            padding: 4px 11px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            background-color: #EFF6FF;
+            color: #1D4ED8;
+            border: 1px solid #BFDBFE;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .deal-header-chip:hover {
+            background-color: #DBEAFE;
+            transform: translateY(-1px);
+        }
     </style>
 </head>
 <body>
@@ -279,7 +397,24 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         <!-- Chats Panel (Left Column) -->
         <section class="chats-panel">
             <header class="chats-header">
-                <h2>Conversaciones</h2>
+                <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-1">
+                    <h2 class="mb-0">Conversaciones</h2>
+                    <div class="d-flex align-items-center gap-1">
+                        <?php if (intval($agente['id'] ?? 0) > 1): ?>
+                        <button type="button" id="btnAvailabilityToggle" class="btn btn-sm rounded-pill px-2 py-1 fw-bold" style="font-size: 0.7rem; background:#ECFDF5; color:#059669; border:1px solid #A7F3D0;" title="Estado para Enrutamiento Automático Round-Robin">
+                            <i class="fa-solid fa-circle me-1" style="font-size:0.5rem;"></i> <span>En línea</span>
+                        </button>
+                        <?php endif; ?>
+                        <button type="button" id="btnSlaSoundToggle" class="btn btn-sm btn-light border rounded-pill px-2 py-1 fw-semibold" style="font-size: 0.72rem; color:#475569;" title="Activar/Silenciar Alerta Sonora SLA (>15 min)">
+                            <i class="fa-solid fa-volume-high text-success"></i>
+                        </button>
+                        <?php if (hasPermission('pipeline')): ?>
+                        <a href="../pipeline/pipeline.php" class="btn btn-sm rounded-pill px-2.5 py-1 fw-bold text-decoration-none" style="font-size: 0.72rem; background:rgba(232,91,20,0.1); color:#E85B14; border:1px solid rgba(232,91,20,0.25);" title="Abrir Tablero Kanban de Embudo de Ventas">
+                            <i class="fa-solid fa-filter-circle-dollar me-1"></i> Kanban
+                        </a>
+                        <?php endif; ?>
+                    </div>
+                </div>
                 <!-- Search -->
                 <div class="search-bar mb-2">
                     <i class="fa-solid fa-search"></i>
@@ -328,6 +463,14 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <?php endif; ?>
                 </div>
 
+                <!-- [COM-04] Resumen Semáforo SLA en vivo -->
+                <div id="slaSummaryStrip" class="d-flex align-items-center justify-content-between px-2 py-1 mb-2 rounded-3" style="background:#F8FAFC; border:1px solid #E2E8F0; font-size:0.7rem;">
+                    <span class="text-muted fw-semibold"><i class="fa-solid fa-traffic-light me-1"></i> SLA:</span>
+                    <span class="text-success fw-bold" title="Menos de 5 min sin respuesta humana">🟢 <span id="slaCountGreen">0</span> <small class="fw-normal">&lt;5m</small></span>
+                    <span class="text-warning-emphasis fw-bold" title="Entre 5 y 15 min sin respuesta humana">🟡 <span id="slaCountYellow">0</span> <small class="fw-normal">5-15m</small></span>
+                    <span class="text-danger fw-bold" style="cursor:pointer;" id="slaQuickFilterRed" title="Más de 15 min sin respuesta humana (clic para filtrar)">🔴 <span id="slaCountRed">0</span> <small class="fw-normal">&gt;15m</small></span>
+                </div>
+
                 <!-- Tabs -->
                 <div class="tabs">
                     <button class="tab active" data-target="todos">Todos</button>
@@ -336,6 +479,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <button class="tab" data-target="campanas"><i class="fa-solid fa-bullhorn me-1"></i> Difusión</button>
                         <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
                     <?php endif; ?>
+                    <button class="tab" data-target="sla-critico" title="Conversaciones con más de 15 min sin respuesta humana"><i class="fa-solid fa-bell text-danger me-1"></i> SLA &gt;15m <span class="badge bg-danger ms-1" id="badgeSlaCritico" style="display:none;">0</span></button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>
@@ -371,11 +515,20 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                                 <h3 id="chatHeaderName" style="margin: 0; font-size: 1.15rem; font-weight: 700;">...</h3>
                                 <span id="chatHeaderSede" class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.7rem; background-color: #37414A !important; display: none;"><i class="fa-solid fa-store me-1"></i> <span>...</span></span>
+                                <!-- [COM-01] Contador regresivo Ventana Meta 24h -->
+                                <span id="metaWindowBadge" class="meta-window-pill win-open" style="display:none;" title="Tiempo restante de la Ventana Gratuita de 24h de Meta">
+                                    <i class="fa-regular fa-clock"></i> <span id="metaWindowTimerText">24:00:00</span>
+                                </span>
+                                <!-- [COM-02] Chip rápido de Embudo y Monto USD -->
+                                <span id="btnQuickDeal" class="deal-header-chip" title="Actualizar Etapa del Embudo y Monto Estimado USD">
+                                    <i class="fa-solid fa-sack-dollar"></i> <span id="chatDealChipText">Nuevo Lead · $0.00</span>
+                                </span>
                             </div>
                             <span id="chatHeaderPhone">...</span>
                         </div>
                     </div>
                     <div class="conv-actions">
+                        <button class="icon-btn" title="Reactivar con Plantilla Oficial Meta" id="btnHeaderMetaTemplate" style="color:#E85B14 !important;"><i class="fa-brands fa-whatsapp"></i></button>
                         <button class="icon-btn" title="Ver Perfil 360" id="btnToggleProfile"><i class="fa-solid fa-id-card"></i></button>
                         <button class="icon-btn" title="Reasignar" id="btnReasign"><i class="fa-solid fa-user-plus"></i></button>
                         <button class="icon-btn" title="Cerrar Chat" id="btnCloseChat"><i class="fa-solid fa-check"></i></button>
@@ -388,13 +541,29 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                 <!-- Input Area -->
                 <footer class="input-area" style="position:relative;">
+                    <!-- [COM-01] Bloqueo automático al expirar Ventana Meta 24h -->
+                    <div id="expiredWindowBanner" class="expired-window-banner">
+                        <div class="d-flex align-items-center gap-2" style="flex: 1; min-width: 240px;">
+                            <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style="width: 36px; height: 36px; background: rgba(239,68,68,0.12); color: #DC2626;">
+                                <i class="fa-solid fa-lock"></i>
+                            </div>
+                            <div style="line-height: 1.35;">
+                                <div class="fw-bold text-dark" style="font-size: 0.85rem;">Ventana Gratuita Meta de 24h Expirada</div>
+                                <div class="text-muted" style="font-size: 0.76rem;">El envío libre está bloqueado por políticas de WhatsApp Cloud API. Envía una Plantilla Oficial aprobada para reactivar el chat (o escribe una Nota Interna).</div>
+                            </div>
+                        </div>
+                        <button type="button" id="btnReactivateTemplate" class="btn btn-sm fw-bold text-white px-3 py-2 shadow-sm" style="background: linear-gradient(135deg, #E85B14, #FF7A33); border: none; border-radius: 999px; font-size: 0.8rem;">
+                            <i class="fa-brands fa-whatsapp me-1"></i> Reactivar con Plantilla Oficial Meta
+                        </button>
+                    </div>
+
                     <div id="emojiPicker" class="emoji-picker">
                         <!-- Populated by JS -->
                     </div>
                     <div class="tools">
                         <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,video/mp4,image/webp">
                         <button class="tool-btn" id="btnAttach" title="Adjuntar"><i class="fa-solid fa-paperclip"></i></button>
-                        <button class="tool-btn" id="btnTemplates" title="Plantillas"><i class="fa-solid fa-bolt"></i></button>
+                        <button class="tool-btn" id="btnTemplates" title="Respuestas Rápidas"><i class="fa-solid fa-bolt"></i></button>
                         <button class="tool-btn" id="btnEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
                         <button class="tool-btn" id="btnInternalNote" title="Nota Interna (Sólo Agentes)" style="margin-left: 10px; color: #9CA3AF;"><i class="fa-solid fa-user-secret"></i></button>
                     </div>
@@ -500,6 +669,100 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
       </div>
     </div>
 
+    <!-- [COM-01] Modal Reactivar Conversación con Plantilla Oficial Meta -->
+    <div class="modal fade" id="modalReactivateMeta" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 20px 50px rgba(0,0,0,0.18);">
+          <div class="modal-header border-0" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); color: white; border-radius: 20px 20px 0 0; padding: 18px 24px;">
+            <div>
+              <h5 class="modal-title fw-bold mb-0"><i class="fa-brands fa-whatsapp text-success me-2"></i>Reactivar Conversación con Plantilla Oficial Meta</h5>
+              <small class="text-white-50" style="font-size: 0.78rem;">Envío homologado por WhatsApp Business Cloud API v23.0 para clientes fuera de la ventana de 24h</small>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4" style="background-color: #F8FAFC;">
+            <div class="row g-3">
+              <div class="col-12 col-md-7">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <label class="form-label fw-bold text-dark small mb-0">1. Selecciona Plantilla Oficial Aprobada</label>
+                  <button type="button" id="btnRefreshMetaTpls" class="btn btn-link btn-sm p-0 text-decoration-none fw-semibold" style="font-size:0.75rem; color:#E85B14;">
+                    <i class="fa-solid fa-rotate me-1"></i> Sincronizar con Meta
+                  </button>
+                </div>
+                <select id="selectMetaOfficialTpl" class="form-select mb-3" style="border-radius: 12px;"></select>
+
+                <div id="metaTplMetaBadges" class="d-flex gap-2 mb-3 flex-wrap"></div>
+
+                <div id="metaTplVarsContainer">
+                  <!-- Inputs dinámicos {{1}}, {{2}}... -->
+                </div>
+              </div>
+              <div class="col-12 col-md-5">
+                <label class="form-label fw-bold text-dark small mb-1">Vista Previa en WhatsApp</label>
+                <div class="p-3 rounded-4" style="background-color: #ECE5DD; min-height: 210px; border: 1px solid #E2E8F0;">
+                  <div class="bg-white p-3 shadow-sm" style="border-radius: 14px 14px 4px 14px; font-size: 0.86rem; color: #111827; white-space: pre-line; line-height: 1.45;" id="metaTplLivePreview">
+                    Selecciona una plantilla para previsualizar el mensaje...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer border-0 bg-white" style="border-radius: 0 0 20px 20px; padding: 14px 24px;">
+            <button type="button" class="btn btn-light border rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" id="btnSendMetaReactivate" class="btn text-white fw-bold rounded-pill px-4" style="background: linear-gradient(135deg, #10B981, #059669); border: none;">
+              <i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- [COM-02] Modal Rápido de Oportunidad / Embudo Kanban USD -->
+    <div class="modal fade" id="modalQuickDeal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 15px 40px rgba(0,0,0,0.15);">
+          <div class="modal-header border-0" style="background-color: #F8FAFC; border-radius: 20px 20px 0 0; padding: 18px 24px;">
+            <h5 class="modal-title fw-bold text-starfi-dark"><i class="fa-solid fa-filter-circle-dollar text-primary me-2"></i>Oportunidad en Embudo de Ventas</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4">
+            <div class="mb-3">
+              <label class="form-label fw-bold small text-muted">Título / Producto de Interés</label>
+              <input type="text" id="qdTitulo" class="form-control" placeholder="Ej: Cotización Láminas PVC / Mobiliario" style="border-radius: 10px;">
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-7">
+                <label class="form-label fw-bold small text-muted">Etapa del Embudo</label>
+                <select id="qdEtapa" class="form-select" style="border-radius: 10px;">
+                  <option value="NUEVO_LEAD">📥 Nuevo Lead</option>
+                  <option value="COTIZADO">📄 Cotizado</option>
+                  <option value="EN_NEGOCIACION">🤝 En Negociación</option>
+                  <option value="PAGO_PENDIENTE">💳 Pago Pendiente</option>
+                  <option value="GANADO">🏆 Ganado (Venta Cerrada)</option>
+                  <option value="PERDIDO">❌ Perdido</option>
+                </select>
+              </div>
+              <div class="col-5">
+                <label class="form-label fw-bold small text-muted">Monto Estimado (USD)</label>
+                <div class="input-group">
+                  <span class="input-group-text fw-bold">$</span>
+                  <input type="number" step="0.01" min="0" id="qdMontoUsd" class="form-control fw-bold" value="0.00">
+                </div>
+              </div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center pt-2">
+              <a href="../pipeline/pipeline.php" class="text-decoration-none small fw-bold" style="color:#E85B14;">
+                <i class="fa-solid fa-arrow-up-right-from-square me-1"></i> Ir al Tablero Kanban completo
+              </a>
+              <button type="button" id="btnSaveQuickDeal" class="btn btn-primary fw-bold rounded-pill px-4" style="background-color:#E85B14; border-color:#E85B14;">
+                <i class="fa-solid fa-floppy-disk me-1"></i> Guardar en Embudo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>
 
@@ -512,6 +775,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <script>
         window.userRole = "<?= addslashes(strtoupper(trim($agente['rol'] ?? 'AGENTE'))) ?>";
         window.isUserAdmin = <?= (in_array(strtoupper(trim($agente['rol'] ?? '')), ['MASTER', 'MASTER CI', 'ADMINISTRADOR', 'ADMIN', 'GERENTE']) || intval($agente['id'] ?? 0) === 1) ? 'true' : 'false' ?>;
+        window.initialDisponibleChat = <?= intval($agente['disponible_chat'] ?? 1) ?>;
     </script>
     <script src="funciones_bandeja.js?v=<?= time() ?>"></script>
     </div>

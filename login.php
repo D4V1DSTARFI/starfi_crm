@@ -52,6 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['agente_id'] = $row_new['id'];
                     $_SESSION['nombre_completo'] = !empty($row_new['nombre']) ? $row_new['nombre'] : ($row_new['usuario'] ?? 'Usuario');
                     $_SESSION['last_activity'] = time();
+                    $_SESSION['last_db_heartbeat'] = time();
+                    require_once __DIR__ . '/core/crm_sprint2_helper.php';
+                    starfi_touch_agent_presence($con, intval($row_new['id']), true);
                     header("Location: index.php");
                     exit();
                 } else {

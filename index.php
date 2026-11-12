@@ -486,6 +486,24 @@ if (!$db_online && $is_master_emergency) {
             </div>
             <?php endif; ?>
 
+            <!-- 1.5. Embudo de Ventas (Pipeline Kanban) -->
+            <?php if (hasPermission('pipeline')): ?>
+            <div class="col-12 col-md-6 col-lg-4">
+                <a href="modules/pipeline/pipeline.php" class="module-card">
+                    <div>
+                        <div class="icon-container" style="background-color: rgba(16, 185, 129, 0.12); color: #059669;">
+                            <i class="bi bi-kanban-fill"></i>
+                        </div>
+                        <h4 class="module-title">Embudo de Ventas</h4>
+                        <p class="module-desc">Tablero Kanban Drag &amp; Drop (Nuevo Lead, Cotizado, Negociación, Pago Pendiente, Ganado/Perdido) con monto estimado en USD.</p>
+                    </div>
+                    <div class="action-link" style="color: #059669;">
+                        Abrir Tablero Kanban <i class="bi bi-arrow-right"></i>
+                    </div>
+                </a>
+            </div>
+            <?php endif; ?>
+
             <!-- 2. Gestor de Bots -->
             <?php if (hasPermission('gestor_bots')): ?>
             <div class="col-12 col-md-6 col-lg-4">

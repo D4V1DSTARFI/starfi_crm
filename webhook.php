@@ -220,6 +220,7 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
 
     // Incluir conexión temprana para la auditoría
     require_once('config/database.php');
+    require_once(__DIR__ . '/core/crm_sprint2_helper.php');
     $con = getDbConnection();
 
     if ($con) {
@@ -718,12 +719,20 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 }
 
                 if ($solicita_humano) {
-                    mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
+                    require_once __DIR__ . '/core/crm_sprint2_helper.php';
                     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'El cliente solicitó atención por un agente humano (Handover).')");
                     webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
-                    
-                    enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, "Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.", $id_conversacion);
+
+                    $asesor_rr = starfi_assign_round_robin_advisor($con, $id_sede, $id_conversacion, $id_cliente, 'Handover Cliente');
+                    $msg_handover = $asesor_rr
+                        ? "Te estoy transfiriendo con nuestro asesor en línea ({$asesor_rr['nombre']}). En un momento te atenderá personalmente."
+                        : "Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.";
+
+                    enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $msg_handover, $id_conversacion);
                     enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
+                    if ($asesor_rr && !empty($asesor_rr['telefono'])) {
+                        notificar_asesor_round_robin_api($linea_info, $asesor_rr, $nombre_db, $telefono_cliente);
+                    }
                     $bot_respondio = true;
                     $notificar_admin = true; // Notificar al admin solo cuando hay transferencia a humano
                 }
@@ -758,16 +767,23 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                             }
 
                             if (strpos($respuestaIa, '[SOLICITAR_AGENTE_HUMANO]') !== false) {
+                                require_once __DIR__ . '/core/crm_sprint2_helper.php';
                                 $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
-                                mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
-                                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'La IA solicitó transferencia a agente humano.')");
+                                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'La IA solicitó transferencia a agente humano ([SOLICITAR_AGENTE_HUMANO]).')");
                                 webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
+
+                                $asesor_rr = starfi_assign_round_robin_advisor($con, $id_sede, $id_conversacion, $id_cliente, 'IA [SOLICITAR_AGENTE_HUMANO]');
                                 
                                 if (empty($respuestaLimpia)) {
-                                    $respuestaLimpia = "Te estoy transfiriendo con un asesor de nuestra sede para atenderte personalmente.";
+                                    $respuestaLimpia = $asesor_rr
+                                        ? "Te estoy transfiriendo con nuestro asesor en línea ({$asesor_rr['nombre']}) para atenderte personalmente."
+                                        : "Te estoy transfiriendo con un asesor de nuestra sede para atenderte personalmente.";
                                 }
                                 enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaLimpia, $id_conversacion);
                                 enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
+                                if ($asesor_rr && !empty($asesor_rr['telefono'])) {
+                                    notificar_asesor_round_robin_api($linea_info, $asesor_rr, $nombre_db, $telefono_cliente);
+                                }
                                 $notificar_admin = true; // Notificar al admin por transferencia humana
                             } else {
                                 enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $respuestaIa, $id_conversacion);
@@ -1286,4 +1302,63 @@ function enviar_notificacion_interna_administrador($con, $id_sede, $id_conversac
         curl_exec($ch);
         curl_close($ch);
     }
+}
+
+/**
+ * [COM-03] Notifica por WhatsApp al asesor en línea seleccionado vía Round-Robin tras transferencia desde IA
+ */
+function notificar_asesor_round_robin_api($linea_info, $asesor_rr, $nombre_cliente, $numero_cliente) {
+    $phone_number_id = trim((string)($linea_info['meta_app_id'] ?? ''));
+    $meta_token = trim((string)($linea_info['meta_token'] ?? ''));
+    $tel_raw = trim((string)($asesor_rr['telefono'] ?? ''));
+    if ($phone_number_id === '' || $meta_token === '' || $meta_token === 'temp_token' || $tel_raw === '' || $tel_raw === '-') {
+        return;
+    }
+
+    $t = preg_replace('/[^0-9]/', '', $tel_raw);
+    if (strlen($t) === 11 && strpos($t, '0') === 0) {
+        $t = '58' . substr($t, 1);
+    } elseif (strlen($t) === 13 && strpos($t, '580') === 0) {
+        $t = '58' . substr($t, 3);
+    } elseif (strlen($t) === 10) {
+        $t = '58' . $t;
+    }
+    if (strlen($t) < 10) {
+        return;
+    }
+
+    $cli_label = (!empty($nombre_cliente) && strtolower((string)$nombre_cliente) !== 'cliente')
+        ? "{$nombre_cliente} (+{$numero_cliente})"
+        : "+{$numero_cliente}";
+    $nombre_ag = $asesor_rr['nombre'] ?? 'Asesor';
+    $texto_notif = "Hola {$nombre_ag}, la IA transfirió por Round-Robin el chat de {$cli_label}. ¡Atiéndelo ahora en la Bandeja!";
+
+    $msg_url = "https://graph.facebook.com/" . META_API_VERSION . "/{$phone_number_id}/messages";
+    $post_payload = [
+        'messaging_product' => 'whatsapp',
+        'to' => $t,
+        'type' => 'template',
+        'template' => [
+            'name' => 'starfi_notificacion_interna',
+            'language' => ['code' => 'es'],
+            'components' => [
+                [
+                    'type' => 'body',
+                    'parameters' => [
+                        ['type' => 'text', 'text' => $texto_notif]
+                    ]
+                ]
+            ]
+        ]
+    ];
+
+    $ch = curl_init($msg_url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_payload));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+    @curl_exec($ch);
+    curl_close($ch);
 }

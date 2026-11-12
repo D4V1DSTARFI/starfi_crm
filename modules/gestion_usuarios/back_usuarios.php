@@ -27,7 +27,7 @@ if (!$con) {
 $res_mci = mysqli_query($con, "SELECT id FROM roles WHERE nombre = 'MASTER CI' LIMIT 1");
 if ($res_mci && $row_mci = mysqli_fetch_assoc($res_mci)) {
     $mci_id = (int)$row_mci['id'];
-    $modulos_all = ['bandeja', 'perfil_empresa', 'directorio', 'gestion_usuarios', 'gestion_roles', 'dashboard', 'gestor_bots', 'waba_ordenes', 'buzon_correos', 'whatsapp_analytics', 'configuracion'];
+    $modulos_all = ['bandeja', 'pipeline', 'campanas', 'perfil_empresa', 'directorio', 'gestion_usuarios', 'gestion_roles', 'dashboard', 'gestor_bots', 'waba_ordenes', 'buzon_correos', 'whatsapp_analytics', 'configuracion'];
     foreach ($modulos_all as $m_key) {
         $perm = ($m_key === 'whatsapp_analytics' || $m_key === 'waba_ordenes') ? 0 : 1;
         @mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($mci_id, '$m_key', $perm) ON DUPLICATE KEY UPDATE permitido = VALUES(permitido)");

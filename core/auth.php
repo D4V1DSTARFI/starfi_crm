@@ -3,6 +3,7 @@
 // Guardián del sistema: Controla sesiones, timeouts y lectura de datos del operador
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/crm_sprint2_helper.php';
 
 // Iniciar sesión segura si no existe
 if (session_status() === PHP_SESSION_NONE) {
@@ -45,8 +46,14 @@ function requireAuth() {
         }
     }
 
-    // 3. Actualizar marca de tiempo de la última actividad
+    // 3. Actualizar marca de tiempo de la última actividad (sesión + presencia en BD para Round-Robin)
     $_SESSION['last_activity'] = time();
+    if (isset($_SESSION['agente_id']) && intval($_SESSION['agente_id']) > 1) {
+        $con_hb = getDbConnection();
+        if ($con_hb) {
+            starfi_touch_agent_presence($con_hb, intval($_SESSION['agente_id']), false);
+        }
+    }
 }
 
 function getAgenteInfo() {
@@ -62,17 +69,24 @@ function getAgenteInfo() {
             'email' => 'master',
             'rol' => 'MASTER',
             'id_sede' => 0,
-            'limite_chats_simultaneos' => 999
+            'limite_chats_simultaneos' => 999,
+            'disponible_chat' => 1
         ];
     }
     
+    if ($con) {
+        starfi_ensure_sprint2_schema($con);
+    }
+
     // Primero buscar en el nuevo sistema de usuarios registrados
-    $stmt_new = $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, r.nombre AS rol, u.id_sede, u.estado, 
+    $stmt_new = $con ? $con->prepare("SELECT u.id, up.nombre AS nombre_completo, up.correo AS email, r.nombre AS rol, u.id_sede, u.estado,
+                                      IFNULL(u.limite_chats_simultaneos, 0) AS limite_chats_simultaneos,
+                                      IFNULL(u.disponible_chat, 1) AS disponible_chat,
                                       (SELECT nombre_sede FROM sedes WHERE id = u.id_sede LIMIT 1) AS sede_nombre
                                FROM usuario u 
                                JOIN usuario_perfil up ON u.id = up.id_usuario 
                                LEFT JOIN roles r ON u.rol = r.id
-                               WHERE u.id = ?");
+                               WHERE u.id = ?") : false;
     if ($stmt_new) {
         $stmt_new->bind_param("i", $id);
         $stmt_new->execute();
@@ -158,6 +172,11 @@ function hasPermission($modulo) {
             if ($modulo === 'campanas') {
                 return hasPermission('directorio');
             }
+
+            // Si aún no existe regla explícita para 'pipeline' (Embudo Kanban), heredar permiso de 'bandeja'
+            if ($modulo === 'pipeline') {
+                return hasPermission('bandeja');
+            }
         } else {
             $stmt->close();
         }
@@ -220,6 +239,7 @@ function renderSidebar($active = '') {
     $items = [
         'dashboard_main' => ['link' => '../../index.php', 'icon' => 'fa-solid fa-house', 'label' => 'Volver al Dashboard'],
         'bandeja' => ['link' => '../bandeja/bandeja.php', 'icon' => 'fa-solid fa-inbox', 'label' => 'Bandeja Omnicanal'],
+        'pipeline' => ['link' => '../pipeline/pipeline.php', 'icon' => 'fa-solid fa-filter-circle-dollar', 'label' => 'Embudo de Ventas'],
         'campanas' => ['link' => '../campanas/campanas.php', 'icon' => 'fa-solid fa-bullhorn', 'label' => 'Campañas Difusión'],
         'perfil_empresa' => ['link' => '../perfil_empresa/index.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
         'directorio' => ['link' => '../directorio/directorio.php', 'icon' => 'fa-solid fa-address-book', 'label' => 'Directorio 360'],
