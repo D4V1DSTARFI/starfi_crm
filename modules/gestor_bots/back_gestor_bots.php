@@ -116,7 +116,8 @@ switch ($action) {
                 $stmt->close();
                 echo json_encode(['status' => 'success', 'message' => 'Regla actualizada.']);
             } else {
-                if ($stmt) $stmt->close();
+                if ($stmt)
+                    $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al actualizar.']);
             }
         } else {
@@ -127,7 +128,8 @@ switch ($action) {
                 $stmt->close();
                 echo json_encode(['status' => 'success', 'message' => 'Regla creada con éxito.']);
             } else {
-                if ($stmt) $stmt->close();
+                if ($stmt)
+                    $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al crear.']);
             }
         }
@@ -156,7 +158,8 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Regla no encontrada o pertenece a otra sede.']);
             }
         } else {
-            if ($stmt) $stmt->close();
+            if ($stmt)
+                $stmt->close();
             echo json_encode(['status' => 'error', 'message' => 'Error al eliminar la regla.']);
         }
         break;
@@ -272,7 +275,8 @@ switch ($action) {
                 $stmt->close();
                 echo json_encode(['status' => 'success', 'message' => 'Contacto actualizado.']);
             } else {
-                if ($stmt) $stmt->close();
+                if ($stmt)
+                    $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al actualizar.']);
             }
         } else {
@@ -282,7 +286,8 @@ switch ($action) {
                 $stmt->close();
                 echo json_encode(['status' => 'success', 'message' => 'Contacto creado.']);
             } else {
-                if ($stmt) $stmt->close();
+                if ($stmt)
+                    $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al crear contacto.']);
             }
         }
@@ -311,7 +316,8 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Contacto no encontrado o pertenece a otra sede.']);
             }
         } else {
-            if ($stmt) $stmt->close();
+            if ($stmt)
+                $stmt->close();
             echo json_encode(['status' => 'error', 'message' => 'Error al eliminar contacto.']);
         }
         break;

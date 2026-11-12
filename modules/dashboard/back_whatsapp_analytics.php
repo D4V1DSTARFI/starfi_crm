@@ -25,7 +25,7 @@ if ($action === 'get_analytics') {
     $hoy_ymd = date('Y-m-d');
     $fecha_hasta_meta = ($fecha_hasta > $hoy_ymd) ? $hoy_ymd : $fecha_hasta;
     $start_ts = strtotime($fecha_desde . " 00:00:00");
-    $end_ts   = strtotime($fecha_hasta_meta . " 23:59:59");
+    $end_ts = strtotime($fecha_hasta_meta . " 23:59:59");
     if ($start_ts > $end_ts) {
         $start_ts = strtotime('-7 days', $end_ts);
     }
@@ -98,24 +98,24 @@ if ($action === 'get_analytics') {
 
         // Auditoría híbrida local (mensajes_y_eventos + campanas_difusion_destinatarios)
         $local_audit = [
-            'enviados'   => 0,
+            'enviados' => 0,
             'entregados' => 0,
-            'leidos'     => 0,
-            'recibidos'  => 0,
+            'leidos' => 0,
+            'recibidos' => 0,
             'por_categoria' => [
-                'MARKETING'      => 0,
-                'UTILITY'        => 0,
+                'MARKETING' => 0,
+                'UTILITY' => 0,
                 'AUTHENTICATION' => 0,
-                'SERVICE'        => 0
+                'SERVICE' => 0
             ],
             'costo_local_por_categoria' => [
-                'MARKETING'      => 0.0,
-                'UTILITY'        => 0.0,
+                'MARKETING' => 0.0,
+                'UTILITY' => 0.0,
                 'AUTHENTICATION' => 0.0,
-                'SERVICE'        => 0.0
+                'SERVICE' => 0.0
             ],
             'gratuitos' => 0,
-            'pagados'   => 0
+            'pagados' => 0
         ];
 
         $desde_dt = $con->real_escape_string($fecha_desde) . " 00:00:00";
@@ -250,10 +250,10 @@ if ($action === 'get_analytics') {
         }
 
         echo json_encode([
-            'status'        => 'success',
-            'is_master'     => $es_master,
-            'data'          => $resp,
-            'local_audit'   => $local_audit,
+            'status' => 'success',
+            'is_master' => $es_master,
+            'data' => $resp,
+            'local_audit' => $local_audit,
             'tarifa_config' => $tarifa_config
         ]);
     } else {

@@ -178,3 +178,4 @@ Pruebas ejecutadas sobre `http://localhost/starfi_crm` conectando contra MySQL (
 2. **Rotación recomendada de Token Meta:** Generar un nuevo System User Token en Meta Business Suite y reemplazar `META_GLOBAL_TOKEN` en `.env` (y en `lineas_whatsapp` si alguna sede usa token individual antiguo).
 3. **Apache `mod_rewrite` y `AllowOverride All`:** Confirmar en el `httpd.conf` / VirtualHost de producción que `AllowOverride All` esté activo para `/starfi_crm` de modo que las reglas `.htaccess` apliquen igual que en el entorno verificado.
 4. **Fusión controlada:** Realizar merge de `development` hacia `main` una vez aprobado por dirección técnica.
+
