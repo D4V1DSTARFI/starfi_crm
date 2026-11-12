@@ -173,7 +173,7 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
             curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token_to_use, "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
             curl_setopt($curl, CURLOPT_TIMEOUT, 6);
             $raw_exec = curl_exec($curl);
@@ -188,7 +188,7 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
                 curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token_to_use, "Content-Type: application/json"]);
                 curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-                curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
                 curl_setopt($curl, CURLOPT_TIMEOUT, 6);
                 $raw_exec = curl_exec($curl);

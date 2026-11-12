@@ -12,17 +12,22 @@ date_default_timezone_set('America/Caracas');
 */
 // Cargar variables de entorno
 $envPath = __DIR__ . '/.env';
-$env = file_exists($envPath) ? parse_ini_file($envPath) : [];
+$env = file_exists($envPath) ? (parse_ini_file($envPath) ?: []) : [];
 
-//TOKEN QUE QUEREMOS PONER 
-$token = $env['WEBHOOK_VERIFY_TOKEN'] ?? 'PARALELEPIPEDO3312';
-//RETO QUE RECIBIREMOS DE FACEBOOK
+// Token de verificación exclusivo desde .env / variables de entorno (sin fallback en texto plano)
+$token = trim((string)($env['WEBHOOK_VERIFY_TOKEN'] ?? getenv('WEBHOOK_VERIFY_TOKEN') ?: ''));
+$hubMode = $_GET['hub_mode'] ?? '';
 $palabraReto = $_GET['hub_challenge'] ?? '';
-//TOKEN DE VERIFICACION QUE RECIBIREMOS DE FACEBOOK
 $tokenVerificacion = $_GET['hub_verify_token'] ?? '';
-//SI EL TOKEN QUE GENERAMOS ES EL MISMO QUE NOS ENVIA FACEBOOK RETORNAMOS EL RETO PARA VALIDAR QUE SOMOS NOSOTROS
-if ($token === $tokenVerificacion) {
-    echo $palabraReto;
+
+if ($hubMode === 'subscribe' || isset($_GET['hub_verify_token'])) {
+    if ($token !== '' && $tokenVerificacion !== '' && hash_equals($token, (string)$tokenVerificacion)) {
+        header('Content-Type: text/plain; charset=utf-8');
+        echo $palabraReto;
+        exit;
+    }
+    http_response_code(403);
+    echo 'Forbidden: Invalid verify token';
     exit;
 }
 

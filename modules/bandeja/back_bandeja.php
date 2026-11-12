@@ -34,6 +34,95 @@ function sync_ultimo_msg_conversacion($con, $id_conversacion, $msg_id) {
     }
 }
 
+/**
+ * Valida que el usuario actual tenga autorización por Sede y Rol sobre una conversación específica.
+ */
+function authorize_conversacion_access($con, $conversacion_id, $agente_info, $allow_waiting_for_operador = false) {
+    $cid = intval($conversacion_id);
+    if ($cid <= 0) {
+        return false;
+    }
+    $ag_id = intval($agente_info['id'] ?? 0);
+    $rol_raw = strtoupper(trim($agente_info['rol'] ?? ''));
+    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+    if ($is_master) {
+        return true;
+    }
+    $is_admin = ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE');
+    $user_sede = intval($agente_info['id_sede'] ?? 0);
+    if ($user_sede <= 0) {
+        return false;
+    }
+
+    $stmt = $con->prepare("
+        SELECT c.id_agente, c.estado, l.id_sede
+        FROM conversaciones c
+        JOIN lineas_whatsapp l ON c.id_linea = l.id
+        WHERE c.id = ?
+        LIMIT 1
+    ");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("i", $cid);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = $res ? $res->fetch_assoc() : null;
+    $stmt->close();
+
+    if (!$row) {
+        return false;
+    }
+    if (intval($row['id_sede']) !== $user_sede) {
+        return false;
+    }
+    if ($is_admin) {
+        return true;
+    }
+    $conv_agente = intval($row['id_agente'] ?? 0);
+    if ($conv_agente === $ag_id) {
+        return true;
+    }
+    if ($allow_waiting_for_operador && ($conv_agente === 0 || $row['estado'] === 'ESPERA_ASIGNACION')) {
+        return true;
+    }
+    return false;
+}
+
+function authorize_cliente_access($con, $cliente_id, $agente_info) {
+    $cid = intval($cliente_id);
+    if ($cid <= 0) {
+        return false;
+    }
+    $ag_id = intval($agente_info['id'] ?? 0);
+    $rol_raw = strtoupper(trim($agente_info['rol'] ?? ''));
+    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+    if ($is_master) {
+        return true;
+    }
+    $user_sede = intval($agente_info['id_sede'] ?? 0);
+    if ($user_sede <= 0) {
+        return false;
+    }
+
+    $stmt = $con->prepare("
+        SELECT 1
+        FROM conversaciones c
+        JOIN lineas_whatsapp l ON c.id_linea = l.id
+        WHERE c.id_cliente = ? AND l.id_sede = ?
+        LIMIT 1
+    ");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("ii", $cid, $user_sede);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ok = ($res && $res->num_rows > 0);
+    $stmt->close();
+    return $ok;
+}
+
 function parse_meta_error_detail($res_meta, $status_code = 0) {
     if (isset($res_meta['error'])) {
         $code = $res_meta['error']['code'] ?? '';
@@ -328,12 +417,10 @@ switch ($action) {
         $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
         $is_operador = (!$is_master && !$is_admin);
 
-        if ($is_operador && $conversacion_id > 0) {
-            $chk = $con->query("SELECT id FROM conversaciones WHERE id = $conversacion_id AND id_agente = $agente_id_actual");
-            if (!$chk || $chk->num_rows === 0) {
-                echo json_encode(['status' => 'error', 'message' => 'Acceso denegado. Solo puedes acceder a conversaciones asignadas a ti.']);
-                break;
-            }
+        if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, false)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado. No tienes autorización para esta conversación o sede.']);
+            break;
         }
         
         $query = "
@@ -403,6 +490,11 @@ switch ($action) {
             $conversacion_id = $stmt->insert_id;
             $is_new_chat = true;
         } else {
+            if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para responder en esta conversación o sede.']);
+                exit;
+            }
             // Auto-assign to agent if replying to a waiting chat
             $con->query("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = $agente_id, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = $conversacion_id AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
         }
@@ -504,6 +596,12 @@ switch ($action) {
     case 'upload_media':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
+
+        if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
+            exit;
+        }
         
         if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
             echo json_encode(['status' => 'error', 'message' => 'Error al subir archivo.']);
@@ -666,19 +764,30 @@ switch ($action) {
             exit;
         }
         
-        $res = $con->query("SELECT m.*, c.id_cliente, cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id 
-                            FROM mensajes_y_eventos m
-                            JOIN conversaciones c ON m.id_conversacion = c.id
-                            JOIN clientes_contactos cl ON c.id_cliente = cl.id
-                            JOIN lineas_whatsapp l ON c.id_linea = l.id
-                            WHERE m.id = $msg_id");
+        $stmtMsg = $con->prepare("SELECT m.*, c.id_cliente, cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id 
+                                  FROM mensajes_y_eventos m
+                                  JOIN conversaciones c ON m.id_conversacion = c.id
+                                  JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                                  JOIN lineas_whatsapp l ON c.id_linea = l.id
+                                  WHERE m.id = ?");
+        $stmtMsg->bind_param("i", $msg_id);
+        $stmtMsg->execute();
+        $res = $stmtMsg->get_result();
                             
         if (!$res || $res->num_rows == 0) {
+            $stmtMsg->close();
             echo json_encode(['status' => 'error', 'message' => 'Mensaje no encontrado']);
             exit;
         }
         
         $msg = $res->fetch_assoc();
+        $stmtMsg->close();
+
+        if (!authorize_conversacion_access($con, intval($msg['id_conversacion']), $agente_info_global, false)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para reintentar mensajes de otra sede o conversación.']);
+            exit;
+        }
         
         if ($msg['origen'] !== 'AGENTE' && $msg['origen'] !== 'API_TRANSACCIONAL') {
              echo json_encode(['status' => 'error', 'message' => 'Solo se pueden reintentar mensajes salientes']);
@@ -800,6 +909,11 @@ switch ($action) {
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         
         if($conversacion_id > 0) {
+            if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, false)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para cerrar conversaciones de otra sede o agente.']);
+                exit;
+            }
             $update_conv = "UPDATE conversaciones SET estado = 'CERRADO', fecha_resolucion = NOW(), resultado_comercial = ?";
             if ($motivo === 'VENTA_CERRADA') {
                 $update_conv .= ", fecha_cierre_venta = NOW()";
@@ -810,13 +924,14 @@ switch ($action) {
             $stmt->bind_param("si", $motivo, $conversacion_id);
             $stmt->execute();
             
-            if ($cliente_id > 0 && $calidad > 0) {
-                $stmt_cli = $con->prepare("UPDATE clientes_contactos SET calificacion_calidad = ? WHERE id = ?");
-                $stmt_cli->bind_param("ii", $calidad, $cliente_id);
+            if ($calidad > 0) {
+                $stmt_cli = $con->prepare("UPDATE clientes_contactos cl JOIN conversaciones c ON c.id_cliente = cl.id SET cl.calificacion_calidad = ? WHERE c.id = ?");
+                $stmt_cli->bind_param("ii", $calidad, $conversacion_id);
                 $stmt_cli->execute();
             }
 
-            $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo | Lead Scoring: $calidad estrellas";
+            $motivo_esc = $con->real_escape_string($motivo);
+            $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo_esc | Lead Scoring: $calidad estrellas";
             $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', '$evento_texto')");
             sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
             
@@ -877,7 +992,15 @@ switch ($action) {
     case 'mark_as_read':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         if ($conversacion_id > 0) {
-            $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+            if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, false)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
+                exit;
+            }
+            $stmtRead = $con->prepare("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = ?");
+            $stmtRead->bind_param("i", $conversacion_id);
+            $stmtRead->execute();
+            $stmtRead->close();
             echo json_encode(['status' => 'success']);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'ID inválido']);
@@ -888,15 +1011,57 @@ switch ($action) {
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         $nuevo_agente_id = intval($_POST['nuevo_agente_id'] ?? 0);
         if($conversacion_id > 0 && $nuevo_agente_id > 0) {
-            $con->query("UPDATE conversaciones SET id_agente = $nuevo_agente_id, estado = 'ESPERA_ASIGNACION' WHERE id = $conversacion_id");
-            
-            $res = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_completo, up.telefono FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $nuevo_agente_id");
-            $rowAgente = $res ? $res->fetch_assoc() : null;
+            if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para reasignar conversaciones de otra sede.']);
+                exit;
+            }
+
+            $rol_reass = strtoupper(trim($agente_info_global['rol'] ?? ''));
+            $is_master_reass = (intval($agente_info_global['id'] ?? 0) === 1 || $rol_reass === 'MASTER' || $rol_reass === 'MASTER CI');
+
+            $stmtAg = $con->prepare("SELECT u.id_sede, COALESCE(up.nombre, u.usuario) AS nombre_completo, up.telefono FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = ? LIMIT 1");
+            $rowAgente = null;
+            if ($stmtAg) {
+                $stmtAg->bind_param("i", $nuevo_agente_id);
+                $stmtAg->execute();
+                $resAg = $stmtAg->get_result();
+                $rowAgente = $resAg ? $resAg->fetch_assoc() : null;
+                $stmtAg->close();
+            }
+            if (!$rowAgente) {
+                echo json_encode(['status' => 'error', 'message' => 'El agente seleccionado no existe.']);
+                exit;
+            }
+
+            if (!$is_master_reass) {
+                $user_sede_reass = intval($agente_info_global['id_sede'] ?? 0);
+                if (intval($rowAgente['id_sede'] ?? 0) !== $user_sede_reass) {
+                    http_response_code(403);
+                    echo json_encode(['status' => 'error', 'message' => 'No puedes reasignar la conversación a un agente de otra sede.']);
+                    exit;
+                }
+            }
+
+            $stmtUpdConv = $con->prepare("UPDATE conversaciones SET id_agente = ?, estado = 'ESPERA_ASIGNACION' WHERE id = ?");
+            if ($stmtUpdConv) {
+                $stmtUpdConv->bind_param("ii", $nuevo_agente_id, $conversacion_id);
+                $stmtUpdConv->execute();
+                $stmtUpdConv->close();
+            }
+
             $nombre_agente = $rowAgente['nombre_completo'] ?? 'Agente';
             $telefono_agente = trim($rowAgente['telefono'] ?? '');
 
-            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Conversación reasignada a $nombre_agente')");
-            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
+            $contenido_ev = 'Conversación reasignada a ' . $nombre_agente;
+            $stmtEv = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (?, 'EVENTO_SISTEMA', ?)");
+            if ($stmtEv) {
+                $stmtEv->bind_param("is", $conversacion_id, $contenido_ev);
+                $stmtEv->execute();
+                $ev_id = $stmtEv->insert_id;
+                $stmtEv->close();
+                sync_ultimo_msg_conversacion($con, $conversacion_id, $ev_id);
+            }
 
             // Enviar notificación por WhatsApp al operador y a los administradores
             // Se elimina el fallback a cualquier línea global para evitar usar el número de otra sede
@@ -964,8 +1129,21 @@ switch ($action) {
     case 'load_profile':
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         if($cliente_id > 0) {
-            $res = $con->query("SELECT * FROM clientes_contactos WHERE id = $cliente_id");
-            if($row = $res->fetch_assoc()) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
+            $stmtProf = $con->prepare("SELECT * FROM clientes_contactos WHERE id = ? LIMIT 1");
+            $row = null;
+            if ($stmtProf) {
+                $stmtProf->bind_param("i", $cliente_id);
+                $stmtProf->execute();
+                $resProf = $stmtProf->get_result();
+                $row = $resProf ? $resProf->fetch_assoc() : null;
+                $stmtProf->close();
+            }
+            if($row) {
                 echo json_encode(['status' => 'success', 'data' => $row]);
             } else {
                 echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado']);
@@ -974,18 +1152,42 @@ switch ($action) {
         break;
 
     case 'get_all_tags':
-        $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE etiquetas IS NOT NULL AND etiquetas != ''");
+        $rol_tags = strtoupper(trim($agente_info_global['rol'] ?? ''));
+        $is_master_tags = (intval($agente_info_global['id'] ?? 0) === 1 || $rol_tags === 'MASTER' || $rol_tags === 'MASTER CI');
+        $user_sede_tags = intval($agente_info_global['id_sede'] ?? 0);
+        if ($is_master_tags) {
+            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE etiquetas IS NOT NULL AND etiquetas != ''");
+        } else {
+            $stmtTags = $con->prepare("
+                SELECT DISTINCT cl.etiquetas
+                FROM clientes_contactos cl
+                JOIN conversaciones c ON c.id_cliente = cl.id
+                JOIN lineas_whatsapp l ON c.id_linea = l.id
+                WHERE l.id_sede = ? AND cl.etiquetas IS NOT NULL AND cl.etiquetas != ''
+            ");
+            $res = false;
+            if ($stmtTags) {
+                $stmtTags->bind_param("i", $user_sede_tags);
+                $stmtTags->execute();
+                $res = $stmtTags->get_result();
+            }
+        }
         $all_tags = [];
-        while ($row = $res->fetch_assoc()) {
-            $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
-            if (is_array($tags)) {
-                foreach ($tags as $t) {
-                    $t_trim = trim($t);
-                    if (!empty($t_trim) && !in_array($t_trim, $all_tags)) {
-                        $all_tags[] = $t_trim;
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
+                if (is_array($tags)) {
+                    foreach ($tags as $t) {
+                        $t_trim = trim($t);
+                        if (!empty($t_trim) && !in_array($t_trim, $all_tags)) {
+                            $all_tags[] = $t_trim;
+                        }
                     }
                 }
             }
+        }
+        if (isset($stmtTags) && $stmtTags) {
+            $stmtTags->close();
         }
         sort($all_tags);
         echo json_encode(['status' => 'success', 'data' => $all_tags]);
@@ -996,6 +1198,11 @@ switch ($action) {
         $nombre = $_POST['nombre'] ?? '';
         $email = $_POST['email'] ?? '';
         if ($cliente_id > 0) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
             $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, email = ? WHERE id = ?");
             if ($stmt) {
                 $stmt->bind_param("ssi", $nombre, $email, $cliente_id);
@@ -1017,8 +1224,21 @@ switch ($action) {
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         $new_tag = trim($_POST['tag'] ?? '');
         if ($cliente_id > 0 && !empty($new_tag)) {
-            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE id = $cliente_id");
-            if ($row = $res->fetch_assoc()) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
+            $stmtGet = $con->prepare("SELECT etiquetas FROM clientes_contactos WHERE id = ? LIMIT 1");
+            $row = null;
+            if ($stmtGet) {
+                $stmtGet->bind_param("i", $cliente_id);
+                $stmtGet->execute();
+                $resGet = $stmtGet->get_result();
+                $row = $resGet ? $resGet->fetch_assoc() : null;
+                $stmtGet->close();
+            }
+            if ($row) {
                 $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
                 if (!is_array($tags)) $tags = [];
                 
@@ -1029,9 +1249,11 @@ switch ($action) {
                     if ($stmt) {
                         $stmt->bind_param("si", $tags_json, $cliente_id);
                         if ($stmt->execute()) {
+                            $stmt->close();
                             echo json_encode(['status' => 'success']);
                             exit;
                         }
+                        $stmt->close();
                     }
                 } else {
                     echo json_encode(['status' => 'error', 'message' => 'La etiqueta ya existe.']);
@@ -1046,8 +1268,21 @@ switch ($action) {
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         $tag_to_remove = trim($_POST['tag'] ?? '');
         if ($cliente_id > 0 && !empty($tag_to_remove)) {
-            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE id = $cliente_id");
-            if ($row = $res->fetch_assoc()) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
+            $stmtGet = $con->prepare("SELECT etiquetas FROM clientes_contactos WHERE id = ? LIMIT 1");
+            $row = null;
+            if ($stmtGet) {
+                $stmtGet->bind_param("i", $cliente_id);
+                $stmtGet->execute();
+                $resGet = $stmtGet->get_result();
+                $row = $resGet ? $resGet->fetch_assoc() : null;
+                $stmtGet->close();
+            }
+            if ($row) {
                 $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
                 if (!is_array($tags)) $tags = [];
                 
@@ -1059,9 +1294,11 @@ switch ($action) {
                 if ($stmt) {
                     $stmt->bind_param("si", $tags_json, $cliente_id);
                     if ($stmt->execute()) {
+                        $stmt->close();
                         echo json_encode(['status' => 'success']);
                         exit;
                     }
+                    $stmt->close();
                 }
             }
         }
@@ -1073,9 +1310,17 @@ switch ($action) {
         $posted_sede = intval($_POST['id_sede'] ?? $_GET['id_sede'] ?? 0);
         $agente = $agente_info_global;
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        $rol_ga = strtoupper(trim($agente['rol'] ?? ''));
+        $is_master_ga = (intval($agente['id'] ?? 0) === 1 || $rol_ga === 'MASTER' || $rol_ga === 'MASTER CI');
         
         $target_sede = 0;
-        if ($posted_sede > 0) {
+        if (!$is_master_ga) {
+            $target_sede = $user_sede;
+            if ($target_sede <= 0) {
+                echo json_encode(['status' => 'success', 'data' => []]);
+                exit;
+            }
+        } elseif ($posted_sede > 0) {
             $target_sede = $posted_sede;
         } elseif ($conversacion_id > 0) {
             $stmt_s = $con->prepare("

@@ -1,6 +1,8 @@
 <?php
 // simulador_whatsapp.php
 // Este script simula un mensaje entrante de Meta (WhatsApp) hacia tu webhook.php
+require_once __DIR__ . '/core/auth.php';
+requireAuth();
 
 $url_webhook = 'http://localhost/starfi_crm/webhook.php'; // Cambia si tu ruta es diferente
 

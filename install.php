@@ -66,11 +66,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
             $pass = $_POST['pass'] ?? '';
 
             // Escribir archivo .env
-            $envContent = "DB_HOST=\"$host\"\n";
+            $verifyToken = trim($_POST['webhook_verify_token'] ?? '');
+            if ($verifyToken === '') {
+                $verifyToken = bin2hex(random_bytes(16));
+            }
+            $envContent = "APP_ENV=\"PRODUCCION\"\n\n";
+            $envContent .= "DB_HOST=\"$host\"\n";
             $envContent .= "DB_USER=\"$user\"\n";
             $envContent .= "DB_PASS=\"$pass\"\n";
             $envContent .= "DB_NAME=\"starfi_crm\"\n\n";
-            $envContent .= "WEBHOOK_VERIFY_TOKEN=\"PARALELEPIPEDO3312\"\n";
+            $envContent .= "WEBHOOK_VERIFY_TOKEN=\"$verifyToken\"\n";
+            $envContent .= "META_GLOBAL_TOKEN=\"\"\n";
+            $envContent .= "META_APP_SECRET=\"\"\n";
+            $envContent .= "META_API_VERSION=\"v23.0\"\n";
 
             if (@file_put_contents($envPath, $envContent) !== false) {
                 echo json_encode(['status' => 'success', 'message' => 'Archivo de entorno .env configurado correctamente.']);

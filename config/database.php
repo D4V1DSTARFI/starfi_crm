@@ -1,23 +1,33 @@
 <?php
 /**
- * Gestor Central de Bases de Datos - STARFI_NEXT
- * Permite conexiones modulares según el sub-sistema requerido.
+ * Gestor Central de Bases de Datos - STARFI CRM
+ * Carga credenciales y secretos exclusivamente desde variables de entorno (.env).
  */
 
-// Cargar variables de entorno desde el archivo .env en la raíz
 $envPath = dirname(__DIR__) . '/.env';
-$env = file_exists($envPath) ? parse_ini_file($envPath) : [];
+$env = file_exists($envPath) ? (parse_ini_file($envPath) ?: []) : [];
 
-// (Redirección al instalador eliminada. El sistema leerá las credenciales de la parte inferior)
+$envGet = function ($key, $default = '') use ($env) {
+    if (isset($env[$key]) && $env[$key] !== '') {
+        return $env[$key];
+    }
+    $sysVal = getenv($key);
+    if ($sysVal !== false && $sysVal !== '') {
+        return $sysVal;
+    }
+    return $default;
+};
 
-// Selector de entorno (por compatibilidad heredada)
 if (!defined('APP_ENV')) {
-    define('APP_ENV', 'PRODUCCION');
+    define('APP_ENV', $envGet('APP_ENV', 'PRODUCCION'));
 }
 
-// Token Global de Meta (System User Token)
 if (!defined('META_GLOBAL_TOKEN')) {
-    define('META_GLOBAL_TOKEN', 'EAAqFHnS2hXABSCZBdOi3Yn3ZAvCL2bpWFpazU1v23jp6tJZBfappUkx6WD1uAcbGAY9gvI5aMiwUQTkhk9gBMaUPoOgyk7YX6LNrNE5BQ7cFxZC8k6HuUJ2M8p5ZBZBhGzTQ5yZBeZAhEp1qZAUglVxVsWOpeJRANwaRW8mlV604TbYYulZCqKMkE3OnAwuiZCen9oqxAZDZD');
+    define('META_GLOBAL_TOKEN', $envGet('META_GLOBAL_TOKEN', ''));
+}
+
+if (!defined('META_APP_SECRET')) {
+    define('META_APP_SECRET', $envGet('META_APP_SECRET', ''));
 }
 
 function getDbConnection($tipo = 'core')
@@ -25,43 +35,45 @@ function getDbConnection($tipo = 'core')
     global $env;
     date_default_timezone_set("America/Caracas");
 
-    // Configuración dura según el entorno (Ignorando DB_HOST del .env)
-    switch (APP_ENV) {
-        case 'SANDBOX':
-            $servidor = "192.168.0.71";
-            $usuario = "starfi_v2_user";
-            $contrasenha = md5("PARALELEPIPEDO3312");
-            break;
-        case 'PRODUCCION':
-            $servidor = "192.168.0.80";
-            $usuario = "starfi_v2_user";
-            $contrasenha = md5("PARALELEPIPEDO3312");
-            break;
-        case 'LOCAL':
-        default:
-            $servidor = "localhost";
-            $usuario = "starfi_user";
-            $contrasenha = md5("PARALELEPIPEDO3312");
-            break;
+    $lookup = function ($key, $default = '') use ($env) {
+        if (is_array($env) && isset($env[$key]) && $env[$key] !== '') {
+            return $env[$key];
+        }
+        $val = getenv($key);
+        return ($val !== false && $val !== '') ? $val : $default;
+    };
+
+    $envPrefix = '';
+    if (APP_ENV === 'SANDBOX' && $lookup('DB_SANDBOX_HOST', '') !== '') {
+        $envPrefix = 'DB_SANDBOX_';
+    } elseif (APP_ENV === 'LOCAL' && $lookup('DB_LOCAL_HOST', '') !== '') {
+        $envPrefix = 'DB_LOCAL_';
+    } else {
+        $envPrefix = 'DB_';
     }
 
-    // Usar la base de datos core (starfi_crm) para todo
-    $bd = "starfi_crm";
+    $servidor = $lookup($envPrefix . 'HOST', $lookup('DB_HOST', ''));
+    $usuario = $lookup($envPrefix . 'USER', $lookup('DB_USER', ''));
+    $contrasenha = $lookup($envPrefix . 'PASS', $lookup('DB_PASS', ''));
+    $bd = $lookup($envPrefix . 'NAME', $lookup('DB_NAME', 'starfi_crm'));
+
+    if ($servidor === '' || $usuario === '') {
+        error_log('[STARFI DB] Credenciales de base de datos no configuradas en .env');
+        return false;
+    }
 
     $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
 
     if (mysqli_connect_errno()) {
-        $err = mysqli_connect_error();
-
-        // Ya no redirigimos al instalador, simplemente retornamos false o lanzamos error
+        error_log('[STARFI DB] Error de conexión MySQL (' . mysqli_connect_errno() . ')');
         return false;
     }
 
     mysqli_set_charset($con, "utf8mb4");
-    
+
     // Forzar zona horaria de MySQL para que NOW() coincida con PHP
     mysqli_query($con, "SET time_zone = '-04:00'");
-    
+
     return $con;
 }
 

@@ -430,7 +430,7 @@ function getOrUploadCampaignHeaderMediaId($con, array &$camp, string $phone_id, 
     curl_setopt($ch, CURLOPT_POSTFIELDS, $post_media);
     curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 25);
     $resp = curl_exec($ch);
     curl_close($ch);
@@ -810,7 +810,7 @@ switch ($action) {
                 $ch = curl_init($url);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 12);
                 $resp = curl_exec($ch);
                 $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -921,7 +921,7 @@ switch ($action) {
             curl_setopt($ch_c, CURLOPT_POSTFIELDS, json_encode($create_payload, JSON_UNESCAPED_UNICODE));
             curl_setopt($ch_c, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token", "Content-Type: application/json"]);
             curl_setopt($ch_c, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch_c, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch_c, CURLOPT_SSL_VERIFYPEER, true);
             curl_setopt($ch_c, CURLOPT_TIMEOUT, 10);
             $resp_c = json_decode(curl_exec($ch_c), true);
             curl_close($ch_c);
@@ -1918,7 +1918,7 @@ switch ($action) {
             curl_setopt($ch_sub, CURLOPT_POST, true);
             curl_setopt($ch_sub, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
             curl_setopt($ch_sub, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch_sub, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch_sub, CURLOPT_SSL_VERIFYPEER, true);
             curl_setopt($ch_sub, CURLOPT_TIMEOUT, 3);
             @curl_exec($ch_sub);
             curl_close($ch_sub);
@@ -2110,7 +2110,7 @@ switch ($action) {
                 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
                 curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 20);
 
                 $response = curl_exec($ch);

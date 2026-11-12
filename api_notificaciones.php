@@ -545,7 +545,7 @@ $mensaje_payload = [
 $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
 
 // -- DEBUG PAYLOAD --
-file_put_contents(__DIR__ . '/test_meta_payload.log', date('Y-m-d H:i:s') . "\n" . json_encode($mensaje_payload, JSON_PRETTY_PRINT) . "\n", FILE_APPEND);
+// Log local de payload desactivado por seguridad (SEC-04)
 // -------------------
 
 // INICIAMOS EL CURL
@@ -690,6 +690,10 @@ if($id_linea > 0) {
 
     $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, url_archivo, mime_type, estado_envio, error_detalle, timestamp) 
                  VALUES ($id_conversacion, '$id_mensaje_meta', '$tipo_msg', 'API_TRANSACCIONAL', '$contenido_esc', $url_archivo_sql, $mime_type_sql, '$estado_envio', $error_det_sql, '$fecha_compra $hora_actual')");
+    $nuevo_msg_id_api = intval($con->insert_id);
+    if ($nuevo_msg_id_api > 0) {
+        $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $nuevo_msg_id_api) WHERE id = " . intval($id_conversacion));
+    }
 }
 
 $response['meta_response'] = $estado;

@@ -1,16 +1,15 @@
 <?php
+if (PHP_SAPI !== 'cli') {
+    require_once __DIR__ . '/../core/auth.php';
+    requireAuth();
+}
 require_once __DIR__ . '/../config/database.php';
 
-function update_existing_costs($envName) {
-    echo "--- Actualizando costos en entorno: $envName ---\n";
-    $servidor = ($envName === 'SANDBOX') ? "192.168.0.71" : (($envName === 'PRODUCCION') ? "192.168.0.80" : "localhost");
-    $usuario = ($envName === 'LOCAL') ? "starfi_user" : "starfi_v2_user";
-    $contrasenha = md5("PARALELEPIPEDO3312");
-    $bd = "starfi_crm";
-
-    $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
+function update_existing_costs() {
+    echo "--- Actualizando costos en entorno activo (" . APP_ENV . ") ---\n";
+    $con = getDbConnection();
     if (!$con) {
-        echo "No se pudo conectar a $envName ($servidor): " . mysqli_connect_error() . "\n";
+        echo "No se pudo conectar a la base de datos configurada en .env.\n";
         return;
     }
 
@@ -25,10 +24,10 @@ function update_existing_costs($envName) {
 
     if (mysqli_query($con, $sql)) {
         $affected = mysqli_affected_rows($con);
-        echo "[OK] Registros actualizados en $servidor: $affected filas.\n";
+        echo "[OK] Registros actualizados: $affected filas.\n";
     } else {
-        echo "[FAIL] Error en $servidor: " . mysqli_error($con) . "\n";
+        echo "[FAIL] Error SQL: " . mysqli_error($con) . "\n";
     }
 }
 
-update_existing_costs('PRODUCCION');
+update_existing_costs();

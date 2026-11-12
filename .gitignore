@@ -1,1 +1,15 @@
+# Archivos de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Archivos multimedia subidos
 assets/uploads/*
+
+# Registros y diagnósticos
+logs/*
+!logs/.htaccess
+*.log
+
+# Directorios temporales
+scratch/
