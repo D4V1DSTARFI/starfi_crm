@@ -9,12 +9,16 @@ header('Content-Type: application/json');
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 
-// Asegurar una sola vez índice compuesto para consultas instantáneas de costos WABA en Dashboard
-$dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v1.flag';
+// Asegurar una sola vez índices compuestos para consultas instantáneas de costos WABA y cruce de wamids en Dashboard
+$dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v2.flag';
 if ($con && !file_exists($dash_idx_flag)) {
     $chkIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
     if ($chkIdx && $chkIdx->num_rows === 0) {
         @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_msg_pagado_ts (es_pagado, timestamp)");
+    }
+    $chkWamidIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_meta_wamid'");
+    if ($chkWamidIdx && $chkWamidIdx->num_rows === 0) {
+        @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_meta_wamid (id_mensaje_meta(100))");
     }
     @file_put_contents($dash_idx_flag, date('c'));
 }

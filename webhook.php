@@ -12,7 +12,30 @@ date_default_timezone_set('America/Caracas');
 */
 // Cargar variables de entorno
 $envPath = __DIR__ . '/.env';
-$env = file_exists($envPath) ? (parse_ini_file($envPath) ?: []) : [];
+$env = [];
+if (file_exists($envPath) && is_readable($envPath)) {
+    $parsedIni = @parse_ini_file($envPath, false, INI_SCANNER_RAW);
+    if (is_array($parsedIni) && !empty($parsedIni)) {
+        foreach ($parsedIni as $k => $v) {
+            $env[trim((string)$k)] = trim((string)$v, " \t\n\r\0\x0B\"'");
+        }
+    } else {
+        foreach (@file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $envLine) {
+            $tLine = ltrim($envLine);
+            if ($tLine === '' || $tLine[0] === '#' || $tLine[0] === ';') {
+                continue;
+            }
+            $eq = strpos($tLine, '=');
+            if ($eq !== false) {
+                $k = trim(substr($tLine, 0, $eq));
+                $v = trim(substr($tLine, $eq + 1), " \t\n\r\0\x0B\"'");
+                if ($k !== '') {
+                    $env[$k] = $v;
+                }
+            }
+        }
+    }
+}
 
 // Token de verificación exclusivo desde .env / variables de entorno (sin fallback en texto plano)
 if (!defined('META_API_VERSION')) {

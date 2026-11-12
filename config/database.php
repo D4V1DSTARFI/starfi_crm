@@ -4,8 +4,42 @@
  * Carga credenciales y secretos exclusivamente desde variables de entorno (.env).
  */
 
+if (!function_exists('starfi_parse_env_file')) {
+    function starfi_parse_env_file($path) {
+        if (!is_string($path) || !file_exists($path) || !is_readable($path)) {
+            return [];
+        }
+        $parsed = @parse_ini_file($path, false, INI_SCANNER_RAW);
+        if (is_array($parsed) && !empty($parsed)) {
+            $clean = [];
+            foreach ($parsed as $k => $v) {
+                $clean[trim((string)$k)] = trim((string)$v, " \t\n\r\0\x0B\"'");
+            }
+            return $clean;
+        }
+        $result = [];
+        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        foreach ($lines as $line) {
+            $trim = ltrim($line);
+            if ($trim === '' || $trim[0] === '#' || $trim[0] === ';') {
+                continue;
+            }
+            $eqPos = strpos($trim, '=');
+            if ($eqPos === false) {
+                continue;
+            }
+            $key = trim(substr($trim, 0, $eqPos));
+            $val = trim(substr($trim, $eqPos + 1));
+            if ($key !== '') {
+                $result[$key] = trim($val, "\"'");
+            }
+        }
+        return $result;
+    }
+}
+
 $envPath = dirname(__DIR__) . '/.env';
-$env = file_exists($envPath) ? (parse_ini_file($envPath) ?: []) : [];
+$env = starfi_parse_env_file($envPath);
 
 $envGet = function ($key, $default = '') use ($env) {
     if (isset($env[$key]) && $env[$key] !== '') {

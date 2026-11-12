@@ -96,7 +96,7 @@ function authorize_cliente_access($con, $cliente_id, $agente_info) {
     }
     $ag_id = intval($agente_info['id'] ?? 0);
     $rol_raw = strtoupper(trim($agente_info['rol'] ?? ''));
-    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI' || ($rol_raw === 'ADMIN' && intval($agente_info['id_sede'] ?? 0) === 0));
     if ($is_master) {
         return true;
     }
@@ -107,15 +107,23 @@ function authorize_cliente_access($con, $cliente_id, $agente_info) {
 
     $stmt = $con->prepare("
         SELECT 1
-        FROM conversaciones c
-        JOIN lineas_whatsapp l ON c.id_linea = l.id
-        WHERE c.id_cliente = ? AND l.id_sede = ?
+        FROM clientes_contactos cl
+        WHERE cl.id = ?
+          AND (
+              cl.id_sede = ?
+              OR EXISTS (
+                  SELECT 1
+                  FROM conversaciones c
+                  JOIN lineas_whatsapp l ON c.id_linea = l.id
+                  WHERE c.id_cliente = cl.id AND l.id_sede = ?
+              )
+          )
         LIMIT 1
     ");
     if (!$stmt) {
         return false;
     }
-    $stmt->bind_param("ii", $cid, $user_sede);
+    $stmt->bind_param("iii", $cid, $user_sede, $user_sede);
     $stmt->execute();
     $res = $stmt->get_result();
     $ok = ($res && $res->num_rows > 0);
@@ -467,20 +475,38 @@ switch ($action) {
         }
 
         $is_new_chat = false;
-        // Si no hay conversación activa, la creamos respetando la sede del agente
+        // Si no hay conversación activa, la creamos respetando la sede del agente / cliente
         if ($conversacion_id <= 0 && $cliente_id > 0) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
             $agente_info = $agente_info_global;
+            $ag_id_chk = intval($agente_info['id'] ?? 0);
+            $rol_chk = strtoupper(trim($agente_info['rol'] ?? ''));
+            $is_master_chk = ($ag_id_chk === 1 || $rol_chk === 'MASTER' || $rol_chk === 'MASTER CI' || ($rol_chk === 'ADMIN' && intval($agente_info['id_sede'] ?? 0) === 0));
             $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
             
             $id_linea = null;
             if ($user_sede > 0) {
                 $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
                 if ($resLinea && $resLinea->num_rows > 0) {
-                    $id_linea = $resLinea->fetch_assoc()['id'];
+                    $id_linea = intval($resLinea->fetch_assoc()['id']);
+                }
+            }
+            if (!$id_linea && $is_master_chk) {
+                $resCliSede = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
+                $cli_sede = ($resCliSede && $resCliSede->num_rows > 0) ? intval($resCliSede->fetch_assoc()['id_sede'] ?? 0) : 0;
+                if ($cli_sede > 0) {
+                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $cli_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                    if ($resLinea && $resLinea->num_rows > 0) {
+                        $id_linea = intval($resLinea->fetch_assoc()['id']);
+                    }
                 }
             }
             if (!$id_linea) {
-                echo json_encode(['status' => 'error', 'message' => 'No hay una línea de WhatsApp configurada y activa exclusivamente para tu sede. No se puede iniciar el chat cruzando líneas de otra sede.']);
+                echo json_encode(['status' => 'error', 'message' => 'No hay una línea de WhatsApp configurada y activa exclusivamente para esta sede. No se puede iniciar el chat cruzando líneas de otra sede.']);
                 exit;
             }
             
@@ -597,10 +623,48 @@ switch ($action) {
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
 
+        if ($conversacion_id <= 0 && $cliente_id <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Datos de destinatario incompletos.']);
+            exit;
+        }
         if ($conversacion_id > 0 && !authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
             http_response_code(403);
             echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
             exit;
+        }
+        $id_linea_upload = null;
+        if ($conversacion_id <= 0 && $cliente_id > 0) {
+            if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+                exit;
+            }
+            $agente_info = $agente_info_global;
+            $ag_id_chk = intval($agente_info['id'] ?? 0);
+            $rol_chk = strtoupper(trim($agente_info['rol'] ?? ''));
+            $is_master_chk = ($ag_id_chk === 1 || $rol_chk === 'MASTER' || $rol_chk === 'MASTER CI' || ($rol_chk === 'ADMIN' && intval($agente_info['id_sede'] ?? 0) === 0));
+            $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
+
+            if ($user_sede > 0) {
+                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                if ($resLinea && $resLinea->num_rows > 0) {
+                    $id_linea_upload = intval($resLinea->fetch_assoc()['id']);
+                }
+            }
+            if (!$id_linea_upload && $is_master_chk) {
+                $resCliSede = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
+                $cli_sede = ($resCliSede && $resCliSede->num_rows > 0) ? intval($resCliSede->fetch_assoc()['id_sede'] ?? 0) : 0;
+                if ($cli_sede > 0) {
+                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $cli_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
+                    if ($resLinea && $resLinea->num_rows > 0) {
+                        $id_linea_upload = intval($resLinea->fetch_assoc()['id']);
+                    }
+                }
+            }
+            if (!$id_linea_upload) {
+                echo json_encode(['status' => 'error', 'message' => 'No hay una línea de WhatsApp configurada y activa exclusivamente para esta sede. No se puede enviar multimedia cruzando líneas de otra sede.']);
+                exit;
+            }
         }
         
         if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
@@ -609,7 +673,7 @@ switch ($action) {
         }
         
         $file = $_FILES['file'];
-        $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+        $ext = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', pathinfo($file['name'], PATHINFO_EXTENSION)));
         $mime = @mime_content_type($file['tmp_name']);
         
         $allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'video/mp4'];
@@ -627,24 +691,10 @@ switch ($action) {
             $contenido = $file['name'];
             
             $is_new_chat = false;
-            // Si no hay conversación activa, la creamos (Misma lógica que enviar mensaje)
+            // Si no hay conversación activa, la creamos con la línea validada de su sede
             if ($conversacion_id <= 0 && $cliente_id > 0) {
-                $agente_info = $agente_info_global;
-                $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
-                
-                $id_linea = null;
-                if ($user_sede > 0) {
-                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                    if ($resLinea && $resLinea->num_rows > 0) {
-                        $id_linea = $resLinea->fetch_assoc()['id'];
-                    }
-                }
-                if (!$id_linea) {
-                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                    $id_linea = ($resLinea && $resLinea->num_rows > 0) ? $resLinea->fetch_assoc()['id'] : 1;
-                }
                 $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
-                $stmt->bind_param("iii", $id_linea, $cliente_id, $agente_id);
+                $stmt->bind_param("iii", $id_linea_upload, $cliente_id, $agente_id);
                 $stmt->execute();
                 $conversacion_id = $stmt->insert_id;
                 $is_new_chat = true;
