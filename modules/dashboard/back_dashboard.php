@@ -9,6 +9,16 @@ header('Content-Type: application/json');
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 
+// Asegurar una sola vez índice compuesto para consultas instantáneas de costos WABA en Dashboard
+$dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v1.flag';
+if ($con && !file_exists($dash_idx_flag)) {
+    $chkIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
+    if ($chkIdx && $chkIdx->num_rows === 0) {
+        @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_msg_pagado_ts (es_pagado, timestamp)");
+    }
+    @file_put_contents($dash_idx_flag, date('c'));
+}
+
 switch ($action) {
     case 'load_kpis':
         $agente = $agente_dashboard;
@@ -40,37 +50,40 @@ switch ($action) {
         }
 
         $where_sql = count($where_clauses) > 0 ? (" WHERE " . implode(" AND ", $where_clauses)) : "";
-
-        // 1. Volumen Total de Chats
-        $query1 = "SELECT COUNT(c.id) as total FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $where_sql;
-        $res = $con->query($query1);
-        $total_chats = $res ? intval($res->fetch_assoc()['total'] ?? 0) : 0;
-
-        // 2. Ciclo de Ventas Promedio real (solo VENTA_CERRADA, sin valores Mock)
-        $ventas_where = empty($where_sql)
-            ? " WHERE c.resultado_comercial = 'VENTA_CERRADA' AND c.fecha_cierre_venta IS NOT NULL"
-            : $where_sql . " AND c.resultado_comercial = 'VENTA_CERRADA' AND c.fecha_cierre_venta IS NOT NULL";
-        $query2 = "SELECT AVG(TIMESTAMPDIFF(MINUTE, c.fecha_inicio, c.fecha_cierre_venta)) as avg_res FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $ventas_where;
-        $res2 = $con->query($query2);
-        $avg_res = 0;
-        if ($res2 && ($row2 = $res2->fetch_assoc()) && $row2['avg_res'] !== null) {
-            $avg_res = max(0, intval(round(floatval($row2['avg_res']))));
-        }
-
-        // 3. Tasa de Conversión (%)
         $cerrados_where = empty($where_sql) ? " WHERE c.estado = 'CERRADO'" : $where_sql . " AND c.estado = 'CERRADO'";
-        $query3 = "SELECT 
-                    COUNT(c.id) as total_cerrados, 
-                    COALESCE(SUM(IF(c.resultado_comercial = 'VENTA_CERRADA', 1, 0)), 0) as ventas_cerradas 
-                   FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where;
-        $res3 = $con->query($query3);
+
+        // 1, 2, 3 y 5.5 consolidados en UNA sola lectura de conversaciones (sin valores Mock)
+        $q_summary = "
+            SELECT 
+                COUNT(c.id) AS total_chats,
+                AVG(CASE WHEN c.resultado_comercial = 'VENTA_CERRADA' AND c.fecha_cierre_venta IS NOT NULL 
+                    THEN TIMESTAMPDIFF(MINUTE, c.fecha_inicio, c.fecha_cierre_venta) ELSE NULL END) AS avg_res,
+                COALESCE(SUM(CASE WHEN c.estado = 'CERRADO' THEN 1 ELSE 0 END), 0) AS total_cerrados,
+                COALESCE(SUM(CASE WHEN c.estado = 'CERRADO' AND c.resultado_comercial = 'VENTA_CERRADA' THEN 1 ELSE 0 END), 0) AS ventas_cerradas,
+                AVG(CASE WHEN c.estado = 'CERRADO' AND c.csat_score > 0 THEN c.csat_score ELSE NULL END) AS avg_csat
+            FROM conversaciones c
+            LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
+            $where_sql
+        ";
+        $res_sum = $con->query($q_summary);
+        $total_chats = 0;
+        $avg_res = 0;
         $conversion = 0;
         $ventas_cerradas = 0;
-        if ($res3 && ($row_conv = $res3->fetch_assoc())) {
-            $total_cerrados = intval($row_conv['total_cerrados']);
-            $ventas_cerradas = intval($row_conv['ventas_cerradas']);
+        $avg_csat = 0;
+
+        if ($res_sum && ($rsum = $res_sum->fetch_assoc())) {
+            $total_chats = intval($rsum['total_chats'] ?? 0);
+            if ($rsum['avg_res'] !== null) {
+                $avg_res = max(0, intval(round(floatval($rsum['avg_res']))));
+            }
+            $total_cerrados = intval($rsum['total_cerrados'] ?? 0);
+            $ventas_cerradas = intval($rsum['ventas_cerradas'] ?? 0);
             if ($total_cerrados > 0) {
                 $conversion = round(($ventas_cerradas / $total_cerrados) * 100, 1);
+            }
+            if ($rsum['avg_csat'] !== null) {
+                $avg_csat = round(floatval($rsum['avg_csat']), 1);
             }
         }
 
@@ -78,79 +91,94 @@ switch ($action) {
         $gasto_real_total = 0.0;
         $camp_ids_periodo = [];
 
-        $chk_camp_tbl = $con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-        if ($chk_camp_tbl && $chk_camp_tbl->num_rows > 0) {
-            $camp_conds = ["d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')"];
-            if ($sede_int > 0) {
-                $camp_conds[] = "(d.id_sede = $sede_int OR (d.id_sede = 0 AND cd.id_sede = $sede_int))";
-            }
-            if ($desde_esc !== '') {
-                $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) >= '$desde_esc'";
-            }
-            if ($hasta_esc !== '') {
-                $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) <= '$hasta_esc'";
-            }
+        $camp_conds = ["d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')"];
+        if ($sede_int > 0) {
+            $camp_conds[] = "(d.id_sede = $sede_int OR (d.id_sede = 0 AND cd.id_sede = $sede_int))";
+        }
+        if ($desde_esc !== '') {
+            $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) >= '$desde_esc'";
+        }
+        if ($hasta_esc !== '') {
+            $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) <= '$hasta_esc'";
+        }
 
-            $q_gasto_camp = "
-                SELECT 
-                    COALESCE(SUM(CASE 
-                        WHEN d.costo_usd > 0 THEN d.costo_usd 
-                        WHEN cd.costo_unitario_usd > 0 THEN cd.costo_unitario_usd 
-                        ELSE 0 
-                    END), 0) AS gasto_camp,
-                    GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
-                FROM campanas_difusion_destinatarios d
-                LEFT JOIN campanas_difusion cd ON d.id_campana = cd.id
-                WHERE " . implode(" AND ", $camp_conds);
-            $res_gc = $con->query($q_gasto_camp);
-            if ($res_gc && ($row_gc = $res_gc->fetch_assoc())) {
-                $gasto_real_total += floatval($row_gc['gasto_camp'] ?? 0);
-                if (!empty($row_gc['camp_ids'])) {
-                    foreach (explode(',', $row_gc['camp_ids']) as $cid_raw) {
-                        $cid_i = intval($cid_raw);
-                        if ($cid_i > 0) {
-                            $camp_ids_periodo[$cid_i] = $cid_i;
-                        }
+        $q_gasto_camp = "
+            SELECT 
+                COALESCE(SUM(CASE 
+                    WHEN d.costo_usd > 0 THEN d.costo_usd 
+                    WHEN cd.costo_unitario_usd > 0 THEN cd.costo_unitario_usd 
+                    ELSE 0 
+                END), 0) AS gasto_camp,
+                GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
+            FROM campanas_difusion_destinatarios d
+            LEFT JOIN campanas_difusion cd ON d.id_campana = cd.id
+            WHERE " . implode(" AND ", $camp_conds);
+        $res_gc = @$con->query($q_gasto_camp);
+        if ($res_gc && ($row_gc = $res_gc->fetch_assoc())) {
+            $gasto_real_total += floatval($row_gc['gasto_camp'] ?? 0);
+            if (!empty($row_gc['camp_ids'])) {
+                foreach (explode(',', $row_gc['camp_ids']) as $cid_raw) {
+                    $cid_i = intval($cid_raw);
+                    if ($cid_i > 0) {
+                        $camp_ids_periodo[$cid_i] = $cid_i;
                     }
                 }
             }
         }
 
-        // Sumar mensajes facturables fuera de campañas ya contabilizadas
-        $msg_conds = ["m.origen != 'CLIENTE'", "m.es_pagado = 1"];
-        if ($sede_int > 0) {
-            $msg_conds[] = "lw.id_sede = $sede_int";
-        }
+        // Sumar mensajes facturables en mensajes_y_eventos (usando idx_msg_pagado_ts)
+        $msg_conds = ["m.es_pagado = 1", "m.origen != 'CLIENTE'"];
         if ($desde_esc !== '') {
             $msg_conds[] = "m.timestamp >= '$desde_esc'";
         }
         if ($hasta_esc !== '') {
             $msg_conds[] = "m.timestamp <= '$hasta_esc'";
         }
-        if (!empty($camp_ids_periodo)) {
-            $camp_csv = implode(',', $camp_ids_periodo);
-            $msg_conds[] = "(
-                m.origen != 'API_TRANSACCIONAL'
-                OR m.id_mensaje_meta IS NULL
-                OR m.id_mensaje_meta = ''
-                OR NOT EXISTS (
-                    SELECT 1 FROM campanas_difusion_destinatarios d2
-                    WHERE d2.id_campana IN ($camp_csv)
-                      AND d2.id_mensaje_meta = m.id_mensaje_meta
-                )
-            )";
+        if ($sede_int > 0) {
+            $msg_conds[] = "lw.id_sede = $sede_int";
         }
 
+        $join_sede_msg = ($sede_int > 0)
+            ? "JOIN conversaciones c ON m.id_conversacion = c.id JOIN lineas_whatsapp lw ON c.id_linea = lw.id"
+            : "";
         $q_gasto_msg = "
             SELECT COALESCE(SUM(COALESCE(m.costo_meta_estimado, 0)), 0) AS gasto_msg
             FROM mensajes_y_eventos m
-            JOIN conversaciones c ON m.id_conversacion = c.id
-            LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
+            $join_sede_msg
             WHERE " . implode(" AND ", $msg_conds);
         $res_gm = $con->query($q_gasto_msg);
+        $gasto_msg_bruto = 0.0;
         if ($res_gm && ($row_gm = $res_gm->fetch_assoc())) {
-            $gasto_real_total += floatval($row_gm['gasto_msg'] ?? 0);
+            $gasto_msg_bruto = floatval($row_gm['gasto_msg'] ?? 0);
         }
+
+        // Descontar en O(K) por índice idx_meta_wamid cualquier wamid de campaña que también figure con es_pagado=1 en mensajes_y_eventos
+        if ($gasto_msg_bruto > 0 && !empty($camp_ids_periodo)) {
+            $camp_csv = implode(',', $camp_ids_periodo);
+            $ov_conds = [
+                "d2.id_campana IN ($camp_csv)",
+                "d2.id_mensaje_meta IS NOT NULL",
+                "d2.id_mensaje_meta != ''",
+                "m.es_pagado = 1"
+            ];
+            if ($desde_esc !== '') {
+                $ov_conds[] = "m.timestamp >= '$desde_esc'";
+            }
+            if ($hasta_esc !== '') {
+                $ov_conds[] = "m.timestamp <= '$hasta_esc'";
+            }
+            $q_overlap = "
+                SELECT COALESCE(SUM(COALESCE(m.costo_meta_estimado, 0)), 0) AS gasto_duplicado
+                FROM campanas_difusion_destinatarios d2
+                JOIN mensajes_y_eventos m USE INDEX (idx_meta_wamid)
+                  ON m.id_mensaje_meta = CONVERT(d2.id_mensaje_meta USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                WHERE " . implode(" AND ", $ov_conds);
+            $res_ov = @$con->query($q_overlap);
+            if ($res_ov && ($row_ov = $res_ov->fetch_assoc())) {
+                $gasto_msg_bruto = max(0.0, $gasto_msg_bruto - floatval($row_ov['gasto_duplicado'] ?? 0));
+            }
+        }
+        $gasto_real_total += $gasto_msg_bruto;
 
         $cac = ($ventas_cerradas > 0) ? round($gasto_real_total / $ventas_cerradas, 2) : 0;
 
@@ -159,20 +187,15 @@ switch ($action) {
         $res_lead = $con->query($lead_query);
         $avg_lead = ($res_lead && ($rl = $res_lead->fetch_assoc()) && $rl['avg_score'] !== null) ? round(floatval($rl['avg_score']), 1) : 0;
 
-        // 5.5 CSAT Promedio
-        $csat_query = "SELECT AVG(c.csat_score) as avg_csat FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " AND c.csat_score > 0";
-        $res_csat = $con->query($csat_query);
-        $avg_csat = ($res_csat && ($rcsat = $res_csat->fetch_assoc()) && $rcsat['avg_csat'] !== null) ? round(floatval($rcsat['avg_csat']), 1) : 0;
-
         // 6. Desempeño por Operador
         $op_where_clauses = $where_clauses;
-        $op_where_clauses[] = "c.id IS NOT NULL";
+        $op_where_clauses[] = "c.id_agente IS NOT NULL AND c.id_agente > 0";
         $op_where_sql = " WHERE " . implode(" AND ", $op_where_clauses);
         $query4 = "
             SELECT COALESCE(up.nombre, u.usuario) as nombre_completo, COUNT(c.id) as chats_atendidos 
-            FROM usuario u 
+            FROM conversaciones c
+            JOIN usuario u ON u.id = c.id_agente
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
-            LEFT JOIN conversaciones c ON u.id = c.id_agente 
             LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
             $op_where_sql
             GROUP BY u.id 
