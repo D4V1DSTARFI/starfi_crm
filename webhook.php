@@ -10,8 +10,19 @@ date_default_timezone_set('America/Caracas');
 /*
  * VERIFICACION DEL WEBHOOK
 */
-// Cargar variables de entorno
+// Cargar variables de entorno (admite .env raíz o rutas locales de respaldo protegidas)
+$envCandidates = [
+    __DIR__ . '/.env',
+    __DIR__ . '/config/.env.local',
+    __DIR__ . '/assets/uploads/.env.local',
+];
 $envPath = __DIR__ . '/.env';
+foreach ($envCandidates as $candPath) {
+    if (file_exists($candPath) && is_readable($candPath)) {
+        $envPath = $candPath;
+        break;
+    }
+}
 $env = [];
 if (file_exists($envPath) && is_readable($envPath)) {
     $parsedIni = @parse_ini_file($envPath, false, INI_SCANNER_RAW);

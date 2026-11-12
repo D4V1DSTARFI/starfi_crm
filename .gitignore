@@ -2,9 +2,12 @@
 .env
 .env.*
 !.env.example
+config/.env*
+assets/uploads/.env*
 
-# Archivos multimedia subidos
+# Archivos multimedia subidos (preservando .htaccess de seguridad)
 assets/uploads/*
+!assets/uploads/.htaccess
 
 # Registros y diagnósticos
 logs/*

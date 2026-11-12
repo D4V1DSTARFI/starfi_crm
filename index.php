@@ -5,6 +5,134 @@ requireAuth();
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Operador';
 $rol_agente = $agente['rol'] ?? 'AGENTE';
+$is_master_emergency = (intval($agente['id'] ?? 0) === 1 && strtoupper((string)$rol_agente) === 'MASTER');
+
+$db_probe = getDbConnection('core');
+$db_online = ($db_probe !== false);
+$env_setup_error = '';
+$env_setup_saved = isset($_GET['env_saved']) && $_GET['env_saved'] === '1';
+
+if (!$db_online && $is_master_emergency) {
+    if (empty($_SESSION['env_setup_csrf'])) {
+        $_SESSION['env_setup_csrf'] = bin2hex(random_bytes(16));
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['setup_env_action'] ?? '') === 'save_env') {
+        $posted_csrf = (string)($_POST['csrf_token'] ?? '');
+        if (!hash_equals($_SESSION['env_setup_csrf'], $posted_csrf)) {
+            $env_setup_error = 'Token de seguridad inválido. Recarga la página e inténtalo de nuevo.';
+        } else {
+            $in_host = trim((string)($_POST['db_host'] ?? '127.0.0.1'));
+            $in_user = trim((string)($_POST['db_user'] ?? ''));
+            $in_pass_raw = trim((string)($_POST['db_pass'] ?? ''));
+            $use_md5 = !empty($_POST['db_pass_md5']);
+            $in_db = trim((string)($_POST['db_name'] ?? 'starfi_crm'));
+            $in_verify = trim((string)($_POST['webhook_verify_token'] ?? ''));
+            $in_meta_token = trim((string)($_POST['meta_global_token'] ?? ''));
+            $in_media_url = trim((string)($_POST['central_media_base_url'] ?? ''));
+
+            // Si el usuario marcó convertir a MD5 y no pegó ya un hash MD5 de 32 hex, convertir automáticamente
+            $final_db_pass = $in_pass_raw;
+            if ($use_md5 && $in_pass_raw !== '' && !preg_match('/^[a-f0-9]{32}$/i', $in_pass_raw)) {
+                $final_db_pass = md5($in_pass_raw);
+            }
+
+            if ($in_verify === '') {
+                $in_verify = ($use_md5 && $in_pass_raw !== '') ? $in_pass_raw : bin2hex(random_bytes(16));
+            }
+
+            if ($in_host === '' || $in_user === '' || $in_db === '') {
+                $env_setup_error = 'Debes completar Servidor (Host), Usuario y Nombre de Base de Datos.';
+            } else {
+                // Probar conexión (incluyendo fallback automático a 127.0.0.1 / localhost si está en el mismo servidor)
+                $hosts_to_try = array_values(array_unique([$in_host, '127.0.0.1', 'localhost']));
+                $working_host = '';
+                $test_con = false;
+                $last_mysql_err = '';
+
+                foreach ($hosts_to_try as $try_h) {
+                    $c_try = @mysqli_connect($try_h, $in_user, $final_db_pass, $in_db);
+                    if ($c_try) {
+                        $working_host = $try_h;
+                        $test_con = $c_try;
+                        break;
+                    }
+                    if ($last_mysql_err === '') {
+                        $last_mysql_err = '(' . mysqli_connect_errno() . ') ' . mysqli_connect_error();
+                    }
+                }
+
+                // Si no marcó MD5 pero la clave en BD estaba almacenada como MD5 de esa frase, probar MD5 automáticamente
+                if (!$test_con && !$use_md5 && $in_pass_raw !== '' && !preg_match('/^[a-f0-9]{32}$/i', $in_pass_raw)) {
+                    $md5_candidate = md5($in_pass_raw);
+                    foreach ($hosts_to_try as $try_h) {
+                        $c_try = @mysqli_connect($try_h, $in_user, $md5_candidate, $in_db);
+                        if ($c_try) {
+                            $working_host = $try_h;
+                            $final_db_pass = $md5_candidate;
+                            $test_con = $c_try;
+                            break;
+                        }
+                    }
+                }
+
+                if (!$test_con) {
+                    $env_setup_error = 'No se pudo conectar a MySQL con esos datos: ' . $last_mysql_err;
+                } else {
+                    // Si no se ingresó META_GLOBAL_TOKEN manualmente, intentar recuperarlo de lineas_whatsapp activas
+                    if ($in_meta_token === '') {
+                        $q_tok = @mysqli_query($test_con, "SELECT meta_token FROM lineas_whatsapp WHERE meta_token LIKE 'EAA%' ORDER BY (estado = 'ACTIVO') DESC, id ASC LIMIT 1");
+                        if ($q_tok && ($r_tok = mysqli_fetch_assoc($q_tok)) && !empty($r_tok['meta_token'])) {
+                            $in_meta_token = trim((string)$r_tok['meta_token']);
+                        }
+                    }
+                    @mysqli_close($test_con);
+
+                    $esc_ini = function ($val) {
+                        return str_replace(['\\', '"', "\r", "\n"], ['\\\\', '\\"', '', ''], (string)$val);
+                    };
+
+                    $ini_body  = "; STARFI CRM - Configuración de Entorno del Servidor\n";
+                    $ini_body .= "APP_ENV=\"PRODUCCION\"\n\n";
+                    $ini_body .= "DB_HOST=\"" . $esc_ini($working_host) . "\"\n";
+                    $ini_body .= "DB_USER=\"" . $esc_ini($in_user) . "\"\n";
+                    $ini_body .= "DB_PASS=\"" . $esc_ini($final_db_pass) . "\"\n";
+                    $ini_body .= "DB_NAME=\"" . $esc_ini($in_db) . "\"\n\n";
+                    $ini_body .= "WEBHOOK_VERIFY_TOKEN=\"" . $esc_ini($in_verify) . "\"\n";
+                    $ini_body .= "META_GLOBAL_TOKEN=\"" . $esc_ini($in_meta_token) . "\"\n";
+                    $ini_body .= "META_APP_SECRET=\"\"\n";
+                    $ini_body .= "META_API_VERSION=\"v23.0\"\n";
+                    $ini_body .= "CENTRAL_MEDIA_BASE_URL=\"" . $esc_ini($in_media_url) . "\"\n";
+
+                    $write_targets = [
+                        __DIR__ . '/.env',
+                        __DIR__ . '/config/.env.local',
+                        __DIR__ . '/assets/uploads/.env.local',
+                    ];
+                    $saved_ok = false;
+                    foreach ($write_targets as $target_file) {
+                        $dir_t = dirname($target_file);
+                        if (!is_dir($dir_t)) {
+                            @mkdir($dir_t, 0755, true);
+                        }
+                        if (@file_put_contents($target_file, $ini_body) !== false) {
+                            @chmod($target_file, 0640);
+                            $saved_ok = true;
+                            break;
+                        }
+                    }
+
+                    if ($saved_ok) {
+                        header('Location: index.php?env_saved=1');
+                        exit();
+                    } else {
+                        $env_setup_error = 'Conexión MySQL exitosa, pero Apache no tiene permisos de escritura en la carpeta del proyecto ni en assets/uploads/. Cree el archivo .env manualmente.';
+                    }
+                }
+            }
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -239,6 +367,103 @@ $rol_agente = $agente['rol'] ?? 'AGENTE';
             <h1 class="welcome-title">¡Hola, <?= htmlspecialchars(explode(' ', $nombre_agente)[0]) ?>!</h1>
             <p class="welcome-subtitle">Bienvenido a STARFI CRM. Selecciona el módulo al que deseas acceder:</p>
         </div>
+
+        <?php if ($env_setup_saved && $db_online): ?>
+        <div class="alert alert-success border-0 shadow-sm rounded-4 mb-4 d-flex align-items-center gap-3">
+            <i class="bi bi-check-circle-fill fs-4"></i>
+            <div>
+                <strong>¡Entorno del servidor configurado con éxito!</strong> La conexión a MySQL está activa y todos los módulos y cuentas de usuarios ya se encuentran habilitados.
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if (!$db_online): ?>
+        <div class="row justify-content-center mb-4">
+            <div class="col-12 col-lg-8">
+                <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+                    <div class="card-header border-0 py-3 px-4 text-white" style="background: linear-gradient(90deg, #0F172A, #1E293B);">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-database-fill-gear fs-5" style="color: #FF8A4D;"></i>
+                            <h5 class="mb-0 fw-bold">Configuración de Entorno del Servidor (<code>.env</code>)</h5>
+                        </div>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="alert alert-warning border-0 rounded-3 mb-4">
+                            <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill me-1"></i> Base de datos aún no conectada en este servidor</div>
+                            <div class="small mb-0">
+                                Por seguridad (<code>SEC-03</code>), el archivo <code>.env</code> no viaja dentro de Git.
+                                <?php if (!empty($GLOBALS['STARFI_DB_LAST_ERROR'])): ?>
+                                    <br><span class="text-muted">Detalle: <?= htmlspecialchars($GLOBALS['STARFI_DB_LAST_ERROR']) ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <?php if ($env_setup_error !== ''): ?>
+                        <div class="alert alert-danger rounded-3 mb-3">
+                            <i class="bi bi-x-octagon-fill me-1"></i> <?= htmlspecialchars($env_setup_error) ?>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php if ($is_master_emergency):
+                            $default_srv_host = trim((string)($_POST['db_host'] ?? ($_SERVER['SERVER_ADDR'] ?? '127.0.0.1')));
+                            if ($default_srv_host === '::1') $default_srv_host = '127.0.0.1';
+                            $default_media_url = trim((string)($_POST['central_media_base_url'] ?? ('http://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/starfi_crm/assets/uploads')));
+                        ?>
+                        <form method="POST" action="index.php" autocomplete="off">
+                            <input type="hidden" name="setup_env_action" value="save_env">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['env_setup_csrf'] ?? '') ?>">
+
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">Servidor MySQL (<code>DB_HOST</code>)</label>
+                                    <input type="text" name="db_host" class="form-control" value="<?= htmlspecialchars($default_srv_host) ?>" placeholder="127.0.0.1 o IP del servidor" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">Base de Datos (<code>DB_NAME</code>)</label>
+                                    <input type="text" name="db_name" class="form-control" value="<?= htmlspecialchars($_POST['db_name'] ?? 'starfi_crm') ?>" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">Usuario MySQL (<code>DB_USER</code>)</label>
+                                    <input type="text" name="db_user" class="form-control" value="<?= htmlspecialchars($_POST['db_user'] ?? 'starfi_v2_user') ?>" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">Contraseña MySQL (<code>DB_PASS</code>)</label>
+                                    <input type="password" name="db_pass" class="form-control" placeholder="Escribe la clave o pega el hash MD5" required>
+                                    <div class="form-check mt-1">
+                                        <input class="form-check-input" type="checkbox" name="db_pass_md5" value="1" id="chkMd5" checked>
+                                        <label class="form-check-label small text-muted" for="chkMd5">
+                                            Si escribo la frase en texto plano, convertir automáticamente a MD5
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">Token Verificación Webhook (<code>WEBHOOK_VERIFY_TOKEN</code>)</label>
+                                    <input type="text" name="webhook_verify_token" class="form-control" value="<?= htmlspecialchars($_POST['webhook_verify_token'] ?? '') ?>" placeholder="Opcional: si queda vacío usa frase/token seguro">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold small">URL Respaldo Multimedia (<code>CENTRAL_MEDIA_BASE_URL</code>)</label>
+                                    <input type="text" name="central_media_base_url" class="form-control" value="<?= htmlspecialchars($default_media_url) ?>">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label fw-semibold small">System User Token de Meta (<code>META_GLOBAL_TOKEN</code>) <span class="text-muted fw-normal">(Opcional: si lo dejas vacío se recupera automáticamente de las líneas activas en BD)</span></label>
+                                    <input type="password" name="meta_global_token" class="form-control" placeholder="EAA...">
+                                </div>
+                            </div>
+
+                            <div class="d-flex justify-content-end mt-4">
+                                <button type="submit" class="btn px-4 py-2 text-white fw-semibold" style="background-color: var(--primary-orange); border-radius: 10px;">
+                                    <i class="bi bi-plug-fill me-1"></i> Probar Conexión, Guardar <code>.env</code> y Activar Módulos
+                                </button>
+                            </div>
+                        </form>
+                        <?php else: ?>
+                        <p class="mb-0 text-muted">Solicite al administrador Master iniciar sesión para completar la conexión inicial del servidor.</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- Módulos Grid -->
         <div class="row g-4 justify-content-center">

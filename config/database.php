@@ -38,7 +38,24 @@ if (!function_exists('starfi_parse_env_file')) {
     }
 }
 
-$envPath = dirname(__DIR__) . '/.env';
+if (!function_exists('starfi_resolve_env_path')) {
+    function starfi_resolve_env_path($rootDir = null) {
+        $base = $rootDir ?: dirname(__DIR__);
+        $candidates = [
+            $base . '/.env',
+            $base . '/config/.env.local',
+            $base . '/assets/uploads/.env.local',
+        ];
+        foreach ($candidates as $candidate) {
+            if (file_exists($candidate) && is_readable($candidate)) {
+                return $candidate;
+            }
+        }
+        return $base . '/.env';
+    }
+}
+
+$envPath = starfi_resolve_env_path(dirname(__DIR__));
 $env = starfi_parse_env_file($envPath);
 
 $envGet = function ($key, $default = '') use ($env) {
@@ -57,11 +74,19 @@ if (!defined('APP_ENV')) {
 }
 
 if (!defined('META_GLOBAL_TOKEN')) {
-    define('META_GLOBAL_TOKEN', $envGet('META_GLOBAL_TOKEN', ''));
+    $rawMetaGlobal = $envGet('META_GLOBAL_TOKEN', '');
+    if ($rawMetaGlobal === 'replace_with_meta_system_user_token') {
+        $rawMetaGlobal = '';
+    }
+    define('META_GLOBAL_TOKEN', $rawMetaGlobal);
 }
 
 if (!defined('META_APP_SECRET')) {
-    define('META_APP_SECRET', $envGet('META_APP_SECRET', ''));
+    $rawMetaSecret = $envGet('META_APP_SECRET', '');
+    if ($rawMetaSecret === 'replace_with_meta_app_secret') {
+        $rawMetaSecret = '';
+    }
+    define('META_APP_SECRET', $rawMetaSecret);
 }
 
 if (!defined('META_API_VERSION')) {
@@ -95,18 +120,37 @@ function getDbConnection($tipo = 'core')
     $contrasenha = $lookup($envPrefix . 'PASS', $lookup('DB_PASS', ''));
     $bd = $lookup($envPrefix . 'NAME', $lookup('DB_NAME', 'starfi_crm'));
 
-    if ($servidor === '' || $usuario === '') {
+    if ($servidor === '' || $usuario === '' || $usuario === 'your_db_user') {
+        $GLOBALS['STARFI_DB_LAST_ERROR'] = 'Archivo .env ausente o con valores de plantilla en el servidor.';
         error_log('[STARFI DB] Credenciales de base de datos no configuradas en .env');
         return false;
     }
 
     $con = @mysqli_connect($servidor, $usuario, $contrasenha, $bd);
 
-    if (mysqli_connect_errno()) {
+    // Si el servidor web y MySQL residen en el mismo host y la IP LAN rechaza loopback, probar 127.0.0.1 / localhost con las mismas credenciales del .env
+    if (!$con) {
+        $serverAddr = trim((string)($_SERVER['SERVER_ADDR'] ?? ''));
+        $httpHost = preg_replace('/:\d+$/', '', trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+        if (($serverAddr !== '' && $servidor === $serverAddr) || ($httpHost !== '' && $servidor === $httpHost)) {
+            foreach (['127.0.0.1', 'localhost'] as $localHostCandidate) {
+                if ($servidor !== $localHostCandidate) {
+                    $con = @mysqli_connect($localHostCandidate, $usuario, $contrasenha, $bd);
+                    if ($con) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!$con || mysqli_connect_errno()) {
+        $GLOBALS['STARFI_DB_LAST_ERROR'] = 'Error de conexión MySQL (' . mysqli_connect_errno() . '): ' . mysqli_connect_error();
         error_log('[STARFI DB] Error de conexión MySQL (' . mysqli_connect_errno() . ')');
         return false;
     }
 
+    $GLOBALS['STARFI_DB_LAST_ERROR'] = '';
     mysqli_set_charset($con, "utf8mb4");
 
     // Forzar zona horaria de MySQL para que NOW() coincida con PHP
