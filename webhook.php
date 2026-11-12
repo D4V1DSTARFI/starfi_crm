@@ -26,6 +26,125 @@ if ($token === $tokenVerificacion) {
     exit;
 }
 
+/**
+ * Cierra inmediatamente la entrega HTTP 200 OK hacia Meta para cumplir el SLA (< 300ms)
+ * mientras el proceso PHP continúa en segundo plano ejecutando IA (Gemini) o envíos de contactos.
+ */
+function responder_http_200_y_continuar($body = 'EVENT_RECEIVED') {
+    static $ya_enviado = false;
+    if ($ya_enviado) {
+        return;
+    }
+    $ya_enviado = true;
+
+    ignore_user_abort(true);
+    @set_time_limit(120);
+
+    if (PHP_SAPI === 'cli') {
+        return;
+    }
+
+    if (function_exists('fastcgi_finish_request')) {
+        if (!headers_sent()) {
+            http_response_code(200);
+            header('Content-Type: text/plain; charset=utf-8');
+        }
+        echo $body;
+        fastcgi_finish_request();
+        return;
+    }
+
+    while (ob_get_level() > 0) {
+        @ob_end_clean();
+    }
+
+    if (!headers_sent()) {
+        http_response_code(200);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Connection: close');
+        header('Content-Encoding: none');
+        header('Content-Length: ' . strlen($body));
+    }
+
+    echo $body;
+    @ob_flush();
+    @flush();
+
+    ob_start(function () {
+        return '';
+    });
+}
+
+/**
+ * Sincroniza conversaciones.ultimo_msg_id en O(1) por clave primaria tras insertar un mensaje/evento.
+ */
+function webhook_sync_ultimo_msg($con, $id_conversacion, $msg_id = 0) {
+    $cid = intval($id_conversacion);
+    $mid = intval($msg_id);
+    if ($con && $cid > 0 && $mid > 0) {
+        @mysqli_query($con, "UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $mid) WHERE id = $cid AND ultimo_msg_id < $mid");
+    }
+}
+
+/**
+ * Recalcula todos los contadores del embudo de una campaña en 1 sola pasada agregada indexada (sin subconsultas correlacionadas).
+ */
+function recalcular_embudo_campana_webhook($con, $id_camp) {
+    $id_camp = intval($id_camp);
+    if (!$con || $id_camp <= 0) {
+        return;
+    }
+    $sql = "UPDATE campanas_difusion c
+            INNER JOIN (
+                SELECT id_campana,
+                       COALESCE(SUM(estado_envio = 'PENDIENTE'), 0) AS pend,
+                       COALESCE(SUM(estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')), 0) AS env,
+                       COALESCE(SUM(fecha_entrega IS NOT NULL OR estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO')), 0) AS entr,
+                       COALESCE(SUM(fecha_lectura IS NOT NULL OR estado_envio IN ('LEIDO','RESPONDIDO')), 0) AS lei,
+                       COALESCE(SUM(respondido = 1), 0) AS resp,
+                       COALESCE(SUM(estado_envio = 'FALLIDO'), 0) AS fall,
+                       COALESCE(SUM(CASE WHEN estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') THEN costo_usd ELSE 0 END), 0) AS costo_real
+                FROM campanas_difusion_destinatarios
+                WHERE id_campana = $id_camp
+                GROUP BY id_campana
+            ) agg ON agg.id_campana = c.id
+            SET c.pendientes = agg.pend,
+                c.enviados = agg.env,
+                c.entregados = agg.entr,
+                c.leidos = agg.lei,
+                c.respondidos = agg.resp,
+                c.fallidos = agg.fall,
+                c.costo_real_usd = agg.costo_real
+            WHERE c.id = $id_camp";
+    @mysqli_query($con, $sql);
+}
+
+/**
+ * Garantiza una sola vez la existencia de índices críticos (idx_meta_wamid, idx_campana_estado, idx_meta_msg).
+ */
+function ensure_webhook_indexes($con) {
+    if (!$con) {
+        return;
+    }
+    $flag = sys_get_temp_dir() . '/starfi_webhook_idx_v1.flag';
+    if (file_exists($flag)) {
+        return;
+    }
+    $r1 = @mysqli_query($con, "SHOW INDEX FROM `mensajes_y_eventos` WHERE Key_name = 'idx_meta_wamid'");
+    if ($r1 && mysqli_num_rows($r1) === 0) {
+        @mysqli_query($con, "ALTER TABLE `mensajes_y_eventos` ADD INDEX `idx_meta_wamid` (id_mensaje_meta(100))");
+    }
+    $r2 = @mysqli_query($con, "SHOW INDEX FROM `campanas_difusion_destinatarios` WHERE Key_name = 'idx_campana_estado'");
+    if ($r2 !== false && mysqli_num_rows($r2) === 0) {
+        @mysqli_query($con, "ALTER TABLE `campanas_difusion_destinatarios` ADD INDEX `idx_campana_estado` (id_campana, estado_envio)");
+    }
+    $r3 = @mysqli_query($con, "SHOW INDEX FROM `campanas_difusion_destinatarios` WHERE Key_name = 'idx_meta_msg'");
+    if ($r3 !== false && mysqli_num_rows($r3) === 0) {
+        @mysqli_query($con, "ALTER TABLE `campanas_difusion_destinatarios` ADD INDEX `idx_meta_msg` (id_mensaje_meta)");
+    }
+    @file_put_contents($flag, date('Y-m-d H:i:s'));
+}
+
 if (!defined('WEBHOOK_NO_EXECUTE')) {
 
     /*
@@ -62,12 +181,14 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     $con = getDbConnection();
 
     if ($con) {
+        ensure_webhook_indexes($con);
         $payload_esc = mysqli_real_escape_string($con, $respuesta);
         mysqli_query($con, "INSERT INTO auditoria_webhooks (payload_json) VALUES ('$payload_esc')");
     }
 
     // Verificar que hay datos
     if (!$respuesta_array || !isset($respuesta_array['entry'][0]['changes'][0]['value'])) {
+        http_response_code(200);
         exit;
     }
 
@@ -78,6 +199,7 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
 
     // GESTIÓN DE ESTADOS (Doble check: enviado, entregado, leído, fallido)
     if (!empty($value['statuses']) && is_array($value['statuses'])) {
+        $campanas_por_recalcular = [];
         foreach ($value['statuses'] as $status_obj) {
             $estado = $status_obj['status'] ?? ''; // sent, delivered, read, failed
             $id_mensaje_meta_status = $status_obj['id'] ?? '';
@@ -163,70 +285,66 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
                 mysqli_query($con, $update_sql);
 
                 // ====== ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: ACTUALIZAR ENTREGADOS, LEÍDOS Y FALLIDOS ======
-                $chk_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-                if ($chk_dest && mysqli_num_rows($chk_dest) > 0) {
-                    $res_dest = mysqli_query($con, "SELECT d.id, d.id_campana, d.estado_envio, d.respondido, c.costo_unitario_usd 
-                                                    FROM campanas_difusion_destinatarios d
-                                                    LEFT JOIN campanas_difusion c ON c.id = d.id_campana
-                                                    WHERE d.id_mensaje_meta = '$id_msg_esc' LIMIT 1");
-                    if ($res_dest && mysqli_num_rows($res_dest) > 0) {
-                        $row_dest = mysqli_fetch_assoc($res_dest);
-                        $id_dest = (int)$row_dest['id'];
-                        $id_camp = (int)$row_dest['id_campana'];
-                        $est_actual = $row_dest['estado_envio'];
-                        $ya_respondio = (int)$row_dest['respondido'];
-                        $costo_camp_unit = floatval($row_dest['costo_unitario_usd'] ?? 0.0770);
+                $res_dest = @mysqli_query($con, "SELECT d.id, d.id_campana, d.estado_envio, d.respondido, c.costo_unitario_usd 
+                                                 FROM campanas_difusion_destinatarios d
+                                                 LEFT JOIN campanas_difusion c ON c.id = d.id_campana
+                                                 WHERE d.id_mensaje_meta = '$id_msg_esc' LIMIT 1");
+                if ($res_dest && mysqli_num_rows($res_dest) > 0) {
+                    $row_dest = mysqli_fetch_assoc($res_dest);
+                    $id_dest = (int)$row_dest['id'];
+                    $id_camp = (int)$row_dest['id_campana'];
+                    $est_actual = $row_dest['estado_envio'];
+                    $ya_respondio = (int)$row_dest['respondido'];
+                    $costo_camp_unit = floatval($row_dest['costo_unitario_usd'] ?? 0.0770);
 
-                        $dest_updates = [];
-                        if ($estado_sql === 'ENTREGADO') {
-                            if ($ya_respondio === 0 && $est_actual !== 'LEIDO') {
-                                $dest_updates[] = "estado_envio = 'ENTREGADO'";
-                            }
-                            $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
-                        } elseif ($estado_sql === 'LEIDO') {
-                            if ($ya_respondio === 0) {
-                                $dest_updates[] = "estado_envio = 'LEIDO'";
-                            }
-                            $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
-                            $dest_updates[] = "fecha_lectura = IFNULL(fecha_lectura, NOW())";
-                        } elseif ($estado_sql === 'FALLIDO') {
-                            $dest_updates[] = "estado_envio = 'FALLIDO'";
-                            $dest_updates[] = "costo_usd = 0.0000";
-                            if (!empty($error_detalle_meta)) {
-                                $err_d_esc = mysqli_real_escape_string($con, $error_detalle_meta);
-                                $dest_updates[] = "error_detalle = '$err_d_esc'";
-                            }
+                    $dest_updates = [];
+                    if ($estado_sql === 'ENTREGADO') {
+                        if ($ya_respondio === 0 && $est_actual !== 'LEIDO') {
+                            $dest_updates[] = "estado_envio = 'ENTREGADO'";
                         }
-
-                        // Si el mensaje fue entregado o leído, mantener la tarifa unitaria configurada en la sede (que incluye comisión)
-                        if ($estado_sql !== 'FALLIDO' && $costo_camp_unit > 0) {
-                            $dest_updates[] = "costo_usd = $costo_camp_unit";
+                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                    } elseif ($estado_sql === 'LEIDO') {
+                        if ($ya_respondio === 0) {
+                            $dest_updates[] = "estado_envio = 'LEIDO'";
                         }
+                        $dest_updates[] = "fecha_entrega = IFNULL(fecha_entrega, NOW())";
+                        $dest_updates[] = "fecha_lectura = IFNULL(fecha_lectura, NOW())";
+                    } elseif ($estado_sql === 'FALLIDO') {
+                        $dest_updates[] = "estado_envio = 'FALLIDO'";
+                        $dest_updates[] = "costo_usd = 0.0000";
+                        if (!empty($error_detalle_meta)) {
+                            $err_d_esc = mysqli_real_escape_string($con, $error_detalle_meta);
+                            $dest_updates[] = "error_detalle = '$err_d_esc'";
+                        }
+                    }
 
-                        if (!empty($dest_updates)) {
-                            mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET " . implode(", ", $dest_updates) . " WHERE id = $id_dest");
-                            // Recalcular embudo en campanas_difusion
-                            mysqli_query($con, "UPDATE campanas_difusion c SET 
-                                pendientes = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'PENDIENTE'),
-                                enviados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')),
-                                entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
-                                leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
-                                respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.respondido = 1),
-                                fallidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio = 'FALLIDO'),
-                                costo_real_usd = (SELECT IFNULL(SUM(costo_usd), 0) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp AND d.estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO'))
-                                WHERE c.id = $id_camp");
+                    // Si el mensaje fue entregado o leído, mantener la tarifa unitaria configurada en la sede (que incluye comisión)
+                    if ($estado_sql !== 'FALLIDO' && $costo_camp_unit > 0) {
+                        $dest_updates[] = "costo_usd = $costo_camp_unit";
+                    }
+
+                    if (!empty($dest_updates)) {
+                        mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET " . implode(", ", $dest_updates) . " WHERE id = $id_dest");
+                        if ($id_camp > 0) {
+                            $campanas_por_recalcular[$id_camp] = true;
                         }
                     }
                 }
             }
         }
+        foreach (array_keys($campanas_por_recalcular) as $cid_recalc) {
+            recalcular_embudo_campana_webhook($con, $cid_recalc);
+        }
         if (!isset($value['messages'][0])) {
+            http_response_code(200);
+            echo 'EVENT_RECEIVED';
             exit;
         }
     }
 
     // Verificar que hay mensajes
     if (!isset($value['messages'][0])) {
+        http_response_code(200);
         exit;
     }
 
@@ -235,6 +353,26 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     $id_mensaje_meta = $msg['id'] ?? null;
     $times = $msg['timestamp'] ?? time();
     $perfil = $respuesta_array['entry'][0]['changes'][0]['value']['contacts'][0]['profile']['name'] ?? 'Usuario';
+
+    // WHK-01: Idempotencia estricta por id_mensaje_meta usando idx_meta_wamid antes de procesar o llamar a la IA
+    if ($con && !empty($id_mensaje_meta)) {
+        $stmt_dup = mysqli_prepare($con, "SELECT id FROM mensajes_y_eventos USE INDEX (idx_meta_wamid) WHERE id_mensaje_meta = ? LIMIT 1");
+        if (!$stmt_dup) {
+            $stmt_dup = mysqli_prepare($con, "SELECT id FROM mensajes_y_eventos WHERE id_mensaje_meta = ? LIMIT 1");
+        }
+        if ($stmt_dup) {
+            mysqli_stmt_bind_param($stmt_dup, "s", $id_mensaje_meta);
+            mysqli_stmt_execute($stmt_dup);
+            mysqli_stmt_store_result($stmt_dup);
+            $es_duplicado = (mysqli_stmt_num_rows($stmt_dup) > 0);
+            mysqli_stmt_close($stmt_dup);
+            if ($es_duplicado) {
+                http_response_code(200);
+                echo 'EVENT_RECEIVED';
+                exit;
+            }
+        }
+    }
 
     $tipo_mensaje = $msg['type'] ?? 'text';
     $mensaje_texto = null;
@@ -375,15 +513,21 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
             $row_last = mysqli_fetch_assoc($q_last_closed);
             if (empty($row_last['csat_score'])) {
                 // Es una respuesta a la encuesta CSAT!
-                mysqli_query($con, "UPDATE conversaciones SET csat_score = $csat_value WHERE id = " . $row_last['id']);
-                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (" . $row_last['id'] . ", 'EVENTO_SISTEMA', 'El cliente calificó la atención con $csat_value estrellas (CSAT).')");
+                $csat_conv_id = intval($row_last['id']);
+                $id_msg_csat_esc = $id_mensaje_meta ? "'" . mysqli_real_escape_string($con, $id_mensaje_meta) . "'" : "NULL";
+                mysqli_query($con, "UPDATE conversaciones SET csat_score = $csat_value WHERE id = $csat_conv_id");
+                mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, origen, contenido) VALUES ($csat_conv_id, $id_msg_csat_esc, 'EVENTO_SISTEMA', 'El cliente calificó la atención con $csat_value estrellas (CSAT).')");
+                webhook_sync_ultimo_msg($con, $csat_conv_id, mysqli_insert_id($con));
+
+                // Responder HTTP 200 inmediatamente a Meta antes de despachar agradecimientos
+                responder_http_200_y_continuar();
                 
                 // Enviar mensaje de agradecimiento
                 if ($id_linea) {
                     $q_t = mysqli_query($con, "SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id = $id_linea");
                     if ($q_t && mysqli_num_rows($q_t) > 0) {
                         $l_info = mysqli_fetch_assoc($q_t);
-                        enviar_mensaje_texto_api($con, $l_info, $telefono_cliente, "¡Gracias por tu calificación! Nos ayuda a mejorar.", $row_last['id']);
+                        enviar_mensaje_texto_api($con, $l_info, $telefono_cliente, "¡Gracias por tu calificación! Nos ayuda a mejorar.", $csat_conv_id);
                         marcar_como_leido_api($l_info, $id_mensaje_meta);
                     }
                 }
@@ -443,43 +587,41 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                   VALUES ($id_conversacion, $id_msg_meta_esc, '$tipo_bd', 'CLIENTE', '$cuerpo_mensaje', $url_archivo_esc, $mime_type_esc)";
     if (!mysqli_query($con, $query_msg)) {
         error_log("Error al guardar mensaje en la bd: " . mysqli_error($con));
+    } else {
+        webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
     }
 
     // 4.1 ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: REGISTRAR RESPUESTA DEL CLIENTE (CONVERSIÓN)
-    $chk_camp_dest = mysqli_query($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-    if ($chk_camp_dest && mysqli_num_rows($chk_camp_dest) > 0) {
-        $tel_clean_camp = preg_replace('/[^0-9]/', '', $telefono_cliente);
-        $tel_tail = strlen($tel_clean_camp) >= 10 ? substr($tel_clean_camp, -10) : $tel_clean_camp;
-        if (!empty($tel_tail)) {
-            $tel_tail_esc = mysqli_real_escape_string($con, $tel_tail);
-            $res_camp_hit = mysqli_query($con, "SELECT id, id_campana FROM campanas_difusion_destinatarios 
-                                                WHERE (id_cliente = $id_cliente OR telefono LIKE '%$tel_tail_esc%') 
-                                                AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO') 
-                                                AND respondido = 0 
-                                                ORDER BY id DESC LIMIT 1");
-            if ($res_camp_hit && mysqli_num_rows($res_camp_hit) > 0) {
-                $row_hit = mysqli_fetch_assoc($res_camp_hit);
-                $id_dest_hit = (int)$row_hit['id'];
-                $id_camp_hit = (int)$row_hit['id_campana'];
-                $resp_preview = mysqli_real_escape_string($con, mb_substr(strip_tags($cuerpo_mensaje), 0, 250));
-                mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
-                                    SET respondido = 1, 
-                                        estado_envio = 'RESPONDIDO', 
-                                        respuesta_texto = '$resp_preview', 
-                                        fecha_entrega = IFNULL(fecha_entrega, NOW()),
-                                        fecha_lectura = IFNULL(fecha_lectura, NOW()),
-                                        fecha_respuesta = NOW() 
-                                    WHERE id = $id_dest_hit");
-                mysqli_query($con, "UPDATE campanas_difusion c SET 
-                    entregados = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND (d.fecha_entrega IS NOT NULL OR d.estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO'))),
-                    leidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND (d.fecha_lectura IS NOT NULL OR d.estado_envio IN ('LEIDO','RESPONDIDO'))),
-                    respondidos = (SELECT COUNT(*) FROM campanas_difusion_destinatarios d WHERE d.id_campana = $id_camp_hit AND d.respondido = 1)
-                    WHERE c.id = $id_camp_hit");
-            }
+    $tel_clean_camp = preg_replace('/[^0-9]/', '', $telefono_cliente);
+    $tel_tail = strlen($tel_clean_camp) >= 10 ? substr($tel_clean_camp, -10) : $tel_clean_camp;
+    if (!empty($tel_tail)) {
+        $tel_tail_esc = mysqli_real_escape_string($con, $tel_tail);
+        $res_camp_hit = @mysqli_query($con, "SELECT id, id_campana FROM campanas_difusion_destinatarios 
+                                             WHERE (id_cliente = $id_cliente OR telefono LIKE '%$tel_tail_esc%') 
+                                             AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO') 
+                                             AND respondido = 0 
+                                             ORDER BY id DESC LIMIT 1");
+        if ($res_camp_hit && mysqli_num_rows($res_camp_hit) > 0) {
+            $row_hit = mysqli_fetch_assoc($res_camp_hit);
+            $id_dest_hit = (int)$row_hit['id'];
+            $id_camp_hit = (int)$row_hit['id_campana'];
+            $resp_preview = mysqli_real_escape_string($con, mb_substr(strip_tags($cuerpo_mensaje), 0, 250));
+            mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
+                                SET respondido = 1, 
+                                    estado_envio = 'RESPONDIDO', 
+                                    respuesta_texto = '$resp_preview', 
+                                    fecha_entrega = IFNULL(fecha_entrega, NOW()),
+                                    fecha_lectura = IFNULL(fecha_lectura, NOW()),
+                                    fecha_respuesta = NOW() 
+                                WHERE id = $id_dest_hit");
+            recalcular_embudo_campana_webhook($con, $id_camp_hit);
         }
     }
+
+    // WHK-03: Cerrar entrega HTTP 200 OK hacia Meta inmediatamente antes de ejecutar IA (Gemini) y usleep de contactos
+    responder_http_200_y_continuar();
     
-    // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS
+    // 5. ENVIAR RESPUESTA AUTOMÁTICA Y CONTACTOS (en segundo plano)
     if ($id_linea) {
         $q_token = mysqli_query($con, "SELECT l.meta_app_id, l.meta_token, l.id_sede, s.bot_activo FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id = $id_linea AND l.estado = 'ACTIVO'");
         if($q_token && mysqli_num_rows($q_token) > 0) {
@@ -536,6 +678,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 if ($solicita_humano) {
                     mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
                     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'El cliente solicitó atención por un agente humano (Handover).')");
+                    webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
                     
                     enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, "Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.", $id_conversacion);
                     enviar_contactos_asesores($linea_info['meta_app_id'], $linea_info['meta_token'], $telefono_cliente, $id_sede, $con, $id_conversacion);
@@ -576,6 +719,7 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                                 $respuestaLimpia = trim(str_replace('[SOLICITAR_AGENTE_HUMANO]', '', $respuestaIa));
                                 mysqli_query($con, "UPDATE conversaciones SET estado = 'ESPERA_ASIGNACION' WHERE id = $id_conversacion");
                                 mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', 'La IA solicitó transferencia a agente humano.')");
+                                webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
                                 
                                 if (empty($respuestaLimpia)) {
                                     $respuestaLimpia = "Te estoy transfiriendo con un asesor de nuestra sede para atenderte personalmente.";
@@ -696,8 +840,11 @@ function enviar_mensaje_texto_api($con, $linea_info, $telefono_cliente, $mensaje
     
     // Guardar mensaje enviado en BD
     if ($status_code == 200) {
+        $res_bot_meta = json_decode($response, true);
+        $bot_wamid = isset($res_bot_meta['messages'][0]['id']) ? ("'" . mysqli_real_escape_string($con, $res_bot_meta['messages'][0]['id']) . "'") : "NULL";
         $enviado_esc = mysqli_real_escape_string($con, $mensaje_texto);
-        mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido) VALUES ($id_conversacion, 'TEXTO', 'BOT', '$enviado_esc')");
+        mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, estado_envio) VALUES ($id_conversacion, $bot_wamid, 'TEXTO', 'BOT', '$enviado_esc', 'ENVIADO')");
+        webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
     } else {
         error_log("Error al enviar mensaje automatico: " . $response);
     }
@@ -765,6 +912,7 @@ function enviar_contactos_asesores($telefonoID, $token_seguro, $telefono_cliente
         // Registrar en CRM que se enviaron los contactos
         $cont_str = mysqli_real_escape_string($con, "Contacto enviado: " . $asesor['nombre'] . " (" . $asesor['telefono'] . ")");
         mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, tipo, origen, contenido) VALUES ($id_conversacion, 'TEXTO', 'BOT', '$cont_str')");
+        webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
         
         // Pequeña pausa entre envíos
         usleep(500000); // 0.5 segundos
@@ -855,6 +1003,7 @@ function enviar_csat_y_cerrar_api($con, $linea_info, $telefono_cliente, $id_conv
     
     // 3. Registrar en eventos
     mysqli_query($con, "INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($id_conversacion, 'EVENTO_SISTEMA', 'Encuesta CSAT enviada y conversación cerrada por el BOT.')");
+    webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
 }
 
 /**
@@ -894,6 +1043,7 @@ function enviar_mensaje_imagen_api($con, $linea_info, $telefono_cliente, $image_
     
     $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, url_archivo) VALUES ($id_conversacion, 'BOT', 'IMAGEN', '" . mysqli_real_escape_string($con, $caption) . "', '" . mysqli_real_escape_string($con, $image_url) . "')";
     mysqli_query($con, $q_guardar);
+    webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
 }
 
 /**
@@ -935,6 +1085,7 @@ function enviar_mensaje_ubicacion_api($con, $linea_info, $telefono_cliente, $lat
     
     $q_guardar = "INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($id_conversacion, 'BOT', 'UBICACION', '" . mysqli_real_escape_string($con, $nombre_lugar . " (Lat: $latitud, Lng: $longitud)") . "')";
     mysqli_query($con, $q_guardar);
+    webhook_sync_ultimo_msg($con, $id_conversacion, mysqli_insert_id($con));
 }
 /**
  * Envia lista de asesores de la sede (como texto formateado con sus números)
