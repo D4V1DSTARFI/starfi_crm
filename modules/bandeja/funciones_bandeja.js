@@ -787,7 +787,7 @@ function renderChatList(chats, append = false, has_more = false) {
         if (chat.deal_etapa) {
             const montoNum = parseFloat(chat.deal_monto_usd || 0);
             const montoStr = montoNum > 0 ? ` · $${montoNum.toFixed(2)}` : '';
-            dealBadgeHtml = `<span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.63rem; margin-left: 4px; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE;"><i class="fa-solid fa-sack-dollar me-1"></i>${formatEtapaShort(chat.deal_etapa)}${montoStr}</span>`;
+            dealBadgeHtml = `<span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.63rem; margin-left: 4px; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE;"><i class="bi bi-cash-coin me-1"></i>${formatEtapaShort(chat.deal_etapa)}${montoStr}</span>`;
         }
 
         const slaSince = parseInt(chat.sla_wait_since_epoch || 0, 10);
@@ -1981,9 +1981,9 @@ function renderSlaSoundButton() {
     const btn = $('#btnSlaSoundToggle');
     if (!btn.length) return;
     if (slaSoundEnabled) {
-        btn.html('<i class="fa-solid fa-volume-high text-success"></i>');
+        btn.html('<i class="bi bi-volume-up-fill text-success"></i>');
     } else {
-        btn.html('<i class="fa-solid fa-volume-xmark text-muted"></i>');
+        btn.html('<i class="bi bi-volume-mute-fill text-muted"></i>');
     }
 }
 

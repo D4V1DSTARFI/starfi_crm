@@ -19,8 +19,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <!-- FontAwesome Local -->
-    <link rel="stylesheet" href="../../assets/css/all.min.css">
+    <!-- FontAwesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css?v=<?= time() + 3 ?>">
     <!-- Emojis Nativos (Sin dependencias externas) -->
     <style>
@@ -397,20 +397,20 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         <!-- Chats Panel (Left Column) -->
         <section class="chats-panel">
             <header class="chats-header">
-                <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-1">
+                <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
                     <h2 class="mb-0">Conversaciones</h2>
-                    <div class="d-flex align-items-center gap-1">
+                    <div class="d-flex align-items-center gap-2">
                         <?php if (intval($agente['id'] ?? 0) > 1): ?>
-                        <button type="button" id="btnAvailabilityToggle" class="btn btn-sm rounded-pill px-2 py-1 fw-bold" style="font-size: 0.7rem; background:#ECFDF5; color:#059669; border:1px solid #A7F3D0;" title="Estado para Enrutamiento Automático Round-Robin">
-                            <i class="fa-solid fa-circle me-1" style="font-size:0.5rem;"></i> <span>En línea</span>
+                        <button type="button" id="btnAvailabilityToggle" class="btn btn-sm rounded-pill fw-bold d-inline-flex align-items-center gap-1" style="font-size: 0.72rem; padding: 4px 10px; background:#ECFDF5; color:#059669; border:1px solid #A7F3D0;" title="Estado para Enrutamiento Automático Round-Robin">
+                            <i class="bi bi-circle-fill" style="font-size:0.48rem;"></i> <span>En línea</span>
                         </button>
                         <?php endif; ?>
-                        <button type="button" id="btnSlaSoundToggle" class="btn btn-sm btn-light border rounded-pill px-2 py-1 fw-semibold" style="font-size: 0.72rem; color:#475569;" title="Activar/Silenciar Alerta Sonora SLA (>15 min)">
-                            <i class="fa-solid fa-volume-high text-success"></i>
+                        <button type="button" id="btnSlaSoundToggle" class="btn btn-sm btn-light border rounded-circle d-inline-flex align-items-center justify-content-center p-0" style="width: 30px; height: 30px; font-size: 0.9rem; color:#475569;" title="Activar/Silenciar Alerta Sonora SLA (>15 min)">
+                            <i class="bi bi-volume-up-fill text-success"></i>
                         </button>
                         <?php if (hasPermission('pipeline')): ?>
-                        <a href="../pipeline/pipeline.php" class="btn btn-sm rounded-pill px-2.5 py-1 fw-bold text-decoration-none" style="font-size: 0.72rem; background:rgba(232,91,20,0.1); color:#E85B14; border:1px solid rgba(232,91,20,0.25);" title="Abrir Tablero Kanban de Embudo de Ventas">
-                            <i class="fa-solid fa-filter-circle-dollar me-1"></i> Kanban
+                        <a href="../pipeline/pipeline.php" class="btn btn-sm rounded-pill fw-bold text-decoration-none d-inline-flex align-items-center gap-1" style="font-size: 0.74rem; padding: 4px 12px; background:rgba(232,91,20,0.1); color:#E85B14; border:1px solid rgba(232,91,20,0.28);" title="Abrir Tablero Kanban de Embudo de Ventas">
+                            <i class="bi bi-kanban-fill"></i> <span>Kanban</span>
                         </a>
                         <?php endif; ?>
                     </div>
@@ -465,7 +465,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
                 <!-- [COM-04] Resumen Semáforo SLA en vivo -->
                 <div id="slaSummaryStrip" class="d-flex align-items-center justify-content-between px-2 py-1 mb-2 rounded-3" style="background:#F8FAFC; border:1px solid #E2E8F0; font-size:0.7rem;">
-                    <span class="text-muted fw-semibold"><i class="fa-solid fa-traffic-light me-1"></i> SLA:</span>
+                    <span class="text-muted fw-semibold"><i class="bi bi-speedometer2 me-1"></i> SLA:</span>
                     <span class="text-success fw-bold" title="Menos de 5 min sin respuesta humana">🟢 <span id="slaCountGreen">0</span> <small class="fw-normal">&lt;5m</small></span>
                     <span class="text-warning-emphasis fw-bold" title="Entre 5 y 15 min sin respuesta humana">🟡 <span id="slaCountYellow">0</span> <small class="fw-normal">5-15m</small></span>
                     <span class="text-danger fw-bold" style="cursor:pointer;" id="slaQuickFilterRed" title="Más de 15 min sin respuesta humana (clic para filtrar)">🔴 <span id="slaCountRed">0</span> <small class="fw-normal">&gt;15m</small></span>
@@ -521,7 +521,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 </span>
                                 <!-- [COM-02] Chip rápido de Embudo y Monto USD -->
                                 <span id="btnQuickDeal" class="deal-header-chip" title="Actualizar Etapa del Embudo y Monto Estimado USD">
-                                    <i class="fa-solid fa-sack-dollar"></i> <span id="chatDealChipText">Nuevo Lead · $0.00</span>
+                                    <i class="bi bi-cash-coin"></i> <span id="chatDealChipText">Nuevo Lead · $0.00</span>
                                 </span>
                             </div>
                             <span id="chatHeaderPhone">...</span>
