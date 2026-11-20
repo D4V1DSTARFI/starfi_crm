@@ -1270,6 +1270,121 @@ switch ($action) {
         }
         break;
 
+    // --- CONFIGURACIÓN DINÁMICA DE TIEMPOS SLA Y ENRUTAMIENTO ([COM-04]) ---
+    case 'get_sla_settings':
+        $ag = getAgenteInfo();
+        $ag_id = intval($ag['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
+        $user_sede = intval($ag['id_sede'] ?? 0);
+        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
+        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+
+        $req_sede = $is_master ? max(0, intval($_POST['id_sede'] ?? 0)) : $user_sede;
+        $current_cfg = starfi_get_sla_config($con, $req_sede);
+
+        $sedes_list = [];
+        $where_s = (!$is_master && $user_sede > 0) ? "WHERE id = $user_sede" : "WHERE estado = 'ACTIVO'";
+        $rS = $con->query("SELECT id, nombre_sede FROM sedes $where_s ORDER BY nombre_sede ASC");
+        if ($rS) {
+            while ($rs = $rS->fetch_assoc()) {
+                $sedes_list[] = $rs;
+            }
+        }
+
+        // Resumen de reglas guardadas (Global + sedes personalizadas)
+        $rules = [];
+        $rR = $con->query("
+            SELECT cs.id_sede, cs.verde_max_min, cs.amarillo_max_min, cs.round_robin_online_min, cs.alerta_sonora_activa,
+                   IFNULL(s.nombre_sede, '🌎 Regla Global (Por defecto)') AS ambito_nombre
+            FROM config_sla cs
+            LEFT JOIN sedes s ON cs.id_sede = s.id
+            " . (!$is_master && $user_sede > 0 ? "WHERE cs.id_sede IN (0, $user_sede)" : "") . "
+            ORDER BY (cs.id_sede = 0) DESC, ambito_nombre ASC
+        ");
+        if ($rR) {
+            while ($rr = $rR->fetch_assoc()) {
+                $rules[] = $rr;
+            }
+        }
+
+        echo json_encode([
+            'status'    => 'success',
+            'is_master' => $is_master,
+            'is_admin'  => $is_admin,
+            'user_sede' => $user_sede,
+            'config'    => $current_cfg,
+            'sedes'     => $sedes_list,
+            'rules'     => $rules,
+        ]);
+        break;
+
+    case 'save_sla_settings':
+        $ag = getAgenteInfo();
+        $ag_id = intval($ag['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
+        $user_sede = intval($ag['id_sede'] ?? 0);
+        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
+        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+
+        if (!$is_master && !$is_admin) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes permisos para modificar los tiempos SLA.']);
+            exit;
+        }
+
+        $target_sede = $is_master ? max(0, intval($_POST['id_sede'] ?? 0)) : $user_sede;
+        if (!$is_master && $target_sede <= 0) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Tu usuario no posee una sede asignada.']);
+            exit;
+        }
+
+        $v_min = intval($_POST['verde_max_min'] ?? 5);
+        $a_min = intval($_POST['amarillo_max_min'] ?? 15);
+        $rr_min = intval($_POST['round_robin_online_min'] ?? 5);
+        $snd = intval($_POST['alerta_sonora_activa'] ?? 1);
+
+        $saved = starfi_save_sla_config($con, $target_sede, $v_min, $a_min, $rr_min, $snd);
+        if (!$saved['ok']) {
+            echo json_encode(['status' => 'error', 'message' => $saved['message']]);
+            exit;
+        }
+
+        echo json_encode([
+            'status'  => 'success',
+            'message' => $target_sede === 0
+                ? 'Regla Global de tiempos SLA actualizada para todo el CRM.'
+                : 'Tiempos SLA personalizados guardados para la sede seleccionada.',
+            'config'  => $saved['config'],
+        ]);
+        break;
+
+    case 'reset_sla_sede':
+        $ag = getAgenteInfo();
+        $ag_id = intval($ag['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
+        $user_sede = intval($ag['id_sede'] ?? 0);
+        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
+        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+
+        if (!$is_master && !$is_admin) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Sin autorización.']);
+            exit;
+        }
+        $target_sede = $is_master ? intval($_POST['id_sede'] ?? 0) : $user_sede;
+        if ($target_sede <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'La Regla Global no puede eliminarse, solo editarse.']);
+            exit;
+        }
+        $con->query("DELETE FROM config_sla WHERE id_sede = $target_sede");
+        echo json_encode([
+            'status'  => 'success',
+            'message' => 'La sede ahora hereda nuevamente la Regla Global de SLA.',
+            'config'  => starfi_get_sla_config($con, $target_sede),
+        ]);
+        break;
+
     default:
         echo json_encode(['status' => 'error', 'message' => 'Acción no válida.']);
         break;

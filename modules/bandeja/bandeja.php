@@ -304,12 +304,56 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             border: 1px solid #E2E8F0;
             font-weight: 600;
         }
-        .chat-item.sla-item-yellow {
-            border-left: 3.5px solid #F59E0B !important;
+
+        /* [COM-02] Colores oficiales enlazados con las 6 columnas del Tablero Kanban */
+        .chat-item[class*="stage-"]::after { display: none !important; }
+        .chat-item.stage-NUEVO_LEAD     { border-left: 4px solid #3B82F6 !important; }
+        .chat-item.stage-COTIZADO       { border-left: 4px solid #8B5CF6 !important; }
+        .chat-item.stage-EN_NEGOCIACION { border-left: 4px solid #F59E0B !important; }
+        .chat-item.stage-PAGO_PENDIENTE { border-left: 4px solid #E85B14 !important; }
+        .chat-item.stage-GANADO         { border-left: 4px solid #10B981 !important; }
+        .chat-item.stage-PERDIDO        { border-left: 4px solid #EF4444 !important; }
+
+        .kanban-stage-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-size: 0.63rem;
+            font-weight: 700;
+            margin-left: 4px;
+            font-variant-numeric: tabular-nums;
         }
-        .chat-item.sla-item-red {
-            border-left: 4px solid #EF4444 !important;
-            background-color: #FFFDFD !important;
+        .kanban-stage-pill.stage-NUEVO_LEAD, .deal-header-chip.stage-NUEVO_LEAD {
+            background-color: #EFF6FF !important;
+            color: #1D4ED8 !important;
+            border: 1px solid #BFDBFE !important;
+        }
+        .kanban-stage-pill.stage-COTIZADO, .deal-header-chip.stage-COTIZADO {
+            background-color: #F5F3FF !important;
+            color: #6D28D9 !important;
+            border: 1px solid #DDD6FE !important;
+        }
+        .kanban-stage-pill.stage-EN_NEGOCIACION, .deal-header-chip.stage-EN_NEGOCIACION {
+            background-color: #FFFBEB !important;
+            color: #B45309 !important;
+            border: 1px solid #FDE68A !important;
+        }
+        .kanban-stage-pill.stage-PAGO_PENDIENTE, .deal-header-chip.stage-PAGO_PENDIENTE {
+            background-color: #FFF7ED !important;
+            color: #C2410C !important;
+            border: 1px solid #FDBA74 !important;
+        }
+        .kanban-stage-pill.stage-GANADO, .deal-header-chip.stage-GANADO {
+            background-color: #ECFDF5 !important;
+            color: #047857 !important;
+            border: 1px solid #A7F3D0 !important;
+        }
+        .kanban-stage-pill.stage-PERDIDO, .deal-header-chip.stage-PERDIDO {
+            background-color: #FEF2F2 !important;
+            color: #DC2626 !important;
+            border: 1px solid #FECACA !important;
         }
 
         /* [COM-01] Contador regresivo Ventana Meta 24h y Bloqueo Automático */
@@ -463,12 +507,26 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <?php endif; ?>
                 </div>
 
-                <!-- [COM-04] Resumen Semáforo SLA en vivo -->
+                <!-- [COM-04] Resumen Semáforo SLA en vivo + Configuración rápida para Master/Admin -->
+                <?php
+                $sla_init_cfg = function_exists('starfi_get_sla_config')
+                    ? starfi_get_sla_config($con, $is_master ? 0 : $user_assigned_sede)
+                    : ['verde_max_min' => 5, 'amarillo_max_min' => 15, 'round_robin_online_min' => 5, 'alerta_sonora_activa' => 1];
+                $v_min_init = intval($sla_init_cfg['verde_max_min']);
+                $a_min_init = intval($sla_init_cfg['amarillo_max_min']);
+                ?>
                 <div id="slaSummaryStrip" class="d-flex align-items-center justify-content-between px-2 py-1 mb-2 rounded-3" style="background:#F8FAFC; border:1px solid #E2E8F0; font-size:0.7rem;">
-                    <span class="text-muted fw-semibold"><i class="bi bi-speedometer2 me-1"></i> SLA:</span>
-                    <span class="text-success fw-bold" title="Menos de 5 min sin respuesta humana">🟢 <span id="slaCountGreen">0</span> <small class="fw-normal">&lt;5m</small></span>
-                    <span class="text-warning-emphasis fw-bold" title="Entre 5 y 15 min sin respuesta humana">🟡 <span id="slaCountYellow">0</span> <small class="fw-normal">5-15m</small></span>
-                    <span class="text-danger fw-bold" style="cursor:pointer;" id="slaQuickFilterRed" title="Más de 15 min sin respuesta humana (clic para filtrar)">🔴 <span id="slaCountRed">0</span> <small class="fw-normal">&gt;15m</small></span>
+                    <span class="text-muted fw-semibold d-inline-flex align-items-center gap-1">
+                        <i class="bi bi-speedometer2"></i> SLA:
+                        <?php if (!$is_operador): ?>
+                        <button type="button" id="btnQuickSlaConfig" class="btn btn-sm p-0 border-0 text-secondary ms-1" style="line-height:1; font-size:0.76rem;" title="Configurar tiempos del Semáforo SLA">
+                            <i class="bi bi-gear-fill"></i>
+                        </button>
+                        <?php endif; ?>
+                    </span>
+                    <span class="text-success fw-bold" id="slaWrapGreen" title="Menos de <?= $v_min_init ?> min sin respuesta humana">🟢 <span id="slaCountGreen">0</span> <small class="fw-normal" id="slaLabelGreen">&lt;<?= $v_min_init ?>m</small></span>
+                    <span class="text-warning-emphasis fw-bold" id="slaWrapYellow" title="Entre <?= $v_min_init ?> y <?= $a_min_init ?> min sin respuesta humana">🟡 <span id="slaCountYellow">0</span> <small class="fw-normal" id="slaLabelYellow"><?= $v_min_init ?>-<?= $a_min_init ?>m</small></span>
+                    <span class="text-danger fw-bold" style="cursor:pointer;" id="slaQuickFilterRed" title="Más de <?= $a_min_init ?> min sin respuesta humana (clic para filtrar)">🔴 <span id="slaCountRed">0</span> <small class="fw-normal" id="slaLabelRed">&gt;<?= $a_min_init ?>m</small></span>
                 </div>
 
                 <!-- Tabs -->
@@ -479,7 +537,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <button class="tab" data-target="campanas"><i class="fa-solid fa-bullhorn me-1"></i> Difusión</button>
                         <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
                     <?php endif; ?>
-                    <button class="tab" data-target="sla-critico" title="Conversaciones con más de 15 min sin respuesta humana"><i class="fa-solid fa-bell text-danger me-1"></i> SLA &gt;15m <span class="badge bg-danger ms-1" id="badgeSlaCritico" style="display:none;">0</span></button>
+                    <button class="tab" data-target="sla-critico" id="tabSlaCritico" title="Conversaciones con más de <?= $a_min_init ?> min sin respuesta humana"><i class="fa-solid fa-bell text-danger me-1"></i> <span id="slaTabCriticoLabel">SLA &gt;<?= $a_min_init ?>m</span> <span class="badge bg-danger ms-1" id="badgeSlaCritico" style="display:none;">0</span></button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>
@@ -763,6 +821,54 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
       </div>
     </div>
 
+    <!-- [COM-04] Modal Rápido de Configuración de Tiempos SLA (Master/Admin) -->
+    <?php if (!$is_operador): ?>
+    <div class="modal fade" id="modalQuickSlaConfig" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 18px 45px rgba(15,23,42,0.18);">
+          <div class="modal-header border-0" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); color: #fff; border-radius: 20px 20px 0 0; padding: 18px 24px;">
+            <div>
+              <h5 class="modal-title fw-bold mb-0"><i class="bi bi-speedometer2 text-warning me-2"></i>Configurar Tiempos del Semáforo SLA</h5>
+              <small class="text-white-50" id="quickSlaScopeSubtitle" style="font-size:0.75rem;">Ajusta los minutos para Verde, Amarillo y Rojo Crítico</small>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4" style="background:#F8FAFC;">
+            <div class="p-3 mb-3 rounded-3 bg-white border d-flex align-items-center justify-content-around" style="font-size:0.82rem;">
+              <span class="text-success fw-bold">🟢 &lt;<span id="prevQuickVerde"><?= $v_min_init ?></span>m</span>
+              <span class="text-warning-emphasis fw-bold">🟡 <span id="prevQuickAmarillo"><?= $v_min_init ?>-<?= $a_min_init ?></span>m</span>
+              <span class="text-danger fw-bold">🔴 &gt;<span id="prevQuickRojo"><?= $a_min_init ?></span>m (Alerta)</span>
+            </div>
+            <div class="row g-3">
+              <div class="col-6">
+                <label class="form-label small fw-bold text-success mb-1">🟢 Máximo en Verde (min)</label>
+                <input type="number" min="1" max="1440" id="quickSlaVerdeInput" class="form-control fw-bold" value="<?= $v_min_init ?>">
+                <small class="text-muted" style="font-size:0.7rem;">Ej: 5 min</small>
+              </div>
+              <div class="col-6">
+                <label class="form-label small fw-bold text-danger mb-1">🔴 Límite Rojo Crítico (min)</label>
+                <input type="number" min="2" max="2880" id="quickSlaAmarilloInput" class="form-control fw-bold" value="<?= $a_min_init ?>">
+                <small class="text-muted" style="font-size:0.7rem;">Dispara alerta sonora (Ej: 15 min)</small>
+              </div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-4 pt-2 border-top">
+              <?php if (hasPermission('configuracion')): ?>
+              <a href="../configuracion/configuracion.php?tab=sla" class="text-decoration-none small fw-bold" style="color:#E85B14;">
+                <i class="bi bi-sliders me-1"></i> Ir al módulo completo de SLA por Sedes
+              </a>
+              <?php else: ?>
+              <span></span>
+              <?php endif; ?>
+              <button type="button" id="btnSaveQuickSla" class="btn text-white fw-bold rounded-pill px-4" style="background:linear-gradient(135deg,#E85B14,#FF7A33); border:none;">
+                <i class="fa-solid fa-floppy-disk me-1"></i> Guardar Tiempos
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>
 
@@ -776,6 +882,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         window.userRole = "<?= addslashes(strtoupper(trim($agente['rol'] ?? 'AGENTE'))) ?>";
         window.isUserAdmin = <?= (in_array(strtoupper(trim($agente['rol'] ?? '')), ['MASTER', 'MASTER CI', 'ADMINISTRADOR', 'ADMIN', 'GERENTE']) || intval($agente['id'] ?? 0) === 1) ? 'true' : 'false' ?>;
         window.initialDisponibleChat = <?= intval($agente['disponible_chat'] ?? 1) ?>;
+        window.initialSlaConfig = <?= json_encode($sla_init_cfg) ?>;
     </script>
     <script src="funciones_bandeja.js?v=<?= time() ?>"></script>
     </div>

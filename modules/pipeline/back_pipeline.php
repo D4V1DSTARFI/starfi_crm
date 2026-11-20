@@ -105,6 +105,14 @@ $action = trim((string)($_POST['action'] ?? $_GET['action'] ?? ''));
 
 switch ($action) {
     case 'get_board':
+        // Auto-rellenar retroactivamente montos en 0.00 (con throttle de 60s por sede para mantener respuesta <50ms)
+        $sede_backfill = $is_master ? intval($_POST['id_sede'] ?? $_GET['id_sede'] ?? 0) : $user_sede;
+        $bf_flag = sys_get_temp_dir() . DIRECTORY_SEPARATOR . "starfi_pipe_bf_sede_{$sede_backfill}.flag";
+        if (!@file_exists($bf_flag) || (time() - @filemtime($bf_flag)) > 60) {
+            starfi_backfill_zero_deals($con, $sede_backfill, 100);
+            @file_put_contents($bf_flag, (string)time());
+        }
+
         $where = "WHERE 1=1";
 
         if (!$is_master) {
@@ -587,25 +595,51 @@ switch ($action) {
                 $cl_id = intval($r['id_cliente']);
                 $cv_id = intval($r['id_conv']);
                 $ag_id = intval($r['id_agente'] ?? 0);
+
+                $enr = starfi_extract_deal_enrichment($con, $s_id, $cl_id, $cv_id);
+                if ($ag_id <= 0 && $enr['id_agente_sugerido'] > 0) {
+                    $ag_id = intval($enr['id_agente_sugerido']);
+                }
                 $ag_sql = $ag_id > 0 ? (string)$ag_id : "NULL";
                 $et = ($r['resultado_comercial'] === 'VENTA_CERRADA') ? 'GANADO' : 'NUEVO_LEAD';
                 $pr = pipeline_stage_probability($et);
                 $cierre_v = ($et === 'GANADO') ? "NOW()" : "NULL";
                 $nom = trim((string)($r['cli_nombre'] ?: ('+' . $r['numero_whatsapp'])));
-                $tit = $con->real_escape_string(mb_substr("Lead WhatsApp - $nom", 0, 195));
+                $raw_tit = "Lead WhatsApp - $nom" . ($enr['correlativo'] !== '' ? ' · ' . $enr['correlativo'] : '');
+                $tit = $con->real_escape_string(mb_substr($raw_tit, 0, 195));
+                $monto_sql = number_format(max(0, floatval($enr['monto_usd'])), 2, '.', '');
 
-                if ($con->query("INSERT INTO pipeline_oportunidades (id_sede, id_cliente, id_conversacion, id_agente, titulo, etapa, monto_estimado_usd, probabilidad, fecha_cierre) VALUES ($s_id, $cl_id, $cv_id, $ag_sql, '$tit', '$et', 0.00, $pr, $cierre_v)")) {
+                $notas_sql = "NULL";
+                if ($enr['correlativo'] !== '' || $enr['asesor_erp'] !== '' || $enr['monto_raw'] !== '') {
+                    $np = [];
+                    if ($enr['correlativo'] !== '') $np[] = "Documento: " . $enr['correlativo'];
+                    if ($enr['monto_raw'] !== '') $np[] = "Monto mensaje: " . $enr['monto_raw'];
+                    if ($enr['asesor_erp'] !== '') $np[] = "Vendedor ERP: " . $enr['asesor_erp'];
+                    if ($enr['fecha_doc'] !== '') $np[] = "Fecha: " . $enr['fecha_doc'];
+                    $notas_sql = "'" . $con->real_escape_string(implode(' | ', $np)) . "'";
+                }
+
+                if ($con->query("INSERT INTO pipeline_oportunidades (id_sede, id_cliente, id_conversacion, id_agente, titulo, etapa, monto_estimado_usd, probabilidad, notas, fecha_cierre) VALUES ($s_id, $cl_id, $cv_id, $ag_sql, '$tit', '$et', $monto_sql, $pr, $notas_sql, $cierre_v)")) {
                     $imported++;
                 }
             }
         }
 
+        // También actualizar montos en 0.00 de tarjetas ya existentes en esa sede
+        $sede_bf = $is_master ? intval($_POST['id_sede'] ?? 0) : $user_sede;
+        $updated_zeros = starfi_backfill_zero_deals($con, $sede_bf, 250);
+
+        $msg_parts = [];
+        if ($imported > 0) $msg_parts[] = "$imported conversaciones nuevas importadas";
+        if ($updated_zeros > 0) $msg_parts[] = "$updated_zeros montos USD sincronizados desde mensajes";
+
         echo json_encode([
-            'status'   => 'success',
-            'imported' => $imported,
-            'message'  => $imported > 0
-                ? "Se importaron $imported conversaciones activas al Embudo Kanban."
-                : "Todas las conversaciones activas ya están sincronizadas en el tablero.",
+            'status'        => 'success',
+            'imported'      => $imported,
+            'updated_zeros' => $updated_zeros,
+            'message'       => !empty($msg_parts)
+                ? ('Sincronización completada: ' . implode(' y ', $msg_parts) . '.')
+                : 'Todas las conversaciones y montos USD ya están sincronizados.',
         ]);
         break;
 

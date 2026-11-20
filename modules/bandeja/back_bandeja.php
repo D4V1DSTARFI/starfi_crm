@@ -83,15 +83,38 @@ function get_conversacion_deal_info($con, $conversacion_id, $cliente_id = 0) {
         ? "(id_conversacion = $cid OR id_cliente = $clid)"
         : ($cid > 0 ? "id_conversacion = $cid" : "id_cliente = $clid");
     $order = ($cid > 0) ? "ORDER BY (id_conversacion = $cid) DESC, id DESC LIMIT 1" : "ORDER BY id DESC LIMIT 1";
-    $res = @$con->query("SELECT id, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE $where $order");
+    $res = @$con->query("SELECT id, id_sede, id_cliente, id_conversacion, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE $where $order");
     if ($res && ($row = $res->fetch_assoc())) {
+        $monto = round(floatval($row['monto_estimado_usd']), 2);
+        if ($monto <= 0 && function_exists('starfi_extract_deal_enrichment')) {
+            $enr = starfi_extract_deal_enrichment($con, intval($row['id_sede']), intval($row['id_cliente'] ?: $clid), intval($row['id_conversacion'] ?: $cid));
+            if ($enr['monto_usd'] > 0) {
+                $monto = $enr['monto_usd'];
+                $did = intval($row['id']);
+                @$con->query("UPDATE pipeline_oportunidades SET monto_estimado_usd = " . number_format($monto, 2, '.', '') . ", fecha_actualizacion = fecha_actualizacion WHERE id = $did");
+            }
+        }
         return [
             'id' => intval($row['id']),
             'etapa' => $row['etapa'],
-            'monto_estimado_usd' => round(floatval($row['monto_estimado_usd']), 2),
+            'monto_estimado_usd' => $monto,
             'titulo' => $row['titulo'],
             'probabilidad' => intval($row['probabilidad'])
         ];
+    }
+
+    // Si aún no tiene tarjeta en pipeline_oportunidades pero la conversación tiene monto transaccional/cotización, mostrarlo pre-cargado
+    if (function_exists('starfi_extract_deal_enrichment')) {
+        $enr = starfi_extract_deal_enrichment($con, 0, $clid, $cid);
+        if ($enr['monto_usd'] > 0) {
+            return [
+                'id' => 0,
+                'etapa' => 'NUEVO_LEAD',
+                'monto_estimado_usd' => $enr['monto_usd'],
+                'titulo' => $enr['correlativo'] !== '' ? ('Oportunidad · ' . $enr['correlativo']) : '',
+                'probabilidad' => 20
+            ];
+        }
     }
     return null;
 }
@@ -298,18 +321,29 @@ switch ($action) {
         // por lo que (SELECT MAX(id) FROM mensajes_y_eventos WHERE id_conversacion = c.id) es un lookup O(1) "Using index".
         $where_clauses = "WHERE cl.id_empresa = 1";
         
+        $agente = $agente_info_global;
+        $agente_id_actual = intval($agente['id'] ?? $agente_id);
+        $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
+        $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
+        $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
+        $is_operador = (!$is_master && !$is_admin);
+        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
+        $sede_sla_eff = (!$is_master && $user_sede > 0) ? $user_sede : intval($_POST['id_sede'] ?? 0);
+        $sla_cfg_active = starfi_get_sla_config($con, $sede_sla_eff);
+        $sla_crit_min = max(2, intval($sla_cfg_active['amarillo_max_min'] ?? 15));
+
         if ($filter === 'mis-chats') {
             $where_clauses .= " AND c.id_agente = $agente_id";
         } elseif ($filter === 'clientes') {
             $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
         } elseif ($filter === 'campanas') {
-            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%[DIFUSIÓN:%' OR me_camp.contenido LIKE '%| Texto:%' OR IFNULL(me_camp.categoria_meta, '') = 'MARKETING'))";
+            $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me_camp WHERE me_camp.id_conversacion = c.id AND me_camp.origen = 'API_TRANSACCIONAL' AND me_camp.contenido NOT LIKE '%send_confirmacion_compra%' AND (me_camp.contenido LIKE '%starfi_difusion_directa%' OR me_camp.contenido LIKE '%[DIFUSIÓN:%' OR me_camp.contenido LIKE '%| Texto:%' OR IFNULL(me_camp.categoria_meta, '') = 'MARKETING'))";
         } elseif ($filter === 'ventas') {
             $where_clauses .= " AND (
                 c.resultado_comercial = 'VENTA_CERRADA' 
                 OR c.resultado_comercial LIKE '%VENTA%'
                 OR c.fecha_cierre_venta IS NOT NULL
-                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND me.contenido NOT LIKE '%starfi_difusion_directa%' AND me.contenido NOT LIKE '%[DIFUSIÓN:%' AND me.contenido NOT LIKE '%| Texto:%' AND IFNULL(me.categoria_meta, '') != 'MARKETING')
+                OR EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'API_TRANSACCIONAL' AND (me.contenido LIKE '%send_confirmacion_compra%' OR (me.contenido NOT LIKE '%starfi_difusion_directa%' AND me.contenido NOT LIKE '%[DIFUSIÓN:%' AND me.contenido NOT LIKE '%| Texto:%' AND IFNULL(me.categoria_meta, '') != 'MARKETING')))
             )";
         } elseif ($filter === 'no-leido') {
             $where_clauses .= " AND c.mensajes_no_leidos > 0";
@@ -318,7 +352,7 @@ switch ($action) {
                 SELECT 1 FROM mensajes_y_eventos mc
                 WHERE mc.id_conversacion = c.id
                   AND mc.origen = 'CLIENTE'
-                  AND mc.timestamp <= (NOW() - INTERVAL 15 MINUTE)
+                  AND mc.timestamp <= (NOW() - INTERVAL $sla_crit_min MINUTE)
                   AND NOT EXISTS (
                       SELECT 1 FROM mensajes_y_eventos ma
                       WHERE ma.id_conversacion = c.id
@@ -329,14 +363,6 @@ switch ($action) {
         } elseif ($filter === 'cerrados') {
             $where_clauses .= " AND c.estado = 'CERRADO'";
         }
-        
-        $agente = $agente_info_global;
-        $agente_id_actual = intval($agente['id'] ?? $agente_id);
-        $rol_raw = strtoupper(trim($agente['rol'] ?? ''));
-        $is_master = ($agente_id_actual === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
-        $is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
-        $is_operador = (!$is_master && !$is_admin);
-        $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         
         // RESTRICCIÓN PARA OPERADOR: No puede ver Ventas ni Clientes, y sólo puede ver mensajes asignados a él
         if ($is_operador) {
@@ -436,10 +462,13 @@ switch ($action) {
         // FASE 2: Enriquecer ÚNICAMENTE las 20 conversaciones de la página actual (evita escanear miles de filas)
         if (!empty($chats)) {
             $conv_ids = [];
+            $cli_ids_page = [];
             $last_msg_ids = [];
             foreach ($chats as $ch) {
                 $cid = intval($ch['id']);
                 if ($cid > 0) $conv_ids[] = $cid;
+                $clid_p = intval($ch['id_cliente'] ?? 0);
+                if ($clid_p > 0) $cli_ids_page[] = $clid_p;
                 $mid = intval($ch['ultimo_msg_id'] ?? 0);
                 if ($mid > 0) $last_msg_ids[] = $mid;
             }
@@ -469,8 +498,8 @@ switch ($action) {
                 $resFlags = $con->query("
                     SELECT 
                         id_conversacion,
-                        MAX(CASE WHEN contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%[DIFUSIÓN:%' OR contenido LIKE '%| Texto:%' OR IFNULL(categoria_meta, '') = 'MARKETING' THEN 1 ELSE 0 END) AS flag_campana,
-                        MAX(CASE WHEN contenido NOT LIKE '%starfi_difusion_directa%' AND contenido NOT LIKE '%[DIFUSIÓN:%' AND contenido NOT LIKE '%| Texto:%' AND IFNULL(categoria_meta, '') != 'MARKETING' THEN 1 ELSE 0 END) AS flag_venta
+                        MAX(CASE WHEN contenido NOT LIKE '%send_confirmacion_compra%' AND (contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%[DIFUSIÓN:%' OR contenido LIKE '%| Texto:%' OR IFNULL(categoria_meta, '') = 'MARKETING') THEN 1 ELSE 0 END) AS flag_campana,
+                        MAX(CASE WHEN contenido LIKE '%send_confirmacion_compra%' OR (contenido NOT LIKE '%starfi_difusion_directa%' AND contenido NOT LIKE '%[DIFUSIÓN:%' AND contenido NOT LIKE '%| Texto:%' AND IFNULL(categoria_meta, '') != 'MARKETING') THEN 1 ELSE 0 END) AS flag_venta
                     FROM mensajes_y_eventos
                     WHERE id_conversacion IN ($cids_csv)
                       AND origen = 'API_TRANSACCIONAL'
@@ -520,8 +549,9 @@ switch ($action) {
                     }
                 }
 
+                $deals_by_client_map = [];
                 $resDeals = @$con->query("
-                    SELECT p.id, p.id_conversacion, p.etapa, p.monto_estimado_usd
+                    SELECT p.id, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
                     FROM pipeline_oportunidades p
                     INNER JOIN (
                         SELECT id_conversacion, MAX(id) AS max_pid
@@ -535,15 +565,34 @@ switch ($action) {
                         $deals_map[intval($rd['id_conversacion'])] = $rd;
                     }
                 }
+                if (!empty($cli_ids_page)) {
+                    $clids_csv = implode(',', array_unique($cli_ids_page));
+                    $resDealsCli = @$con->query("
+                        SELECT p.id, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
+                        FROM pipeline_oportunidades p
+                        INNER JOIN (
+                            SELECT id_cliente, MAX(id) AS max_pid
+                            FROM pipeline_oportunidades
+                            WHERE id_cliente IN ($clids_csv)
+                            GROUP BY id_cliente
+                        ) pmc ON pmc.max_pid = p.id
+                    ");
+                    if ($resDealsCli) {
+                        while ($rdc = $resDealsCli->fetch_assoc()) {
+                            $deals_by_client_map[intval($rdc['id_cliente'])] = $rdc;
+                        }
+                    }
+                }
             }
 
             foreach ($chats as &$ch) {
                 $cid = intval($ch['id']);
+                $clid_cur = intval($ch['id_cliente'] ?? 0);
                 $mid = intval($ch['ultimo_msg_id'] ?? 0);
                 $lm = ($mid > 0 && isset($last_msgs_map[$mid])) ? $last_msgs_map[$mid] : null;
                 $fl = isset($flags_map[$cid]) ? $flags_map[$cid] : null;
                 $ws = isset($win_sla_map[$cid]) ? $win_sla_map[$cid] : null;
-                $dl = isset($deals_map[$cid]) ? $deals_map[$cid] : null;
+                $dl = isset($deals_map[$cid]) ? $deals_map[$cid] : ($deals_by_client_map[$clid_cur] ?? null);
 
                 $ch['ultimo_mensaje_ts']     = $lm ? $lm['timestamp'] : $ch['fecha_inicio'];
                 $ch['ultimo_mensaje_texto']  = $lm ? $lm['contenido'] : null;
@@ -584,7 +633,8 @@ switch ($action) {
             'page' => $page,
             'limit' => $limit,
             'has_more' => $has_more,
-            'server_now_epoch' => $server_now_epoch
+            'server_now_epoch' => $server_now_epoch,
+            'sla_config' => $sla_cfg_active
         ]);
         break;
 
@@ -1618,11 +1668,14 @@ switch ($action) {
             $target_sede = $user_sede;
         }
 
+        $sla_rr_cfg = starfi_get_sla_config($con, $target_sede);
+        $rr_win_ag = max(1, intval($sla_rr_cfg['round_robin_online_min'] ?? 5));
+
         $query = "
             SELECT u.id,
                    u.usuario,
                    up.nombre AS up_nombre,
-                   (CASE WHEN IFNULL(u.disponible_chat, 1) = 1 AND u.ultima_actividad IS NOT NULL AND u.ultima_actividad >= (NOW() - INTERVAL 5 MINUTE) THEN 1 ELSE 0 END) AS en_linea
+                   (CASE WHEN IFNULL(u.disponible_chat, 1) = 1 AND u.ultima_actividad IS NOT NULL AND u.ultima_actividad >= (NOW() - INTERVAL $rr_win_ag MINUTE) THEN 1 ELSE 0 END) AS en_linea
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
             LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
@@ -2113,6 +2166,38 @@ switch ($action) {
         echo json_encode([
             'status' => 'success',
             'deal' => get_conversacion_deal_info($con, $conversacion_id, $cliente_id)
+        ]);
+        break;
+
+    case 'save_sla_quick':
+        $ag_chk = $agente_info_global;
+        $ag_id_c = intval($ag_chk['id'] ?? 0);
+        $rol_c = strtoupper(trim((string)($ag_chk['rol'] ?? '')));
+        $is_master_c = ($ag_id_c === 1 || $rol_c === 'MASTER' || $rol_c === 'MASTER CI');
+        $is_admin_c = (!$is_master_c && in_array($rol_c, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+        if (!$is_master_c && !$is_admin_c) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Solo Master o Administradores pueden modificar los tiempos SLA.']);
+            exit;
+        }
+        $target_sede_sla = $is_master_c ? max(0, intval($_POST['id_sede'] ?? 0)) : intval($ag_chk['id_sede'] ?? 0);
+        if (!$is_master_c && $target_sede_sla <= 0) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Tu usuario no tiene sede asignada.']);
+            exit;
+        }
+        $cur_sla = starfi_get_sla_config($con, $target_sede_sla);
+        $v_in = intval($_POST['verde_max_min'] ?? 5);
+        $a_in = intval($_POST['amarillo_max_min'] ?? 15);
+        $saved_sla = starfi_save_sla_config($con, $target_sede_sla, $v_in, $a_in, intval($cur_sla['round_robin_online_min'] ?? 5), intval($cur_sla['alerta_sonora_activa'] ?? 1));
+        if (!$saved_sla['ok']) {
+            echo json_encode(['status' => 'error', 'message' => $saved_sla['message']]);
+            exit;
+        }
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Tiempos del Semáforo SLA actualizados correctamente.',
+            'sla_config' => $saved_sla['config']
         ]);
         break;
 

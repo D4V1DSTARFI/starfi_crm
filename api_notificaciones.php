@@ -694,6 +694,20 @@ if($id_linea > 0) {
     if ($nuevo_msg_id_api > 0) {
         $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $nuevo_msg_id_api) WHERE id = " . intval($id_conversacion));
     }
+
+    // [COM-02] Sincronizar automáticamente el monto estimado USD en el Embudo Kanban cuando no sea campaña de difusión
+    $tpl_lower = strtolower(trim((string)$template_name));
+    if (!in_array($tpl_lower, ['starfi_difusion_directa', 'starfi_csat_survey', 'starfi_notificacion_interna'], true)) {
+        require_once __DIR__ . '/core/crm_sprint2_helper.php';
+        $raw_monto_notif = isset($params[2]) ? (string)$params[2] : (string)$monto_total;
+        $monto_notif_usd = starfi_parse_usd_number($raw_monto_notif);
+        if ($monto_notif_usd > 0 && intval($crm_id_sede ?? 0) > 0 && intval($id_cliente ?? 0) > 0) {
+            $deal_sync_id = starfi_ensure_pipeline_lead($con, intval($crm_id_sede), intval($id_cliente), intval($id_conversacion), null, '', $monto_notif_usd);
+            if ($deal_sync_id > 0) {
+                @$con->query("UPDATE pipeline_oportunidades SET monto_estimado_usd = " . number_format($monto_notif_usd, 2, '.', '') . " WHERE id = $deal_sync_id AND (monto_estimado_usd <= 0 OR etapa IN ('NUEVO_LEAD', 'COTIZADO'))");
+            }
+        }
+    }
 }
 
 $response['meta_response'] = $estado;

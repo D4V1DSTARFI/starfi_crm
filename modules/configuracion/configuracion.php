@@ -190,6 +190,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <li class="nav-item" role="presentation">
                     <button class="nav-link fw-bold" id="respuestas-tab" data-bs-toggle="tab" data-bs-target="#respuestas" type="button" role="tab"><i class="fa-solid fa-bolt text-warning me-1"></i> Respuestas Rápidas</button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-bold" id="sla-tab" data-bs-toggle="tab" data-bs-target="#sla" type="button" role="tab"><i class="fa-solid fa-stopwatch text-danger me-1"></i> Tiempos SLA</button>
+                </li>
             </ul>
 
             <div class="tab-content" id="configTabsContent">
@@ -655,6 +658,108 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             <div class="row g-4" id="respuestasContainer">
                                 <!-- Respuestas se cargarán aquí vía JS -->
                                 <div class="col-12 text-center text-muted">Cargando respuestas rápidas...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TIEMPOS SLA Y ENRUTAMIENTO -->
+                <div class="tab-pane fade" id="sla" role="tabpanel">
+                    <div class="row g-4">
+                        <div class="col-12 col-lg-7">
+                            <div class="config-card mb-0">
+                                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 border-bottom pb-3 mb-4">
+                                    <div>
+                                        <h4 class="config-card-title border-0 pb-0 mb-1"><i class="fa-solid fa-stopwatch text-danger me-2"></i> Configuración de Tiempos SLA y Enrutamiento</h4>
+                                        <p class="text-muted small mb-0">Define los minutos del Semáforo SLA en la Bandeja Omnicanal y la ventana de presencia Round-Robin.</p>
+                                    </div>
+                                    <span id="slaRuleTypeBadge" class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-3 py-2">Regla Global</span>
+                                </div>
+
+                                <div class="mb-4">
+                                    <label class="form-label text-uppercase fw-bold" style="font-size:0.75rem;">Ámbito de Aplicación (Global o por Sede)</label>
+                                    <select id="cfgSlaSedeSelect" class="form-select form-select-premium fw-semibold">
+                                        <option value="0">🌎 Regla Global por Defecto (Todas las Sedes)</option>
+                                    </select>
+                                    <small class="text-muted d-block mt-1">Si una sede no tiene tiempos personalizados, heredará automáticamente la Regla Global.</small>
+                                </div>
+
+                                <!-- Vista previa interactiva de la barra SLA de Bandeja -->
+                                <div class="p-3 mb-4 rounded-4" style="background:#F8FAFC; border:1px solid #E2E8F0;">
+                                    <div class="small fw-bold text-muted mb-2 text-uppercase" style="font-size:0.7rem; letter-spacing:0.4px;">Vista Previa en Vivo (Bandeja de Mensajes)</div>
+                                    <div class="d-flex align-items-center justify-content-between px-3 py-2 rounded-3 bg-white border shadow-sm" style="font-size:0.84rem;">
+                                        <span class="text-muted fw-semibold"><i class="bi bi-speedometer2 me-1"></i> SLA:</span>
+                                        <span class="text-success fw-bold">🟢 0 <small class="fw-normal">&lt;<span id="cfgPrevVerde">5</span>m</small></span>
+                                        <span class="text-warning-emphasis fw-bold">🟡 0 <small class="fw-normal"><span id="cfgPrevAmarillo">5-15</span>m</small></span>
+                                        <span class="text-danger fw-bold">🔴 1 <small class="fw-normal">&gt;<span id="cfgPrevRojo">15</span>m</small></span>
+                                    </div>
+                                </div>
+
+                                <div class="row g-3">
+                                    <div class="col-12 col-md-6">
+                                        <div class="p-3 rounded-3 h-100" style="background:#ECFDF5; border:1px solid #A7F3D0;">
+                                            <label class="form-label fw-bold text-success mb-1">🟢 Tiempo Máximo en Verde (minutos)</label>
+                                            <input type="number" min="1" max="1440" id="cfgSlaVerdeMin" class="form-control fw-bold" value="5">
+                                            <small class="text-muted d-block mt-1" style="font-size:0.76rem;">Conversaciones esperando menos de este tiempo se muestran en Verde.</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <div class="p-3 rounded-3 h-100" style="background:#FEF2F2; border:1px solid #FECACA;">
+                                            <label class="form-label fw-bold text-danger mb-1">🔴 Límite para Rojo Crítico (minutos)</label>
+                                            <input type="number" min="2" max="2880" id="cfgSlaAmarilloMin" class="form-control fw-bold" value="15">
+                                            <small class="text-muted d-block mt-1" style="font-size:0.76rem;">El rango intermedio será 🟡 Amarillo. Al superar este límite pasa a 🔴 Rojo y dispara alerta.</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <div class="p-3 rounded-3 h-100 bg-light border">
+                                            <label class="form-label fw-bold text-dark mb-1"><i class="fa-solid fa-arrows-spin text-primary me-1"></i> Ventana En Línea Round-Robin (min)</label>
+                                            <input type="number" min="1" max="120" id="cfgSlaRrOnlineMin" class="form-control fw-bold" value="5">
+                                            <small class="text-muted d-block mt-1" style="font-size:0.76rem;">Minutos máximos de inactividad para considerar conectado a un asesor en asignaciones IA.</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <div class="p-3 rounded-3 h-100 bg-light border d-flex flex-column justify-content-center">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="cfgSlaSoundDefault" checked>
+                                                <label class="form-check-label fw-bold text-dark" for="cfgSlaSoundDefault">
+                                                    <i class="bi bi-volume-up-fill text-success me-1"></i> Alerta Sonora Activa por Defecto
+                                                </label>
+                                            </div>
+                                            <small class="text-muted mt-1" style="font-size:0.76rem;">Habilita por defecto el aviso sonoro en Bandeja al superar el límite Rojo.</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4 pt-3 border-top">
+                                    <button type="button" id="btnResetSlaOverride" class="btn btn-outline-secondary rounded-pill px-3 fw-semibold" style="display:none;">
+                                        <i class="fa-solid fa-rotate-left me-1"></i> Restaurar a Regla Global
+                                    </button>
+                                    <button type="button" id="btnSaveSlaSettings" class="btn btn-starfi-primary rounded-pill px-4 py-2 fw-bold ms-auto" style="box-shadow: 0 4px 12px rgba(232, 91, 20, 0.25);">
+                                        <i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12 col-lg-5">
+                            <div class="config-card mb-0 h-100">
+                                <h5 class="fw-bold text-dark mb-3"><i class="fa-solid fa-list-check text-primary me-2"></i> Resumen de Reglas Activas</h5>
+                                <p class="text-muted small mb-3">Haz clic en cualquier fila para cargarla y editar sus minutos.</p>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle table-config mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Ámbito / Sede</th>
+                                                <th class="text-center">🟢 Verde</th>
+                                                <th class="text-center">🟡 Amarillo</th>
+                                                <th class="text-center">🔴 Rojo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="slaRulesSummaryBody">
+                                            <tr><td colspan="4" class="text-center text-muted py-3">Cargando reglas SLA...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>

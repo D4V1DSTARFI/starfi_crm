@@ -11,7 +11,12 @@ let activeDealInfo = null;
 let metaTemplatesCache = [];
 let metaTemplatesSedeName = 'Nuestra Sede';
 let slaAlertedChatIds = new Set();
-let slaSoundEnabled = (localStorage.getItem('starfi_sla_sound') !== '0');
+let slaConfig = (typeof window.initialSlaConfig === 'object' && window.initialSlaConfig)
+    ? window.initialSlaConfig
+    : { verde_max_min: 5, amarillo_max_min: 15, round_robin_online_min: 5, alerta_sonora_activa: 1 };
+let slaSoundEnabled = (localStorage.getItem('starfi_sla_sound') !== null)
+    ? (localStorage.getItem('starfi_sla_sound') !== '0')
+    : (parseInt(slaConfig.alerta_sonora_activa ?? 1, 10) === 1);
 let agentAvailable = (typeof window.initialDisponibleChat !== 'undefined') ? (parseInt(window.initialDisponibleChat, 10) === 1) : true;
 
 function syncServerClock(serverEpoch) {
@@ -648,6 +653,9 @@ function loadChats(append = false, targetPage = null, silent = false) {
                 if (response.server_now_epoch) {
                     syncServerClock(response.server_now_epoch);
                 }
+                if (response.sla_config) {
+                    applySlaConfigLabels(response.sla_config);
+                }
                 hasMoreChats = !!response.has_more;
                 renderChatList(response.data, append, hasMoreChats);
                 if (!append && !silent) {
@@ -784,10 +792,13 @@ function renderChatList(chats, append = false, has_more = false) {
         }
 
         let dealBadgeHtml = '';
+        let stageClass = '';
         if (chat.deal_etapa) {
+            const stClean = String(chat.deal_etapa).toUpperCase();
+            stageClass = `stage-${stClean}`;
             const montoNum = parseFloat(chat.deal_monto_usd || 0);
             const montoStr = montoNum > 0 ? ` · $${montoNum.toFixed(2)}` : '';
-            dealBadgeHtml = `<span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.63rem; margin-left: 4px; background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE;"><i class="bi bi-cash-coin me-1"></i>${formatEtapaShort(chat.deal_etapa)}${montoStr}</span>`;
+            dealBadgeHtml = `<span class="kanban-stage-pill ${stageClass}"><i class="bi bi-cash-coin"></i>${formatEtapaShort(stClean)}${montoStr}</span>`;
         }
 
         const slaSince = parseInt(chat.sla_wait_since_epoch || 0, 10);
@@ -795,7 +806,7 @@ function renderChatList(chats, append = false, has_more = false) {
         const lastCliEp = parseInt(chat.last_client_epoch || 0, 10);
 
         let html = `
-            <article class="chat-item ${isActiveClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${chat.deal_etapa || ''}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? chat.deal_monto_usd : ''}">
+            <article class="chat-item ${isActiveClass} ${stageClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${chat.deal_etapa || ''}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? chat.deal_monto_usd : ''}">
                 <div class="chat-avatar">
                     <img src="${getLocalAvatarSvg(name)}" alt="Avatar">
                 </div>
@@ -1877,12 +1888,74 @@ function initSprint2EnterpriseTools() {
         });
     });
 
-    // [COM-04] Clic directo en contador rojo filtra pestaña SLA >15m
+    // [COM-04] Clic directo en contador rojo filtra pestaña SLA crítica
     $('#slaQuickFilterRed').on('click', function () {
         const tabCrit = $('.tabs .tab[data-target="sla-critico"]');
         if (tabCrit.length) {
             tabCrit.trigger('click');
         }
+    });
+
+    // [COM-04] Botón rápido de configuración de tiempos SLA en la barra superior (Master/Admin)
+    $('#btnQuickSlaConfig').on('click', function (e) {
+        e.stopPropagation();
+        const sedeSel = parseInt($('#filterSede').val() || '0', 10);
+        const sedeTxt = ($('#filterSede').is('select') && sedeSel > 0)
+            ? $('#filterSede option:selected').text()
+            : (sedeSel > 0 ? 'Sede Actual' : 'Regla Global (Todas las Sedes)');
+        $('#quickSlaScopeSubtitle').text('Ámbito: ' + sedeTxt);
+        $('#quickSlaVerdeInput').val(parseInt(slaConfig.verde_max_min || 5, 10));
+        $('#quickSlaAmarilloInput').val(parseInt(slaConfig.amarillo_max_min || 15, 10));
+        updateQuickSlaModalPreview();
+        $('#modalQuickSlaConfig').modal('show');
+    });
+
+    $('#quickSlaVerdeInput, #quickSlaAmarilloInput').on('input', function () {
+        updateQuickSlaModalPreview();
+    });
+
+    $('#btnSaveQuickSla').on('click', function () {
+        const vMin = parseInt($('#quickSlaVerdeInput').val() || '5', 10);
+        const aMin = parseInt($('#quickSlaAmarilloInput').val() || '15', 10);
+        if (vMin < 1 || aMin <= vMin) {
+            Swal.fire('Validación SLA', 'El límite Rojo Crítico debe ser mayor al tiempo máximo en Verde.', 'warning');
+            return;
+        }
+        const sedeSel = parseInt($('#filterSede').val() || '0', 10);
+        const btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
+        $.post('back_bandeja.php', {
+            action: 'save_sla_quick',
+            id_sede: sedeSel,
+            verde_max_min: vMin,
+            amarillo_max_min: aMin
+        }, function (res) {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Tiempos');
+            if (res && res.status === 'success') {
+                if (res.sla_config) {
+                    applySlaConfigLabels(res.sla_config);
+                }
+                slaAlertedChatIds.clear();
+                refreshLiveSlaSemaphores(false);
+                if (currentFilter === 'sla-critico') {
+                    loadChats(false, 1, true);
+                }
+                $('#modalQuickSlaConfig').modal('hide');
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: res.message || 'Tiempos SLA actualizados',
+                    showConfirmButton: false,
+                    timer: 2200
+                });
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo actualizar.', 'error');
+            }
+        }, 'json').fail(function () {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Tiempos');
+            Swal.fire('Error', 'Fallo de red al guardar los tiempos SLA.', 'error');
+        });
     });
 
     // [COM-01] Abrir modal de Reactivación con Plantilla Oficial Meta
@@ -2265,12 +2338,17 @@ function formatEtapaShort(etapa) {
 }
 
 function updateHeaderDealChip(deal) {
+    const chip = $('#btnQuickDeal');
     const chipText = $('#chatDealChipText');
     if (!chipText.length) return;
+    chip.removeClass('stage-NUEVO_LEAD stage-COTIZADO stage-EN_NEGOCIACION stage-PAGO_PENDIENTE stage-GANADO stage-PERDIDO');
     if (deal && deal.etapa) {
+        const st = String(deal.etapa).toUpperCase();
+        chip.addClass(`stage-${st}`);
         const monto = parseFloat(deal.monto_estimado_usd || 0) || 0;
-        chipText.text(`${formatEtapaShort(deal.etapa)} · $${monto.toFixed(2)} USD`);
+        chipText.text(`${formatEtapaShort(st)} · $${monto.toFixed(2)} USD`);
     } else {
+        chip.addClass('stage-NUEVO_LEAD');
         chipText.text('Nuevo Lead · $0.00 USD');
     }
 }
@@ -2287,8 +2365,38 @@ function formatSlaDuration(sec) {
     return `${days}d ${hrs % 24}h`;
 }
 
+function updateQuickSlaModalPreview() {
+    const v = Math.max(1, parseInt($('#quickSlaVerdeInput').val() || '5', 10));
+    const a = Math.max(v + 1, parseInt($('#quickSlaAmarilloInput').val() || '15', 10));
+    $('#prevQuickVerde').text(v);
+    $('#prevQuickAmarillo').text(`${v}-${a}`);
+    $('#prevQuickRojo').text(a);
+}
+
+function applySlaConfigLabels(cfg) {
+    if (!cfg) return;
+    const v = Math.max(1, parseInt(cfg.verde_max_min || 5, 10));
+    const a = Math.max(v + 1, parseInt(cfg.amarillo_max_min || 15, 10));
+    slaConfig = Object.assign({}, slaConfig, cfg, { verde_max_min: v, amarillo_max_min: a });
+
+    $('#slaLabelGreen').html(`&lt;${v}m`);
+    $('#slaLabelYellow').text(`${v}-${a}m`);
+    $('#slaLabelRed').html(`&gt;${a}m`);
+    $('#slaTabCriticoLabel').html(`SLA &gt;${a}m`);
+
+    $('#slaWrapGreen').attr('title', `Menos de ${v} min sin respuesta humana`);
+    $('#slaWrapYellow').attr('title', `Entre ${v} y ${a} min sin respuesta humana`);
+    $('#slaQuickFilterRed').attr('title', `Más de ${a} min sin respuesta humana (clic para filtrar)`);
+    $('#tabSlaCritico').attr('title', `Conversaciones con más de ${a} min sin respuesta humana`);
+}
+
 function refreshLiveSlaSemaphores(canTriggerAudio) {
     const nowEp = getServerNowEpoch();
+    const vMin = Math.max(1, parseInt(slaConfig.verde_max_min || 5, 10));
+    const aMin = Math.max(vMin + 1, parseInt(slaConfig.amarillo_max_min || 15, 10));
+    const greenMaxSec = vMin * 60;
+    const yellowMaxSec = aMin * 60;
+
     let greenCount = 0;
     let yellowCount = 0;
     let redCount = 0;
@@ -2301,27 +2409,20 @@ function refreshLiveSlaSemaphores(canTriggerAudio) {
         const slaReplied = parseInt($item.attr('data-sla-replied') || '0', 10);
         const $slot = $item.find('.sla-slot');
 
-        $item.removeClass('sla-item-yellow sla-item-red');
-
         if (slaSince > 0) {
             const waitSec = Math.max(0, nowEp - slaSince);
             const dur = formatSlaDuration(waitSec);
-            if (waitSec < 300) {
-                // Verde (<5 min)
+            if (waitSec < greenMaxSec) {
                 greenCount++;
-                $slot.html(`<span class="sla-pill sla-green" title="SLA Verde (<5 min sin respuesta humana)">🟢 ${dur}</span>`);
+                $slot.html(`<span class="sla-pill sla-green" title="SLA Verde (<${vMin} min sin respuesta humana)">🟢 ${dur}</span>`);
                 if (chatId > 0) slaAlertedChatIds.delete(chatId);
-            } else if (waitSec <= 900) {
-                // Amarillo (5-15 min)
+            } else if (waitSec <= yellowMaxSec) {
                 yellowCount++;
-                $item.addClass('sla-item-yellow');
-                $slot.html(`<span class="sla-pill sla-yellow" title="SLA Amarillo (5–15 min sin respuesta humana)">🟡 ${dur}</span>`);
+                $slot.html(`<span class="sla-pill sla-yellow" title="SLA Amarillo (${vMin}–${aMin} min sin respuesta humana)">🟡 ${dur}</span>`);
                 if (chatId > 0) slaAlertedChatIds.delete(chatId);
             } else {
-                // Rojo (>15 min sin respuesta humana)
                 redCount++;
-                $item.addClass('sla-item-red');
-                $slot.html(`<span class="sla-pill sla-red" title="SLA Rojo Crítico (>15 min sin respuesta humana)">🔴 ${dur}</span>`);
+                $slot.html(`<span class="sla-pill sla-red" title="SLA Rojo Crítico (>${aMin} min sin respuesta humana)">🔴 ${dur}</span>`);
                 if (chatId > 0 && !slaAlertedChatIds.has(chatId)) {
                     slaAlertedChatIds.add(chatId);
                     newlyBreached.push($item.attr('data-name') || (`Chat #${chatId}`));
@@ -2356,7 +2457,7 @@ function refreshLiveSlaSemaphores(canTriggerAudio) {
             toast: true,
             position: 'bottom-end',
             icon: 'warning',
-            title: `🔴 Alerta SLA (>15 min): ${sampleNames}${extra}`,
+            title: `🔴 Alerta SLA (>${aMin} min): ${sampleNames}${extra}`,
             showConfirmButton: false,
             timer: 4500
         });

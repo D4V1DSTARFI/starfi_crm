@@ -1650,3 +1650,166 @@ function borrarRespuestaRapida(id) {
         }
     });
 }
+
+// ============================================================================
+// PESTAÑA DE CONFIGURACIÓN DE TIEMPOS SLA Y ENRUTAMIENTO ([COM-04])
+// ============================================================================
+let slaSedesPopulated = false;
+
+$(document).ready(function () {
+    loadSlaSettingsModule(0);
+
+    // Soporte de enlace directo ?tab=sla desde la Bandeja Omnicanal
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get('tab') === 'sla') {
+        const slaTabEl = document.getElementById('sla-tab');
+        if (slaTabEl && window.bootstrap && bootstrap.Tab) {
+            new bootstrap.Tab(slaTabEl).show();
+        }
+    }
+
+    $('#cfgSlaSedeSelect').on('change', function () {
+        loadSlaSettingsModule(parseInt($(this).val() || '0', 10));
+    });
+
+    $('#cfgSlaVerdeMin, #cfgSlaAmarilloMin').on('input', function () {
+        updateCfgSlaPreview();
+    });
+
+    $('#btnSaveSlaSettings').on('click', function () {
+        const sedeId = parseInt($('#cfgSlaSedeSelect').val() || '0', 10);
+        const verdeMin = parseInt($('#cfgSlaVerdeMin').val() || '5', 10);
+        const amarilloMin = parseInt($('#cfgSlaAmarilloMin').val() || '15', 10);
+        const rrMin = parseInt($('#cfgSlaRrOnlineMin').val() || '5', 10);
+        const snd = $('#cfgSlaSoundDefault').is(':checked') ? 1 : 0;
+
+        if (verdeMin < 1 || amarilloMin <= verdeMin) {
+            Swal.fire('Validación SLA', 'El límite para Rojo Crítico debe ser mayor que el tiempo máximo en Verde.', 'warning');
+            return;
+        }
+
+        const btn = $(this);
+        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
+        $.post('back_configuracion.php', {
+            action: 'save_sla_settings',
+            id_sede: sedeId,
+            verde_max_min: verdeMin,
+            amarillo_max_min: amarilloMin,
+            round_robin_online_min: rrMin,
+            alerta_sonora_activa: snd
+        }, function (res) {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA');
+            if (res && res.status === 'success') {
+                Swal.fire({ icon: 'success', title: 'Guardado', text: res.message, timer: 2200, showConfirmButton: false });
+                loadSlaSettingsModule(sedeId);
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar.', 'error');
+            }
+        }, 'json').fail(function () {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA');
+            Swal.fire('Error', 'Fallo de red al guardar los tiempos SLA.', 'error');
+        });
+    });
+
+    $('#btnResetSlaOverride').on('click', function () {
+        const sedeId = parseInt($('#cfgSlaSedeSelect').val() || '0', 10);
+        if (sedeId <= 0) return;
+        Swal.fire({
+            title: '¿Restaurar a Regla Global?',
+            text: 'Esta sede volverá a usar los tiempos SLA globales del sistema.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, restaurar',
+            cancelButtonText: 'Cancelar'
+        }).then((r) => {
+            if (r.isConfirmed) {
+                $.post('back_configuracion.php', { action: 'reset_sla_sede', id_sede: sedeId }, function (res) {
+                    if (res && res.status === 'success') {
+                        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 2200 });
+                        loadSlaSettingsModule(sedeId);
+                    } else {
+                        Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo restaurar.', 'error');
+                    }
+                }, 'json');
+            }
+        });
+    });
+});
+
+function updateCfgSlaPreview() {
+    const v = Math.max(1, parseInt($('#cfgSlaVerdeMin').val() || '5', 10));
+    const a = Math.max(v + 1, parseInt($('#cfgSlaAmarilloMin').val() || '15', 10));
+    $('#cfgPrevVerde').text(v);
+    $('#cfgPrevAmarillo').text(`${v}-${a}`);
+    $('#cfgPrevRojo').text(a);
+}
+
+window.selectSlaRuleRow = function (sedeId) {
+    $('#cfgSlaSedeSelect').val(String(sedeId)).trigger('change');
+};
+
+function loadSlaSettingsModule(targetSede) {
+    if (!$('#cfgSlaVerdeMin').length) return;
+    $.post('back_configuracion.php', {
+        action: 'get_sla_settings',
+        id_sede: targetSede || 0
+    }, function (res) {
+        if (!res || res.status !== 'success') return;
+
+        if (!slaSedesPopulated) {
+            const $sel = $('#cfgSlaSedeSelect');
+            $sel.empty();
+            if (res.is_master) {
+                $sel.append('<option value="0">🌎 Regla Global por Defecto (Todas las Sedes)</option>');
+            }
+            (res.sedes || []).forEach(s => {
+                $sel.append(`<option value="${s.id}">🏢 ${s.nombre_sede}</option>`);
+            });
+            if (!res.is_master && res.user_sede > 0) {
+                $sel.val(String(res.user_sede)).prop('disabled', true);
+            }
+            slaSedesPopulated = true;
+        }
+
+        const cfg = res.config || {};
+        const reqSede = parseInt(cfg.id_sede_solicitada || 0, 10);
+        if ($('#cfgSlaSedeSelect option[value="' + reqSede + '"]').length) {
+            $('#cfgSlaSedeSelect').val(String(reqSede));
+        }
+
+        $('#cfgSlaVerdeMin').val(cfg.verde_max_min || 5);
+        $('#cfgSlaAmarilloMin').val(cfg.amarillo_max_min || 15);
+        $('#cfgSlaRrOnlineMin').val(cfg.round_robin_online_min || 5);
+        $('#cfgSlaSoundDefault').prop('checked', parseInt(cfg.alerta_sonora_activa ?? 1, 10) === 1);
+        updateCfgSlaPreview();
+
+        const $badge = $('#slaRuleTypeBadge');
+        if (reqSede === 0) {
+            $badge.attr('class', 'badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-3 py-2').text('Regla Global Activa');
+            $('#btnResetSlaOverride').hide();
+        } else if (cfg.es_personalizado) {
+            $badge.attr('class', 'badge bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill px-3 py-2').text('Personalizado en esta Sede');
+            $('#btnResetSlaOverride').show();
+        } else {
+            $badge.attr('class', 'badge bg-light text-secondary border rounded-pill px-3 py-2').text('Heredando Regla Global');
+            $('#btnResetSlaOverride').hide();
+        }
+
+        const $tbody = $('#slaRulesSummaryBody');
+        $tbody.empty();
+        (res.rules || []).forEach(r => {
+            const sid = parseInt(r.id_sede || 0, 10);
+            const v = parseInt(r.verde_max_min || 5, 10);
+            const a = parseInt(r.amarillo_max_min || 15, 10);
+            const activeCls = (sid === reqSede) ? 'table-active fw-bold' : '';
+            $tbody.append(`
+                <tr class="${activeCls}" style="cursor:pointer;" onclick="window.selectSlaRuleRow(${sid})">
+                    <td>${r.ambito_nombre}</td>
+                    <td class="text-center text-success fw-bold">&lt;${v}m</td>
+                    <td class="text-center text-warning-emphasis fw-bold">${v}-${a}m</td>
+                    <td class="text-center text-danger fw-bold">&gt;${a}m</td>
+                </tr>
+            `);
+        });
+    }, 'json');
+}
