@@ -168,7 +168,12 @@ function ensure_webhook_indexes($con) {
     if (!$con) {
         return;
     }
-    $flag = sys_get_temp_dir() . '/starfi_webhook_idx_v1.flag';
+    $dbName = 'starfi_crm';
+    $rDb = @mysqli_query($con, "SELECT DATABASE() AS db_name");
+    if ($rDb && ($rw = mysqli_fetch_assoc($rDb)) && !empty($rw['db_name'])) {
+        $dbName = (string)$rw['db_name'];
+    }
+    $flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_webhook_idx_v2_' . md5($dbName) . '.flag';
     if (file_exists($flag)) {
         return;
     }
@@ -192,28 +197,39 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     /*
      * RECEPCION DE MENSAJES
      */
+    @ini_set('display_errors', '0');
     //LEEMOS LOS DATOS ENVIADOS POR WHATSAPP
     $respuesta = file_get_contents("php://input");
 
-    // Log para debugging (lo movemos arriba para saber si Facebook llega aquí)
-    $log_dir = __DIR__ . '/logs';
-    if (!is_dir($log_dir)) mkdir($log_dir, 0777, true);
-    file_put_contents($log_dir . "/webhook_" . date('Y-m-d') . ".log", date('Y-m-d H:i:s') . " - " . $respuesta . "\n", FILE_APPEND);
+    // VALIDACIÓN ESTRICTA DE FIRMA HMAC SHA-256 (Seguridad Crítica CHK-CLD-02)
+    $appEnv = strtoupper(trim((string)($env['APP_ENV'] ?? getenv('APP_ENV') ?: 'PRODUCCION')));
+    $appSecret = trim((string)($env['META_APP_SECRET'] ?? getenv('META_APP_SECRET') ?: ''));
+    if ($appSecret === 'replace_with_meta_app_secret') {
+        $appSecret = '';
+    }
 
-    // VALIDACIÓN DE FIRMA SHA-256 (Seguridad Crítica)
-    $appSecret = $env['META_APP_SECRET'] ?? '';
-    if (!empty($appSecret)) {
-        $signature = $_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '';
-        if (empty($signature)) {
+    if ($appEnv === 'PRODUCCION' && $appSecret === '') {
+        http_response_code(403);
+        exit('META_APP_SECRET requerido en produccion');
+    }
+
+    if ($appEnv === 'PRODUCCION' || $appSecret !== '') {
+        $signature = (string)($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? '');
+        if ($signature === '') {
             http_response_code(403);
-            exit('Firma no proporcionada');
+            exit('Firma X-Hub-Signature-256 no proporcionada');
         }
-        $expected_signature = 'sha256=' . hash_hmac('sha256', $respuesta, $appSecret);
+        $expected_signature = 'sha256=' . hash_hmac('sha256', (string)$respuesta, $appSecret);
         if (!hash_equals($expected_signature, $signature)) {
             http_response_code(403);
-            exit('Firma invalida');
+            exit('Firma X-Hub-Signature-256 invalida');
         }
     }
+
+    // Log local una vez validada la autenticidad del origen
+    $log_dir = __DIR__ . '/logs';
+    if (!is_dir($log_dir)) @mkdir($log_dir, 0755, true);
+    @file_put_contents($log_dir . "/logs_webhook.log", date('Y-m-d H:i:s') . " - " . $respuesta . "\n", FILE_APPEND);
 
     //CONVERTIMOS EL JSON EN ARRAY DE PHP
     $respuesta_array = json_decode($respuesta, true);

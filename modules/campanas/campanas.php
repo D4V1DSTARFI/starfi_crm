@@ -22,7 +22,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
     <title>Campañas de Difusión | STARFI CRM</title>
     <link rel="icon" href="../../docs/identidad_visual/logos/isologo.ico" type="image/x-icon">
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
     <style>
         .main-content {
@@ -36,7 +36,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
 
         /* Banner Superior de Sede y Línea Asignada */
         .sede-command-bar {
-            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+            background: linear-gradient(135deg, #37414A 0%, #262D34 100%);
             border-radius: 16px;
             padding: 20px 24px;
             color: #FFFFFF;

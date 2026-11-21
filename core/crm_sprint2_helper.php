@@ -1,21 +1,46 @@
 <?php
 /**
  * core/crm_sprint2_helper.php
- * Motor central para OT-STARFI-2026-11 (SPRINT 2):
- * - Auto-migración ligera e indexada (Presencia en línea, Round-Robin, Pipeline Kanban USD, SLA)
+ * Motor central para OT-STARFI-2026-11 (SPRINT 2 — Remediado QA V2):
+ * - Auto-migración ligera e indexada con bandera .flag por hash MD5 de BD
  * - Heartbeat de presencia de asesores en línea por sede
- * - Enrutamiento Automático Round-Robin ([COM-03])
- * - Sincronización de Oportunidades del Embudo de Ventas ([COM-02])
+ * - Enrutamiento Automático Round-Robin con transacción y SELECT ... FOR UPDATE ([COM-03])
+ * - Sincronización de Oportunidades Kanban USD con aislamiento estricto Multi-Sede y FOR UPDATE ([COM-02])
  */
+
+if (!function_exists('starfi_db_schema_hash')) {
+    function starfi_db_schema_hash($con) {
+        static $cached = [];
+        if (!$con) {
+            return 'nodb';
+        }
+        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
+        if (isset($cached[$oid])) {
+            return $cached[$oid];
+        }
+        $dbName = 'starfi_crm';
+        $res = @mysqli_query($con, "SELECT DATABASE() AS db_name");
+        if ($res && ($row = mysqli_fetch_assoc($res)) && !empty($row['db_name'])) {
+            $dbName = (string)$row['db_name'];
+        }
+        $hash = md5($dbName);
+        $cached[$oid] = $hash;
+        return $hash;
+    }
+}
 
 if (!function_exists('starfi_ensure_sprint2_schema')) {
     function starfi_ensure_sprint2_schema($con) {
         if (!$con) {
             return;
         }
-        $flag = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'starfi_sprint2_schema_v3.flag';
+        $dbHash = starfi_db_schema_hash($con);
+        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint2_schema_v4_' . $dbHash . '.flag';
         if (@file_exists($flag) && (time() - @filemtime($flag)) < 86400) {
-            return;
+            $chkTbl = @mysqli_query($con, "SHOW TABLES LIKE 'pipeline_oportunidades'");
+            if ($chkTbl && mysqli_num_rows($chkTbl) > 0) {
+                return;
+            }
         }
 
         // 1. Columnas de presencia y Round-Robin en tabla `usuario`
@@ -85,10 +110,18 @@ if (!function_exists('starfi_ensure_sprint2_schema')) {
     }
 }
 
+if (!function_exists('starfi_tx_is_active')) {
+    function starfi_tx_is_active($con) {
+        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
+        return !empty($GLOBALS['__starfi_active_tx'][$oid]);
+    }
+    function starfi_tx_set_active($con, $active) {
+        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
+        $GLOBALS['__starfi_active_tx'][$oid] = (bool)$active;
+    }
+}
+
 if (!function_exists('starfi_get_sla_config')) {
-    /**
-     * Obtiene los umbrales de SLA aplicables a una sede (si tiene regla propia usa la de la sede; si no, hereda la Global id_sede=0).
-     */
     function starfi_get_sla_config($con, $id_sede = 0) {
         $defaults = [
             'id_sede_solicitada'     => intval($id_sede),
@@ -104,24 +137,33 @@ if (!function_exists('starfi_get_sla_config')) {
         }
         starfi_ensure_sprint2_schema($con);
         $sede = max(0, intval($id_sede));
-        $sql = ($sede > 0)
-            ? "SELECT * FROM `config_sla` WHERE `id_sede` IN (0, $sede) ORDER BY (`id_sede` = $sede) DESC LIMIT 1"
-            : "SELECT * FROM `config_sla` WHERE `id_sede` = 0 LIMIT 1";
-        $res = @mysqli_query($con, $sql);
-        if ($res && ($row = mysqli_fetch_assoc($res))) {
-            $v = max(1, intval($row['verde_max_min'] ?? 5));
-            $a = max($v + 1, intval($row['amarillo_max_min'] ?? 15));
-            $rr = max(1, intval($row['round_robin_online_min'] ?? 5));
-            $app_sede = intval($row['id_sede'] ?? 0);
-            return [
-                'id_sede_solicitada'     => $sede,
-                'id_sede_aplicada'       => $app_sede,
-                'es_personalizado'       => ($sede > 0 && $app_sede === $sede),
-                'verde_max_min'          => $v,
-                'amarillo_max_min'       => $a,
-                'round_robin_online_min' => $rr,
-                'alerta_sonora_activa'   => intval($row['alerta_sonora_activa'] ?? 1) ? 1 : 0,
-            ];
+        if ($sede > 0) {
+            $stmt = $con->prepare("SELECT * FROM `config_sla` WHERE `id_sede` IN (0, ?) ORDER BY (`id_sede` = ?) DESC LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("ii", $sede, $sede);
+            }
+        } else {
+            $stmt = $con->prepare("SELECT * FROM `config_sla` WHERE `id_sede` = 0 LIMIT 1");
+        }
+        if ($stmt && $stmt->execute()) {
+            $res = $stmt->get_result();
+            if ($res && ($row = $res->fetch_assoc())) {
+                $stmt->close();
+                $v = max(1, intval($row['verde_max_min'] ?? 5));
+                $a = max($v + 1, intval($row['amarillo_max_min'] ?? 15));
+                $rr = max(1, intval($row['round_robin_online_min'] ?? 5));
+                $app_sede = intval($row['id_sede'] ?? 0);
+                return [
+                    'id_sede_solicitada'     => $sede,
+                    'id_sede_aplicada'       => $app_sede,
+                    'es_personalizado'       => ($sede > 0 && $app_sede === $sede),
+                    'verde_max_min'          => $v,
+                    'amarillo_max_min'       => $a,
+                    'round_robin_online_min' => $rr,
+                    'alerta_sonora_activa'   => intval($row['alerta_sonora_activa'] ?? 1) ? 1 : 0,
+                ];
+            }
+            $stmt->close();
         }
         return $defaults;
     }
@@ -146,15 +188,21 @@ if (!function_exists('starfi_save_sla_config')) {
             return ['ok' => false, 'message' => 'El tiempo límite para Rojo Crítico debe ser mayor al tiempo en Verde (máx. 2880 min).'];
         }
 
-        $ok = @mysqli_query($con, "
+        $stmt = $con->prepare("
             INSERT INTO `config_sla` (`id_sede`, `verde_max_min`, `amarillo_max_min`, `round_robin_online_min`, `alerta_sonora_activa`)
-            VALUES ($sede, $v, $a, $rr, $snd)
+            VALUES (?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 `verde_max_min` = VALUES(`verde_max_min`),
                 `amarillo_max_min` = VALUES(`amarillo_max_min`),
                 `round_robin_online_min` = VALUES(`round_robin_online_min`),
                 `alerta_sonora_activa` = VALUES(`alerta_sonora_activa`)
         ");
+        if (!$stmt) {
+            return ['ok' => false, 'message' => 'No se pudo preparar la configuración SLA.'];
+        }
+        $stmt->bind_param("iiiii", $sede, $v, $a, $rr, $snd);
+        $ok = $stmt->execute();
+        $stmt->close();
         if (!$ok) {
             return ['ok' => false, 'message' => 'No se pudo guardar la configuración SLA en base de datos.'];
         }
@@ -163,9 +211,6 @@ if (!function_exists('starfi_save_sla_config')) {
 }
 
 if (!function_exists('starfi_touch_agent_presence')) {
-    /**
-     * Registra actividad reciente del usuario en BD para detección en tiempo real de asesores en línea (Round-Robin).
-     */
     function starfi_touch_agent_presence($con, $agente_id, $force = false) {
         $uid = intval($agente_id);
         if (!$con || $uid <= 1) {
@@ -179,13 +224,20 @@ if (!function_exists('starfi_touch_agent_presence')) {
             $_SESSION['last_db_heartbeat'] = time();
         }
         starfi_ensure_sprint2_schema($con);
-        @mysqli_query($con, "UPDATE `usuario` SET `ultima_actividad` = NOW() WHERE `id` = $uid");
+        $stmt = $con->prepare("UPDATE `usuario` SET `ultima_actividad` = NOW() WHERE `id` = ?");
+        if ($stmt) {
+            $stmt->bind_param("i", $uid);
+            @$stmt->execute();
+            $stmt->close();
+        }
     }
 }
 
 if (!function_exists('starfi_parse_usd_number')) {
     /**
-     * Convierte cadenas monetarias como "906.50 + IVA", "1,019.30 USD", "1.250,50" o "$236.40" a float USD.
+     * Convierte cadenas monetarias como "906.50 + IVA", "1,019.30 USD", "1.250,50", "$1.250 USD" o "$236.40" a float USD.
+     * En notación con un único punto decimal (ej. "$1.250 USD"), trata el punto como separador decimal (1.25 USD)
+     * evitando inflar 1,000x montos unitarios con 3 o 4 decimales.
      */
     function starfi_parse_usd_number($raw) {
         $str = trim((string)$raw);
@@ -196,7 +248,7 @@ if (!function_exists('starfi_parse_usd_number')) {
         if (preg_match('/\b(bs\.?|ves|bol[ií]vares)\b/iu', $str) && !preg_match('/(\$|usd|d[oó]lar)/iu', $str)) {
             return 0.0;
         }
-        if (!preg_match('/(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/', $str, $m)) {
+        if (!preg_match('/(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,4})?|\d+(?:[.,]\d{1,4})?)/', $str, $m)) {
             return 0.0;
         }
         $num = $m[1];
@@ -207,27 +259,30 @@ if (!function_exists('starfi_parse_usd_number')) {
             $last_comma = strrpos($num, ',');
             $last_dot = strrpos($num, '.');
             if ($last_comma > $last_dot) {
-                // Formato europeo/latino: 1.250,50
+                // Formato europeo/latino: 1.250,50 -> 1250.50
                 $num = str_replace('.', '', $num);
                 $num = str_replace(',', '.', $num);
             } else {
-                // Formato anglosajón: 1,250.50
+                // Formato anglosajón: 1,250.50 -> 1250.50
                 $num = str_replace(',', '', $num);
             }
         } elseif ($has_comma) {
             $parts = explode(',', $num);
             $last_part = end($parts);
-            if (count($parts) === 2 && strlen($last_part) <= 2) {
+            if (count($parts) === 2 && (strlen($last_part) !== 3 || $parts[0] === '0')) {
+                // Ej: 12,50 o 0,125 -> decimal
                 $num = str_replace(',', '.', $num);
             } else {
+                // Ej: 1,250 o 1,250,000 -> separador de miles en USD
                 $num = str_replace(',', '', $num);
             }
         } elseif ($has_dot) {
             $parts = explode('.', $num);
-            $last_part = end($parts);
-            if (count($parts) > 2 || (count($parts) === 2 && strlen($last_part) === 3)) {
+            if (count($parts) > 2) {
+                // Múltiples puntos (ej. 1.250.000) -> separadores de miles
                 $num = str_replace('.', '', $num);
             }
+            // Un único punto (ej. 906.50 o $1.250 USD) se preserva como punto decimal estándar USD
         }
 
         $val = round(floatval($num), 2);
@@ -237,9 +292,8 @@ if (!function_exists('starfi_parse_usd_number')) {
 
 if (!function_exists('starfi_extract_deal_enrichment')) {
     /**
-     * Extrae el monto estimado en USD, correlativo y asesor desde los mensajes de la conversación o del cliente:
-     * 1) Prioridad 1: Mensajes API_TRANSACCIONAL (ej. Params[2] = "12.30 + IVA", Params[5] = "NE_117500").
-     * 2) Prioridad 2: Mensajes de cotización en USD enviados por AGENTE o BOT en el chat activo.
+     * Extrae monto estimado en USD, correlativo y asesor desde mensajes pertenecientes ESTRICTAMENTE a la misma id_sede.
+     * Nunca cruza conversaciones ni notificaciones de otra sede (CHK-CLD-01), ni arrastra ventas cerradas (GANADO/PERDIDO) a hilos nuevos.
      */
     function starfi_extract_deal_enrichment($con, $id_sede, $id_cliente, $id_conversacion = 0) {
         $result = [
@@ -262,76 +316,157 @@ if (!function_exists('starfi_extract_deal_enrichment')) {
             return $result;
         }
 
-        // Resolver teléfono y sede del cliente/conversación para cruzar si la notificación entró en una conversación hermana
+        // Resolver teléfono y sede real de la conversación o del cliente
         $cli_phone = '';
-        if ($cli <= 0 && $conv > 0) {
-            $rC = @mysqli_query($con, "SELECT c.id_cliente, l.id_sede, cl.numero_whatsapp FROM conversaciones c JOIN clientes_contactos cl ON c.id_cliente = cl.id LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conv LIMIT 1");
-            if ($rC && ($rc = mysqli_fetch_assoc($rC))) {
-                $cli = intval($rc['id_cliente']);
-                if ($sede <= 0) $sede = intval($rc['id_sede'] ?? 0);
-                $cli_phone = preg_replace('/[^0-9]/', '', (string)($rc['numero_whatsapp'] ?? ''));
-            }
-        } elseif ($cli > 0) {
-            $rCl = @mysqli_query($con, "SELECT numero_whatsapp, id_sede FROM clientes_contactos WHERE id = $cli LIMIT 1");
-            if ($rCl && ($rcl = mysqli_fetch_assoc($rCl))) {
-                $cli_phone = preg_replace('/[^0-9]/', '', (string)($rcl['numero_whatsapp'] ?? ''));
-                if ($sede <= 0) $sede = intval($rcl['id_sede'] ?? 0);
-            }
-        }
-
-        // 1. PRIORIDAD 1: Consulta 100% indexada por idx_conv_origen_ts (evita OR entre tablas que causaba full scan)
-        $cand_client_ids = [];
-        if ($cli > 0) {
-            $cand_client_ids[$cli] = $cli;
-        }
-        if ($cli_phone !== '') {
-            $ph_esc = mysqli_real_escape_string($con, $cli_phone);
-            $rPh = @mysqli_query($con, "SELECT `id` FROM `clientes_contactos` WHERE `numero_whatsapp` = '$ph_esc' LIMIT 10");
-            if ($rPh) {
-                while ($rp = mysqli_fetch_assoc($rPh)) {
-                    $cid_p = intval($rp['id']);
-                    if ($cid_p > 0) $cand_client_ids[$cid_p] = $cid_p;
+        if ($conv > 0) {
+            $stmtC = $con->prepare("
+                SELECT c.id_cliente, l.id_sede, cl.numero_whatsapp
+                FROM conversaciones c
+                JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+                WHERE c.id = ?
+                LIMIT 1
+            ");
+            if ($stmtC) {
+                $stmtC->bind_param("i", $conv);
+                $stmtC->execute();
+                if ($rc = $stmtC->get_result()->fetch_assoc()) {
+                    $conv_sede = intval($rc['id_sede'] ?? 0);
+                    // Si se solicitó una sede específica y la conversación pertenece a OTRA sede, abortar cruce
+                    if ($sede > 0 && $conv_sede > 0 && $conv_sede !== $sede) {
+                        $stmtC->close();
+                        return $result;
+                    }
+                    if ($cli <= 0) {
+                        $cli = intval($rc['id_cliente']);
+                    }
+                    if ($sede <= 0) {
+                        $sede = $conv_sede;
+                    }
+                    $cli_phone = preg_replace('/[^0-9]/', '', (string)($rc['numero_whatsapp'] ?? ''));
                 }
+                $stmtC->close();
             }
         }
 
+        if ($cli > 0 && ($cli_phone === '' || $sede <= 0)) {
+            $stmtCl = $con->prepare("SELECT numero_whatsapp, id_sede FROM clientes_contactos WHERE id = ? LIMIT 1");
+            if ($stmtCl) {
+                $stmtCl->bind_param("i", $cli);
+                $stmtCl->execute();
+                if ($rcl = $stmtCl->get_result()->fetch_assoc()) {
+                    if ($cli_phone === '') {
+                        $cli_phone = preg_replace('/[^0-9]/', '', (string)($rcl['numero_whatsapp'] ?? ''));
+                    }
+                    if ($sede <= 0) {
+                        $sede = intval($rcl['id_sede'] ?? 0);
+                    }
+                }
+                $stmtCl->close();
+            }
+        }
+
+        // Construir lista de conversaciones candidatas ESTRICTAMENTE acotadas a $sede
         $cand_conv_ids = [];
         if ($conv > 0) {
             $cand_conv_ids[$conv] = $conv;
         }
-        if (!empty($cand_client_ids)) {
-            $cl_csv = implode(',', $cand_client_ids);
-            $rCvs = @mysqli_query($con, "SELECT `id` FROM `conversaciones` WHERE `id_cliente` IN ($cl_csv) ORDER BY `id` DESC LIMIT 15");
-            if ($rCvs) {
-                while ($rcv = mysqli_fetch_assoc($rCvs)) {
-                    $cv_i = intval($rcv['id']);
-                    if ($cv_i > 0) $cand_conv_ids[$cv_i] = $cv_i;
+
+        if ($sede > 0) {
+            $cand_client_ids = [];
+            if ($cli > 0) {
+                $cand_client_ids[$cli] = $cli;
+            }
+            if ($cli_phone !== '') {
+                $stmtPh = $con->prepare("
+                    SELECT DISTINCT cl.id
+                    FROM clientes_contactos cl
+                    LEFT JOIN conversaciones cv ON cv.id_cliente = cl.id
+                    LEFT JOIN lineas_whatsapp lw ON cv.id_linea = lw.id
+                    WHERE cl.numero_whatsapp = ?
+                      AND (cl.id_sede = ? OR lw.id_sede = ?)
+                    LIMIT 10
+                ");
+                if ($stmtPh) {
+                    $stmtPh->bind_param("sii", $cli_phone, $sede, $sede);
+                    $stmtPh->execute();
+                    $rPh = $stmtPh->get_result();
+                    while ($rp = $rPh->fetch_assoc()) {
+                        $cid_p = intval($rp['id']);
+                        if ($cid_p > 0) {
+                            $cand_client_ids[$cid_p] = $cid_p;
+                        }
+                    }
+                    $stmtPh->close();
+                }
+            }
+
+            if (!empty($cand_client_ids)) {
+                $cl_ids = array_values(array_map('intval', $cand_client_ids));
+                $placeholders = implode(',', array_fill(0, count($cl_ids), '?'));
+                // Filtrar conversaciones EXCLUSIVAMENTE de la línea WhatsApp perteneciente a $sede
+                // y excluir hilos hermanos que ya tengan una oportunidad cerrada (GANADO/PERDIDO)
+                $sql_cvs = "
+                    SELECT c.id
+                    FROM conversaciones c
+                    INNER JOIN lineas_whatsapp l ON c.id_linea = l.id
+                    WHERE c.id_cliente IN ($placeholders)
+                      AND l.id_sede = ?
+                      AND (
+                          c.id = ?
+                          OR NOT EXISTS (
+                              SELECT 1 FROM pipeline_oportunidades po
+                              WHERE po.id_conversacion = c.id
+                                AND po.etapa IN ('GANADO', 'PERDIDO')
+                          )
+                      )
+                    ORDER BY (c.id = ?) DESC, c.id DESC
+                    LIMIT 15
+                ";
+                $stmtCvs = $con->prepare($sql_cvs);
+                if ($stmtCvs) {
+                    $types = str_repeat('i', count($cl_ids)) . 'iii';
+                    $bind_vals = array_merge($cl_ids, [$sede, $conv, $conv]);
+                    $stmtCvs->bind_param($types, ...$bind_vals);
+                    $stmtCvs->execute();
+                    $rCvs = $stmtCvs->get_result();
+                    while ($rcv = $rCvs->fetch_assoc()) {
+                        $cv_i = intval($rcv['id']);
+                        if ($cv_i > 0) {
+                            $cand_conv_ids[$cv_i] = $cv_i;
+                        }
+                    }
+                    $stmtCvs->close();
                 }
             }
         }
 
+        // 1. PRIORIDAD 1: Mensajes API_TRANSACCIONAL en las conversaciones de esta sede únicamente
         if (!empty($cand_conv_ids)) {
-            $cv_csv = implode(',', $cand_conv_ids);
-            $order_conv = ($conv > 0) ? "(`id_conversacion` = $conv) DESC, " : "";
-
+            $cv_list = array_values(array_map('intval', $cand_conv_ids));
+            $cv_ph = implode(',', array_fill(0, count($cv_list), '?'));
             $sql_api = "
                 SELECT `contenido`
                 FROM `mensajes_y_eventos`
-                WHERE `id_conversacion` IN ($cv_csv)
+                WHERE `id_conversacion` IN ($cv_ph)
                   AND `origen` = 'API_TRANSACCIONAL'
                   AND `contenido` NOT LIKE '%starfi_difusion_directa%'
                   AND `contenido` NOT LIKE '%starfi_csat_survey%'
                   AND `contenido` NOT LIKE '%starfi_notificacion_interna%'
                   AND `contenido` NOT LIKE '%[DIFUSIÓN:%'
                   AND `contenido` NOT LIKE '%| Texto:%'
-                ORDER BY {$order_conv}`id` DESC
+                ORDER BY (`id_conversacion` = ?) DESC, `id` DESC
                 LIMIT 6
             ";
-            $rApi = @mysqli_query($con, $sql_api);
-            if ($rApi) {
-                while ($rm = mysqli_fetch_assoc($rApi)) {
+            $stmtApi = $con->prepare($sql_api);
+            if ($stmtApi) {
+                $types_api = str_repeat('i', count($cv_list)) . 'i';
+                $vals_api = array_merge($cv_list, [$conv]);
+                $stmtApi->bind_param($types_api, ...$vals_api);
+                $stmtApi->execute();
+                $rApi = $stmtApi->get_result();
+                while ($rm = $rApi->fetch_assoc()) {
                     $txt = (string)($rm['contenido'] ?? '');
-                    // Formato A: Envío dinámico de plantilla: <name>. Params: [...]
                     if (preg_match('/Params:\s*(\[.*?\])/s', $txt, $mp)) {
                         $params = json_decode($mp[1], true);
                         if (is_array($params) && count($params) >= 4 && isset($params[2]) && preg_match('/^\s*\$?\s*\d+(?:[.,]\d+)*\s*(?:\+\s*IVA)?\s*(?:USD|EUR|\$)?\s*(?:\+\s*IVA)?\s*$/iu', (string)$params[2])) {
@@ -347,7 +482,6 @@ if (!function_exists('starfi_extract_deal_enrichment')) {
                             }
                         }
                     }
-                    // Formato B: Legacy "monto total: 906.50 USD ... asesor de ventas: ... correlativo: ..."
                     if (preg_match('/monto\s+total:\s*([^,]+)/iu', $txt, $mm)) {
                         $parsed = starfi_parse_usd_number($mm[1]);
                         if ($parsed > 0) {
@@ -364,24 +498,28 @@ if (!function_exists('starfi_extract_deal_enrichment')) {
                         }
                     }
                 }
+                $stmtApi->close();
             }
         }
 
         // 2. PRIORIDAD 2: Cotización escrita en USD por AGENTE o BOT en el chat activo
         if ($result['monto_usd'] <= 0 && $conv > 0) {
-            $rQuote = @mysqli_query($con, "
+            $stmtQuote = $con->prepare("
                 SELECT contenido
                 FROM mensajes_y_eventos
-                WHERE id_conversacion = $conv
+                WHERE id_conversacion = ?
                   AND origen IN ('AGENTE', 'BOT')
                   AND tipo = 'TEXTO'
                 ORDER BY id DESC
                 LIMIT 15
             ");
-            if ($rQuote) {
-                while ($rq = mysqli_fetch_assoc($rQuote)) {
+            if ($stmtQuote) {
+                $stmtQuote->bind_param("i", $conv);
+                $stmtQuote->execute();
+                $rQuote = $stmtQuote->get_result();
+                while ($rq = $rQuote->fetch_assoc()) {
                     $qtxt = (string)($rq['contenido'] ?? '');
-                    if (preg_match_all('/(?:\$\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)|(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:\$|usd|d[oó]lares\b))/iu', $qtxt, $matches, PREG_SET_ORDER)) {
+                    if (preg_match_all('/(?:\$\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,4})?|\d+(?:[.,]\d{1,4})?)|(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,4})?|\d+(?:[.,]\d{1,4})?)\s*(?:\$|usd|d[oó]lares\b))/iu', $qtxt, $matches, PREG_SET_ORDER)) {
                         $last_match = end($matches);
                         $candidate_str = !empty($last_match[1]) ? $last_match[1] : ($last_match[2] ?? '');
                         $parsed_q = starfi_parse_usd_number($candidate_str);
@@ -393,28 +531,34 @@ if (!function_exists('starfi_extract_deal_enrichment')) {
                         }
                     }
                 }
+                $stmtQuote->close();
             }
         }
 
-        // Intentar vincular id_agente_sugerido si viene nombre de asesor ERP en la sede
+        // Intentar vincular id_agente_sugerido exclusivamente entre usuarios activos de la misma $sede
         if ($result['asesor_erp'] !== '' && $sede > 0) {
             $as_clean = trim(preg_replace('/\s+/', ' ', $result['asesor_erp']));
             $parts = explode(' ', $as_clean);
-            $first_word = mysqli_real_escape_string($con, $parts[0] ?? '');
-            $full_esc = mysqli_real_escape_string($con, $as_clean);
+            $first_word = $parts[0] ?? '';
             if (strlen($first_word) >= 3) {
-                $rAgMatch = @mysqli_query($con, "
+                $first_like = $first_word . '%';
+                $stmtAg = $con->prepare("
                     SELECT u.id
                     FROM usuario u
                     JOIN usuario_perfil up ON up.id_usuario = u.id
-                    WHERE u.id_sede = $sede
+                    WHERE u.id_sede = ?
                       AND u.estado = 'ACTIVO'
-                      AND (UPPER(TRIM(up.nombre)) = UPPER('$full_esc') OR UPPER(up.nombre) LIKE UPPER('$first_word%'))
-                    ORDER BY (UPPER(TRIM(up.nombre)) = UPPER('$full_esc')) DESC, u.id ASC
+                      AND (UPPER(TRIM(up.nombre)) = UPPER(?) OR UPPER(up.nombre) LIKE UPPER(?))
+                    ORDER BY (UPPER(TRIM(up.nombre)) = UPPER(?)) DESC, u.id ASC
                     LIMIT 1
                 ");
-                if ($rAgMatch && ($rag = mysqli_fetch_assoc($rAgMatch))) {
-                    $result['id_agente_sugerido'] = intval($rag['id']);
+                if ($stmtAg) {
+                    $stmtAg->bind_param("isss", $sede, $as_clean, $first_like, $as_clean);
+                    $stmtAg->execute();
+                    if ($rag = $stmtAg->get_result()->fetch_assoc()) {
+                        $result['id_agente_sugerido'] = intval($rag['id']);
+                    }
+                    $stmtAg->close();
                 }
             }
         }
@@ -424,31 +568,50 @@ if (!function_exists('starfi_extract_deal_enrichment')) {
 }
 
 if (!function_exists('starfi_backfill_zero_deals')) {
-    /**
-     * Completa retroactivamente oportunidades existentes cuyo monto_estimado_usd sigue en 0.00
-     * sin tocar ninguna oportunidad donde ya se haya ingresado un monto > 0.
-     */
     function starfi_backfill_zero_deals($con, $id_sede_filter = 0, $limit = 150) {
         if (!$con) {
             return 0;
         }
         $sede_f = intval($id_sede_filter);
         $lim = max(1, min(300, intval($limit)));
-        $where_sede = ($sede_f > 0) ? " AND `id_sede` = $sede_f" : "";
 
-        $res = @mysqli_query($con, "
-            SELECT `id`, `id_sede`, `id_cliente`, `id_conversacion`, `id_agente`, `titulo`, `notas`
-            FROM `pipeline_oportunidades`
-            WHERE `monto_estimado_usd` <= 0 $where_sede
-            ORDER BY `id` DESC
-            LIMIT $lim
-        ");
-        if (!$res) {
-            return 0;
+        if ($sede_f > 0) {
+            $stmt = $con->prepare("
+                SELECT `id`, `id_sede`, `id_cliente`, `id_conversacion`, `id_agente`, `titulo`, `notas`
+                FROM `pipeline_oportunidades`
+                WHERE `monto_estimado_usd` <= 0 AND `id_sede` = ?
+                ORDER BY `id` DESC
+                LIMIT ?
+            ");
+            if ($stmt) {
+                $stmt->bind_param("ii", $sede_f, $lim);
+            }
+        } else {
+            $stmt = $con->prepare("
+                SELECT `id`, `id_sede`, `id_cliente`, `id_conversacion`, `id_agente`, `titulo`, `notas`
+                FROM `pipeline_oportunidades`
+                WHERE `monto_estimado_usd` <= 0 AND `id_sede` > 0
+                ORDER BY `id` DESC
+                LIMIT ?
+            ");
+            if ($stmt) {
+                $stmt->bind_param("i", $lim);
+            }
         }
 
+        if (!$stmt || !$stmt->execute()) {
+            if ($stmt) $stmt->close();
+            return 0;
+        }
+        $res = $stmt->get_result();
+        $rows = [];
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $stmt->close();
+
         $updated = 0;
-        while ($row = mysqli_fetch_assoc($res)) {
+        foreach ($rows as $row) {
             $did = intval($row['id']);
             $enr = starfi_extract_deal_enrichment(
                 $con,
@@ -460,36 +623,42 @@ if (!function_exists('starfi_backfill_zero_deals')) {
                 continue;
             }
 
-            $sets = ["`monto_estimado_usd` = " . number_format($enr['monto_usd'], 2, '.', '')];
-
-            $cur_tit = trim((string)($row['titulo'] ?? ''));
-            if ($enr['correlativo'] !== '' && stripos($cur_tit, $enr['correlativo']) === false) {
-                if (stripos($cur_tit, 'Lead WhatsApp') === 0 || stripos($cur_tit, 'Oportunidad') === 0) {
-                    $new_tit = mb_substr($cur_tit . ' · ' . $enr['correlativo'], 0, 195);
-                    $sets[] = "`titulo` = '" . mysqli_real_escape_string($con, $new_tit) . "'";
+            $new_tit = trim((string)($row['titulo'] ?? ''));
+            if ($enr['correlativo'] !== '' && stripos($new_tit, $enr['correlativo']) === false) {
+                if (stripos($new_tit, 'Lead WhatsApp') === 0 || stripos($new_tit, 'Oportunidad') === 0) {
+                    $new_tit = mb_substr($new_tit . ' · ' . $enr['correlativo'], 0, 195);
                 }
             }
 
-            $cur_notas = trim((string)($row['notas'] ?? ''));
-            if ($cur_notas === '' && ($enr['correlativo'] !== '' || $enr['asesor_erp'] !== '' || $enr['monto_raw'] !== '')) {
+            $new_notas = trim((string)($row['notas'] ?? ''));
+            if ($new_notas === '' && ($enr['correlativo'] !== '' || $enr['asesor_erp'] !== '' || $enr['monto_raw'] !== '')) {
                 $nota_parts = [];
                 if ($enr['correlativo'] !== '') $nota_parts[] = "Documento: " . $enr['correlativo'];
                 if ($enr['monto_raw'] !== '') $nota_parts[] = "Monto mensaje: " . $enr['monto_raw'];
                 if ($enr['asesor_erp'] !== '') $nota_parts[] = "Vendedor ERP: " . $enr['asesor_erp'];
                 if ($enr['fecha_doc'] !== '') $nota_parts[] = "Fecha: " . $enr['fecha_doc'];
-                $nota_auto = implode(' | ', $nota_parts);
-                $sets[] = "`notas` = '" . mysqli_real_escape_string($con, $nota_auto) . "'";
+                $new_notas = implode(' | ', $nota_parts);
             }
 
-            if (intval($row['id_agente'] ?? 0) === 0 && $enr['id_agente_sugerido'] > 0) {
-                $sets[] = "`id_agente` = " . intval($enr['id_agente_sugerido']);
-            }
+            $cur_ag = intval($row['id_agente'] ?? 0);
+            $new_ag = ($cur_ag > 0) ? $cur_ag : ($enr['id_agente_sugerido'] > 0 ? intval($enr['id_agente_sugerido']) : null);
+            $notas_db = ($new_notas !== '') ? $new_notas : null;
 
-            // Preservar fecha_actualizacion original para no alterar el orden cronológico al auto-completar
-            $sets[] = "`fecha_actualizacion` = `fecha_actualizacion`";
-
-            if (@mysqli_query($con, "UPDATE `pipeline_oportunidades` SET " . implode(', ', $sets) . " WHERE `id` = $did")) {
-                $updated++;
+            $stmtUp = $con->prepare("
+                UPDATE `pipeline_oportunidades`
+                SET `monto_estimado_usd` = ?,
+                    `titulo` = ?,
+                    `notas` = ?,
+                    `id_agente` = ?,
+                    `fecha_actualizacion` = `fecha_actualizacion`
+                WHERE `id` = ? AND `monto_estimado_usd` <= 0
+            ");
+            if ($stmtUp) {
+                $stmtUp->bind_param("dssii", $enr['monto_usd'], $new_tit, $notas_db, $new_ag, $did);
+                if ($stmtUp->execute() && $stmtUp->affected_rows > 0) {
+                    $updated++;
+                }
+                $stmtUp->close();
             }
         }
         return $updated;
@@ -498,8 +667,8 @@ if (!function_exists('starfi_backfill_zero_deals')) {
 
 if (!function_exists('starfi_ensure_pipeline_lead')) {
     /**
-     * Garantiza que exista una tarjeta activa en el Embudo de Ventas para la conversación/cliente indicados,
-     * auto-completando el monto estimado en USD desde los mensajes de la conversación si está disponible.
+     * Garantiza transaccionalmente (con bloqueo de fila SELECT ... FOR UPDATE) una única oportunidad activa
+     * por conversación/cliente dentro de la sede indicada, sin condiciones de carrera ante webhooks simultáneos.
      */
     function starfi_ensure_pipeline_lead($con, $id_sede, $id_cliente, $id_conversacion = null, $id_agente = null, $titulo_default = '', $monto_override = null, $notas_default = '') {
         if (!$con || intval($id_cliente) <= 0) {
@@ -519,77 +688,142 @@ if (!function_exists('starfi_ensure_pipeline_lead')) {
             $ag = intval($enr['id_agente_sugerido']);
         }
 
-        // Buscar oportunidad abierta existente para esta conversación o cliente en la sede
-        $where_match = $conv ? "(`id_conversacion` = $conv OR (`id_cliente` = $cli AND `etapa` NOT IN ('GANADO','PERDIDO')))" : "(`id_cliente` = $cli AND `etapa` NOT IN ('GANADO','PERDIDO'))";
-        if ($sede > 0) {
-            $where_match .= " AND (`id_sede` = $sede OR `id_sede` = 0)";
-        }
-        $res = @mysqli_query($con, "SELECT `id`, `id_agente`, `id_conversacion`, `id_sede`, `monto_estimado_usd`, `titulo`, `notas` FROM `pipeline_oportunidades` WHERE $where_match ORDER BY `id` DESC LIMIT 1");
-        if ($res && ($row = mysqli_fetch_assoc($res))) {
-            $deal_id = intval($row['id']);
-            $updates = [];
-            if ($ag && intval($row['id_agente'] ?? 0) === 0) {
-                $updates[] = "`id_agente` = $ag";
-            }
-            if ($conv && intval($row['id_conversacion'] ?? 0) === 0) {
-                $updates[] = "`id_conversacion` = $conv";
-            }
-            if ($sede > 0 && intval($row['id_sede'] ?? 0) === 0) {
-                $updates[] = "`id_sede` = $sede";
-            }
-            if (floatval($row['monto_estimado_usd'] ?? 0) <= 0 && $monto_final > 0) {
-                $updates[] = "`monto_estimado_usd` = " . number_format($monto_final, 2, '.', '');
-            }
-            if (!empty($updates)) {
-                @mysqli_query($con, "UPDATE `pipeline_oportunidades` SET " . implode(', ', $updates) . " WHERE `id` = $deal_id");
-            }
-            return $deal_id;
+        $own_tx = !starfi_tx_is_active($con);
+        if ($own_tx) {
+            $con->begin_transaction();
+            starfi_tx_set_active($con, true);
         }
 
-        // Obtener nombre del cliente si no se pasó título
-        $titulo = trim((string)$titulo_default);
-        if ($titulo === '') {
-            $rc = @mysqli_query($con, "SELECT `nombre`, `numero_whatsapp` FROM `clientes_contactos` WHERE `id` = $cli LIMIT 1");
-            if ($rc && ($cl = mysqli_fetch_assoc($rc))) {
-                $nom = trim((string)($cl['nombre'] ?? ''));
-                $tel = trim((string)($cl['numero_whatsapp'] ?? ''));
-                $titulo = ($nom !== '') ? "Lead WhatsApp - $nom" : "Lead WhatsApp +$tel";
+        try {
+            // Bloquear fila ancla del cliente para serializar inserciones concurrentes sobre el mismo lead
+            $stmtLockCli = $con->prepare("SELECT `id`, `nombre`, `numero_whatsapp` FROM `clientes_contactos` WHERE `id` = ? LIMIT 1 FOR UPDATE");
+            $cl_row = null;
+            if ($stmtLockCli) {
+                $stmtLockCli->bind_param("i", $cli);
+                $stmtLockCli->execute();
+                $cl_row = $stmtLockCli->get_result()->fetch_assoc();
+                $stmtLockCli->close();
+            }
+
+            // Buscar oportunidad abierta existente con bloqueo exclusivo FOR UPDATE y aislamiento por sede
+            if ($conv) {
+                $stmtFind = $con->prepare("
+                    SELECT `id`, `id_agente`, `id_conversacion`, `id_sede`, `monto_estimado_usd`, `titulo`, `notas`
+                    FROM `pipeline_oportunidades`
+                    WHERE (`id_conversacion` = ? OR (`id_cliente` = ? AND `etapa` NOT IN ('GANADO','PERDIDO')))
+                      AND `id_sede` = ?
+                    ORDER BY (`id_conversacion` = ?) DESC, `id` DESC
+                    LIMIT 1
+                    FOR UPDATE
+                ");
+                $stmtFind->bind_param("iiii", $conv, $cli, $sede, $conv);
             } else {
-                $titulo = "Lead WhatsApp #$cli";
+                $stmtFind = $con->prepare("
+                    SELECT `id`, `id_agente`, `id_conversacion`, `id_sede`, `monto_estimado_usd`, `titulo`, `notas`
+                    FROM `pipeline_oportunidades`
+                    WHERE `id_cliente` = ?
+                      AND `id_sede` = ?
+                      AND `etapa` NOT IN ('GANADO','PERDIDO')
+                    ORDER BY `id` DESC
+                    LIMIT 1
+                    FOR UPDATE
+                ");
+                $stmtFind->bind_param("ii", $cli, $sede);
             }
-            if ($enr['correlativo'] !== '') {
-                $titulo .= ' · ' . $enr['correlativo'];
+
+            $existing = null;
+            if ($stmtFind && $stmtFind->execute()) {
+                $existing = $stmtFind->get_result()->fetch_assoc();
+                $stmtFind->close();
+            } elseif ($stmtFind) {
+                $stmtFind->close();
             }
-        }
 
-        $notas = trim((string)$notas_default);
-        if ($notas === '' && ($enr['correlativo'] !== '' || $enr['asesor_erp'] !== '' || $enr['monto_raw'] !== '')) {
-            $np = [];
-            if ($enr['correlativo'] !== '') $np[] = "Documento: " . $enr['correlativo'];
-            if ($enr['monto_raw'] !== '') $np[] = "Monto mensaje: " . $enr['monto_raw'];
-            if ($enr['asesor_erp'] !== '') $np[] = "Vendedor ERP: " . $enr['asesor_erp'];
-            if ($enr['fecha_doc'] !== '') $np[] = "Fecha: " . $enr['fecha_doc'];
-            $notas = implode(' | ', $np);
-        }
+            if ($existing) {
+                $deal_id = intval($existing['id']);
+                $new_ag = (intval($existing['id_agente'] ?? 0) > 0) ? intval($existing['id_agente']) : $ag;
+                $new_conv = (intval($existing['id_conversacion'] ?? 0) > 0) ? intval($existing['id_conversacion']) : $conv;
+                $cur_monto = floatval($existing['monto_estimado_usd'] ?? 0);
+                $new_monto = ($cur_monto > 0) ? $cur_monto : max(0.0, $monto_final);
 
-        $conv_sql = $conv ? $conv : 'NULL';
-        $ag_sql = $ag ? $ag : 'NULL';
-        $tit_esc = mysqli_real_escape_string($con, mb_substr($titulo, 0, 195));
-        $not_sql = ($notas !== '') ? "'" . mysqli_real_escape_string($con, $notas) . "'" : "NULL";
-        $monto_sql = number_format(max(0, $monto_final), 2, '.', '');
-        $ins = @mysqli_query($con, "INSERT INTO `pipeline_oportunidades` (`id_sede`, `id_cliente`, `id_conversacion`, `id_agente`, `titulo`, `etapa`, `monto_estimado_usd`, `probabilidad`, `notas`)
-                                    VALUES ($sede, $cli, $conv_sql, $ag_sql, '$tit_esc', 'NUEVO_LEAD', $monto_sql, 20, $not_sql)");
-        return $ins ? intval(mysqli_insert_id($con)) : 0;
+                $stmtUpd = $con->prepare("
+                    UPDATE `pipeline_oportunidades`
+                    SET `id_agente` = ?, `id_conversacion` = ?, `monto_estimado_usd` = ?
+                    WHERE `id` = ?
+                ");
+                if ($stmtUpd) {
+                    $stmtUpd->bind_param("iidi", $new_ag, $new_conv, $new_monto, $deal_id);
+                    $stmtUpd->execute();
+                    $stmtUpd->close();
+                }
+
+                if ($own_tx) {
+                    $con->commit();
+                    starfi_tx_set_active($con, false);
+                }
+                return $deal_id;
+            }
+
+            $titulo = trim((string)$titulo_default);
+            if ($titulo === '') {
+                if ($cl_row) {
+                    $nom = trim((string)($cl_row['nombre'] ?? ''));
+                    $tel = trim((string)($cl_row['numero_whatsapp'] ?? ''));
+                    $titulo = ($nom !== '') ? "Lead WhatsApp - $nom" : "Lead WhatsApp +$tel";
+                } else {
+                    $titulo = "Lead WhatsApp #$cli";
+                }
+                if ($enr['correlativo'] !== '') {
+                    $titulo .= ' · ' . $enr['correlativo'];
+                }
+            }
+            $titulo = mb_substr($titulo, 0, 195);
+
+            $notas = trim((string)$notas_default);
+            if ($notas === '' && ($enr['correlativo'] !== '' || $enr['asesor_erp'] !== '' || $enr['monto_raw'] !== '')) {
+                $np = [];
+                if ($enr['correlativo'] !== '') $np[] = "Documento: " . $enr['correlativo'];
+                if ($enr['monto_raw'] !== '') $np[] = "Monto mensaje: " . $enr['monto_raw'];
+                if ($enr['asesor_erp'] !== '') $np[] = "Vendedor ERP: " . $enr['asesor_erp'];
+                if ($enr['fecha_doc'] !== '') $np[] = "Fecha: " . $enr['fecha_doc'];
+                $notas = implode(' | ', $np);
+            }
+            $notas_param = ($notas !== '') ? $notas : null;
+            $monto_ins = max(0.0, $monto_final);
+
+            $stmtIns = $con->prepare("
+                INSERT INTO `pipeline_oportunidades`
+                    (`id_sede`, `id_cliente`, `id_conversacion`, `id_agente`, `titulo`, `etapa`, `monto_estimado_usd`, `probabilidad`, `notas`)
+                VALUES (?, ?, ?, ?, ?, 'NUEVO_LEAD', ?, 20, ?)
+            ");
+            $new_deal_id = 0;
+            if ($stmtIns) {
+                $stmtIns->bind_param("iiiisds", $sede, $cli, $conv, $ag, $titulo, $monto_ins, $notas_param);
+                if ($stmtIns->execute()) {
+                    $new_deal_id = intval($stmtIns->insert_id);
+                }
+                $stmtIns->close();
+            }
+
+            if ($own_tx) {
+                $con->commit();
+                starfi_tx_set_active($con, false);
+            }
+            return $new_deal_id;
+        } catch (Throwable $e) {
+            if ($own_tx) {
+                @$con->rollback();
+                starfi_tx_set_active($con, false);
+            }
+            return 0;
+        }
     }
 }
 
 if (!function_exists('starfi_assign_round_robin_advisor')) {
     /**
-     * [COM-03] Enrutamiento Automático Round-Robin entre asesores EN LÍNEA de la sede.
-     * Ventana de presencia en línea: actividad en los últimos 5 minutos y disponible_chat = 1.
-     * Respeta limite_chats_simultaneos (con fallback a todos los conectados si todos están al tope).
-     *
-     * @return array|null Datos del asesor asignado ['id', 'nombre', 'telefono'] o null si no hay asesores en línea.
+     * [COM-03] Enrutamiento Automático Round-Robin transaccional con SELECT ... FOR UPDATE.
+     * Serializa asignaciones concurrentes sobre los asesores en línea de la sede para impedir colisiones de puntero.
      */
     function starfi_assign_round_robin_advisor($con, $id_sede, $id_conversacion, $id_cliente = 0, $motivo_origen = 'IA', $online_window_minutes = null) {
         if (!$con || intval($id_sede) <= 0 || intval($id_conversacion) <= 0) {
@@ -606,90 +840,231 @@ if (!function_exists('starfi_assign_round_robin_advisor')) {
             $win_min = max(1, intval($online_window_minutes));
         }
 
-        // Buscar asesores/operadores activos y EN LÍNEA de la sede ordenados por Round-Robin estricto (el que lleva más tiempo sin recibir lead va primero)
-        $sql_rr = "
-            SELECT 
-                u.id,
-                u.usuario,
-                up.nombre AS up_nombre,
-                up.telefono AS up_telefono,
-                IFNULL(u.limite_chats_simultaneos, 0) AS limite_chats,
-                IFNULL(carga.chats_activos, 0) AS chats_activos,
-                u.ultima_asignacion_rr
-            FROM usuario u
-            LEFT JOIN usuario_perfil up ON up.id_usuario = u.id
-            LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
-            LEFT JOIN (
-                SELECT id_agente, COUNT(*) AS chats_activos
-                FROM conversaciones
-                WHERE estado IN ('ESPERA_ASIGNACION', 'ATENDIENDO')
-                  AND id_agente IS NOT NULL AND id_agente > 0
-                GROUP BY id_agente
-            ) carga ON carga.id_agente = u.id
-            WHERE u.id_sede = $sede
-              AND (u.estado = 'ACTIVO' OR CAST(u.estado AS CHAR) = '1')
-              AND IFNULL(u.disponible_chat, 1) = 1
-              AND u.id != 1
-              AND LOWER(u.usuario) != 'master'
-              AND (
-                  UPPER(TRIM(IFNULL(r.nombre, ''))) IN ('OPERADOR', 'ASESOR', 'AGENTE', 'VENDEDOR')
-                  OR UPPER(TRIM(IFNULL(CAST(u.rol AS CHAR), ''))) IN ('3', 'OPERADOR', 'ASESOR', 'AGENTE', 'VENDEDOR')
-              )
-              AND u.ultima_actividad IS NOT NULL
-              AND u.ultima_actividad >= (NOW() - INTERVAL $win_min MINUTE)
-            ORDER BY 
-              (CASE WHEN IFNULL(u.limite_chats_simultaneos, 0) > 0 AND IFNULL(carga.chats_activos, 0) >= u.limite_chats_simultaneos THEN 1 ELSE 0 END) ASC,
-              (u.ultima_asignacion_rr IS NULL) DESC,
-              u.ultima_asignacion_rr ASC,
-              chats_activos ASC,
-              u.id ASC
-            LIMIT 1
-        ";
+        $own_tx = !starfi_tx_is_active($con);
+        if ($own_tx) {
+            $con->begin_transaction();
+            starfi_tx_set_active($con, true);
+        }
 
-        $res_rr = @mysqli_query($con, $sql_rr);
-        $elegido = ($res_rr && mysqli_num_rows($res_rr) > 0) ? mysqli_fetch_assoc($res_rr) : null;
-
-        if (!$elegido) {
-            // Ningún asesor en línea en la sede: dejar en ESPERA_ASIGNACION para cola general de la sede
-            @mysqli_query($con, "UPDATE `conversaciones` SET `estado` = 'ESPERA_ASIGNACION' WHERE `id` = $conv_id");
-            $msg_cola = mysqli_real_escape_string($con, "⏳ Transferencia ($motivo_origen) en cola de espera: no hay asesores en línea en esta sede en este momento.");
-            @mysqli_query($con, "INSERT INTO `mensajes_y_eventos` (`id_conversacion`, `origen`, `tipo`, `contenido`) VALUES ($conv_id, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', '$msg_cola')");
-            $ev_id = intval(mysqli_insert_id($con));
-            if ($ev_id > 0) {
-                @mysqli_query($con, "UPDATE `conversaciones` SET `ultimo_msg_id` = GREATEST(IFNULL(`ultimo_msg_id`, 0), $ev_id) WHERE `id` = $conv_id");
+        try {
+            // 1. Bloquear la fila de la conversación objetivo
+            $stmtConvLock = $con->prepare("SELECT `id`, `id_agente`, `estado` FROM `conversaciones` WHERE `id` = ? LIMIT 1 FOR UPDATE");
+            if ($stmtConvLock) {
+                $stmtConvLock->bind_param("i", $conv_id);
+                $stmtConvLock->execute();
+                $stmtConvLock->get_result()->fetch_assoc();
+                $stmtConvLock->close();
             }
+
+            // 2. Bloquear exclusivamente los usuarios candidatos en línea de la sede (tabla pura InnoDB con FOR UPDATE)
+            $stmtLockUsers = $con->prepare("
+                SELECT `id`, `usuario`, `rol`,
+                       IFNULL(`limite_chats_simultaneos`, 0) AS `limite_chats`,
+                       `ultima_asignacion_rr`
+                FROM `usuario`
+                WHERE `id_sede` = ?
+                  AND (`estado` = 'ACTIVO' OR CAST(`estado` AS CHAR) = '1')
+                  AND IFNULL(`disponible_chat`, 1) = 1
+                  AND `id` != 1
+                  AND LOWER(`usuario`) != 'master'
+                  AND `ultima_actividad` IS NOT NULL
+                  AND `ultima_actividad` >= (NOW() - INTERVAL ? MINUTE)
+                FOR UPDATE
+            ");
+            $raw_candidates = [];
+            if ($stmtLockUsers) {
+                $stmtLockUsers->bind_param("ii", $sede, $win_min);
+                $stmtLockUsers->execute();
+                $rLock = $stmtLockUsers->get_result();
+                while ($uRow = $rLock->fetch_assoc()) {
+                    $raw_candidates[] = $uRow;
+                }
+                $stmtLockUsers->close();
+            }
+
+            // 3. Filtrar por rol operativo elegible y calcular carga activa bajo el candado transaccional
+            $roles_map = [];
+            $rRoles = @mysqli_query($con, "SELECT `id`, UPPER(TRIM(`nombre`)) AS `rname` FROM `roles`");
+            if ($rRoles) {
+                while ($rr = mysqli_fetch_assoc($rRoles)) {
+                    $roles_map[intval($rr['id'])] = (string)$rr['rname'];
+                }
+            }
+
+            $valid_roles = ['OPERADOR', 'ASESOR', 'AGENTE', 'VENDEDOR'];
+            $eligible = [];
+            foreach ($raw_candidates as $cand) {
+                $rol_raw = strtoupper(trim((string)($cand['rol'] ?? '')));
+                $rol_id = intval($cand['rol'] ?? 0);
+                $rol_name = $roles_map[$rol_id] ?? '';
+                if (in_array($rol_name, $valid_roles, true) || in_array($rol_raw, ['3', 'OPERADOR', 'ASESOR', 'AGENTE', 'VENDEDOR'], true)) {
+                    $eligible[intval($cand['id'])] = $cand;
+                }
+            }
+
+            $elegido = null;
+            if (!empty($eligible)) {
+                $ids_el = array_keys($eligible);
+                $ph_el = implode(',', array_fill(0, count($ids_el), '?'));
+                $types_el = str_repeat('i', count($ids_el));
+
+                // Carga de chats activos por asesor
+                $loads = [];
+                $stmtLoad = $con->prepare("
+                    SELECT `id_agente`, COUNT(*) AS `chats_activos`
+                    FROM `conversaciones`
+                    WHERE `estado` IN ('ESPERA_ASIGNACION', 'ATENDIENDO')
+                      AND `id_agente` IN ($ph_el)
+                    GROUP BY `id_agente`
+                ");
+                if ($stmtLoad) {
+                    $stmtLoad->bind_param($types_el, ...$ids_el);
+                    $stmtLoad->execute();
+                    $rLd = $stmtLoad->get_result();
+                    while ($ld = $rLd->fetch_assoc()) {
+                        $loads[intval($ld['id_agente'])] = intval($ld['chats_activos']);
+                    }
+                    $stmtLoad->close();
+                }
+
+                // Perfiles de asesores
+                $perfiles = [];
+                $stmtPf = $con->prepare("SELECT `id_usuario`, `nombre`, `telefono` FROM `usuario_perfil` WHERE `id_usuario` IN ($ph_el)");
+                if ($stmtPf) {
+                    $stmtPf->bind_param($types_el, ...$ids_el);
+                    $stmtPf->execute();
+                    $rPf = $stmtPf->get_result();
+                    while ($pf = $rPf->fetch_assoc()) {
+                        $perfiles[intval($pf['id_usuario'])] = $pf;
+                    }
+                    $stmtPf->close();
+                }
+
+                $scored = [];
+                foreach ($eligible as $uid => $cand) {
+                    $chats_act = $loads[$uid] ?? 0;
+                    $lim_c = intval($cand['limite_chats'] ?? 0);
+                    $at_cap = ($lim_c > 0 && $chats_act >= $lim_c) ? 1 : 0;
+                    $rr_ts = !empty($cand['ultima_asignacion_rr']) ? strtotime((string)$cand['ultima_asignacion_rr']) : 0;
+                    $scored[] = [
+                        'id'            => $uid,
+                        'usuario'       => $cand['usuario'],
+                        'up_nombre'     => $perfiles[$uid]['nombre'] ?? '',
+                        'up_telefono'   => $perfiles[$uid]['telefono'] ?? '',
+                        'at_cap'        => $at_cap,
+                        'rr_is_null'    => ($rr_ts === 0) ? 0 : 1, // 0 primero cuando nunca ha recibido lead
+                        'rr_ts'         => $rr_ts,
+                        'chats_activos' => $chats_act,
+                    ];
+                }
+
+                usort($scored, function ($a, $b) {
+                    if ($a['at_cap'] !== $b['at_cap']) return $a['at_cap'] <=> $b['at_cap'];
+                    if ($a['rr_is_null'] !== $b['rr_is_null']) return $a['rr_is_null'] <=> $b['rr_is_null'];
+                    if ($a['rr_ts'] !== $b['rr_ts']) return $a['rr_ts'] <=> $b['rr_ts'];
+                    if ($a['chats_activos'] !== $b['chats_activos']) return $a['chats_activos'] <=> $b['chats_activos'];
+                    return $a['id'] <=> $b['id'];
+                });
+
+                $elegido = $scored[0];
+            }
+
+            if (!$elegido) {
+                $stmtWait = $con->prepare("UPDATE `conversaciones` SET `estado` = 'ESPERA_ASIGNACION' WHERE `id` = ?");
+                if ($stmtWait) {
+                    $stmtWait->bind_param("i", $conv_id);
+                    $stmtWait->execute();
+                    $stmtWait->close();
+                }
+
+                $msg_cola = "⏳ Transferencia ($motivo_origen) en cola de espera: no hay asesores en línea en esta sede en este momento.";
+                $stmtEv = $con->prepare("INSERT INTO `mensajes_y_eventos` (`id_conversacion`, `origen`, `tipo`, `contenido`) VALUES (?, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', ?)");
+                $ev_id = 0;
+                if ($stmtEv) {
+                    $stmtEv->bind_param("is", $conv_id, $msg_cola);
+                    if ($stmtEv->execute()) {
+                        $ev_id = intval($stmtEv->insert_id);
+                    }
+                    $stmtEv->close();
+                }
+                if ($ev_id > 0) {
+                    $stmtUm = $con->prepare("UPDATE `conversaciones` SET `ultimo_msg_id` = GREATEST(IFNULL(`ultimo_msg_id`, 0), ?) WHERE `id` = ?");
+                    if ($stmtUm) {
+                        $stmtUm->bind_param("ii", $ev_id, $conv_id);
+                        $stmtUm->execute();
+                        $stmtUm->close();
+                    }
+                }
+                if (intval($id_cliente) > 0) {
+                    starfi_ensure_pipeline_lead($con, $sede, intval($id_cliente), $conv_id, null);
+                }
+
+                if ($own_tx) {
+                    $con->commit();
+                    starfi_tx_set_active($con, false);
+                }
+                return null;
+            }
+
+            $asesor_id = intval($elegido['id']);
+            $up_nom = trim((string)($elegido['up_nombre'] ?? ''));
+            $asesor_nombre = ($up_nom !== '') ? $up_nom : trim((string)($elegido['usuario'] ?? 'Asesor'));
+            $asesor_tel = trim((string)($elegido['up_telefono'] ?? ''));
+
+            // Actualizar puntero Round-Robin y asignar conversación atómicamente
+            $stmtUpRr = $con->prepare("UPDATE `usuario` SET `ultima_asignacion_rr` = NOW() WHERE `id` = ?");
+            if ($stmtUpRr) {
+                $stmtUpRr->bind_param("i", $asesor_id);
+                $stmtUpRr->execute();
+                $stmtUpRr->close();
+            }
+
+            $stmtUpCv = $con->prepare("UPDATE `conversaciones` SET `id_agente` = ?, `estado` = 'ESPERA_ASIGNACION' WHERE `id` = ?");
+            if ($stmtUpCv) {
+                $stmtUpCv->bind_param("ii", $asesor_id, $conv_id);
+                $stmtUpCv->execute();
+                $stmtUpCv->close();
+            }
+
+            $ev_txt = "🔀 Enrutamiento Round-Robin ($motivo_origen): conversación asignada automáticamente al asesor en línea $asesor_nombre.";
+            $stmtEv = $con->prepare("INSERT INTO `mensajes_y_eventos` (`id_conversacion`, `origen`, `tipo`, `contenido`) VALUES (?, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', ?)");
+            $ev_id = 0;
+            if ($stmtEv) {
+                $stmtEv->bind_param("is", $conv_id, $ev_txt);
+                if ($stmtEv->execute()) {
+                    $ev_id = intval($stmtEv->insert_id);
+                }
+                $stmtEv->close();
+            }
+            if ($ev_id > 0) {
+                $stmtUm = $con->prepare("UPDATE `conversaciones` SET `ultimo_msg_id` = GREATEST(IFNULL(`ultimo_msg_id`, 0), ?) WHERE `id` = ?");
+                if ($stmtUm) {
+                    $stmtUm->bind_param("ii", $ev_id, $conv_id);
+                    $stmtUm->execute();
+                    $stmtUm->close();
+                }
+            }
+
             if (intval($id_cliente) > 0) {
-                starfi_ensure_pipeline_lead($con, $sede, intval($id_cliente), $conv_id, null);
+                starfi_ensure_pipeline_lead($con, $sede, intval($id_cliente), $conv_id, $asesor_id);
+            }
+
+            if ($own_tx) {
+                $con->commit();
+                starfi_tx_set_active($con, false);
+            }
+
+            return [
+                'id'       => $asesor_id,
+                'nombre'   => $asesor_nombre,
+                'telefono' => $asesor_tel
+            ];
+        } catch (Throwable $e) {
+            if ($own_tx) {
+                @$con->rollback();
+                starfi_tx_set_active($con, false);
             }
             return null;
         }
-
-        $asesor_id = intval($elegido['id']);
-        $up_nom = trim((string)($elegido['up_nombre'] ?? ''));
-        $asesor_nombre = ($up_nom !== '') ? $up_nom : trim((string)($elegido['usuario'] ?? 'Asesor'));
-        $asesor_tel = trim((string)($elegido['up_telefono'] ?? ''));
-
-        // Actualizar puntero Round-Robin del asesor y asignar conversación
-        @mysqli_query($con, "UPDATE `usuario` SET `ultima_asignacion_rr` = NOW() WHERE `id` = $asesor_id");
-        @mysqli_query($con, "UPDATE `conversaciones` SET `id_agente` = $asesor_id, `estado` = 'ESPERA_ASIGNACION' WHERE `id` = $conv_id");
-
-        // Registrar trazabilidad en el historial del chat
-        $ev_txt = mysqli_real_escape_string($con, "🔀 Enrutamiento Round-Robin ($motivo_origen): conversación asignada automáticamente al asesor en línea $asesor_nombre.");
-        @mysqli_query($con, "INSERT INTO `mensajes_y_eventos` (`id_conversacion`, `origen`, `tipo`, `contenido`) VALUES ($conv_id, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', '$ev_txt')");
-        $ev_id = intval(mysqli_insert_id($con));
-        if ($ev_id > 0) {
-            @mysqli_query($con, "UPDATE `conversaciones` SET `ultimo_msg_id` = GREATEST(IFNULL(`ultimo_msg_id`, 0), $ev_id) WHERE `id` = $conv_id");
-        }
-
-        // Sincronizar tarjeta en el Embudo de Ventas (Nuevo Lead)
-        if (intval($id_cliente) > 0) {
-            starfi_ensure_pipeline_lead($con, $sede, intval($id_cliente), $conv_id, $asesor_id);
-        }
-
-        return [
-            'id' => $asesor_id,
-            'nombre' => $asesor_nombre,
-            'telefono' => $asesor_tel
-        ];
     }
 }

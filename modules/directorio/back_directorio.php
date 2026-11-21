@@ -1,10 +1,12 @@
 <?php
 // modules/directorio/back_directorio.php
+@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('directorio');
 $agente_dir = getAgenteInfo();
 session_write_close();
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';

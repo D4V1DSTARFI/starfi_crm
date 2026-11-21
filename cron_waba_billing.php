@@ -1,6 +1,11 @@
 <?php
 // cron_waba_billing.php
 // Este script se ejecuta por CRON (Task Scheduler) y utiliza el motor unificado de conciliación híbrida [FAC-03]
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit('CLI only');
+}
+@ini_set('display_errors', '0');
 date_default_timezone_set('America/Caracas');
 define('WABA_BILLING_LIB_ONLY', true);
 

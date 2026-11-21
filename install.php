@@ -5,54 +5,84 @@
  */
 
 // Aumentar límites para la importación de bases de datos pesadas
+@ini_set('display_errors', '0');
 set_time_limit(600);
 ini_set('memory_limit', '512M');
 
 $envPath = __DIR__ . '/.env';
+$envCandidates = [
+    __DIR__ . '/.env',
+    __DIR__ . '/config/.env.local',
+    __DIR__ . '/assets/uploads/.env.local',
+];
 $isInstalled = false;
 
-// Comprobar si ya está instalado y funcionando
-if (file_exists($envPath)) {
-    $env = @parse_ini_file($envPath);
-    if (!empty($env['DB_HOST']) && !empty($env['DB_USER'])) {
-        $con = @mysqli_connect($env['DB_HOST'], $env['DB_USER'], $env['DB_PASS'] ?? '');
-        if ($con) {
-            // Solo consideramos completamente instalado si ya se completó la importación
-            // de tablas y la creación de agentes.
-            $db_selected = @mysqli_select_db($con, 'starfi_crm');
-            if ($db_selected) {
-                $check_table = @mysqli_query($con, "SHOW TABLES LIKE 'usuarios_agentes'");
-                if ($check_table && mysqli_num_rows($check_table) > 0) {
-                    $isInstalled = true;
-                }
-            }
-            @mysqli_close($con);
-        }
+foreach ($envCandidates as $candEnv) {
+    if (file_exists($candEnv)) {
+        $isInstalled = true;
+        break;
     }
 }
 
-// Procesar peticiones AJAX
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
-    header('Content-Type: application/json');
-    $action = $_GET['action'];
-
-    // Si ya está instalado, denegar AJAX por seguridad (excepto si se solicita explícitamente re-check)
-    if ($isInstalled && $action !== 'check_status') {
-        echo json_encode(['status' => 'error', 'message' => 'El sistema ya se encuentra instalado. Por seguridad, no se permiten modificaciones.']);
-        exit;
+// Verificar adicionalmente si la base de datos ya contiene registros en la tabla activa `usuario`
+if (!$isInstalled && file_exists(__DIR__ . '/config/database.php')) {
+    require_once __DIR__ . '/config/database.php';
+    $conCheck = @getDbConnection('core');
+    if ($conCheck) {
+        $chkUsr = @mysqli_query($conCheck, "SHOW TABLES LIKE 'usuario'");
+        if ($chkUsr && mysqli_num_rows($chkUsr) > 0) {
+            $cntRes = @mysqli_query($conCheck, "SELECT COUNT(*) AS c FROM usuario");
+            if ($cntRes && ($cntRow = mysqli_fetch_assoc($cntRes)) && (int)$cntRow['c'] > 0) {
+                $isInstalled = true;
+            }
+        }
+        @mysqli_close($conCheck);
     }
+}
+
+// Bloqueo absoluto si el sistema ya posee archivo de entorno o usuarios instalados
+if ($isInstalled) {
+    http_response_code(403);
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['action'])) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'status' => 'error',
+            'message' => 'Instalador bloqueado: el sistema ya se encuentra configurado en este servidor.'
+        ]);
+    } else {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Instalador Bloqueado | STARFI CRM</title></head>'
+            . '<body style="font-family:sans-serif;background:#37414A;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">'
+            . '<div style="background:#fff;color:#1e293b;padding:36px;border-radius:12px;max-width:460px;text-align:center;">'
+            . '<h3 style="margin-top:0;color:#37414A;">Instalador Deshabilitado</h3>'
+            . '<p>STARFI CRM ya se encuentra instalado y operativo. Por políticas de seguridad, este asistente está bloqueado.</p>'
+            . '<a href="login.php" style="display:inline-block;margin-top:12px;padding:10px 24px;background:#E85B14;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Ir al Inicio de Sesión</a>'
+            . '</div></body></html>';
+    }
+    exit;
+}
+
+function starfi_escape_env_val($val) {
+    $clean = str_replace(["\r", "\n", "\0"], '', (string)$val);
+    return addcslashes($clean, "\\\"$");
+}
+
+// Procesar peticiones AJAX (únicamente alcanzable en instalación limpia sin .env ni usuarios)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $action = $_GET['action'];
 
     switch ($action) {
         case 'test_connection':
-            $host = $_POST['host'] ?? 'localhost';
-            $user = $_POST['user'] ?? 'root';
-            $pass = $_POST['pass'] ?? '';
+            $host = trim((string)($_POST['host'] ?? 'localhost'));
+            $user = trim((string)($_POST['user'] ?? 'root'));
+            $pass = (string)($_POST['pass'] ?? '');
             
             $conn = @mysqli_connect($host, $user, $pass);
             if (!$conn) {
                 echo json_encode([
                     'status' => 'error', 
-                    'message' => 'No se pudo conectar a MySQL: ' . mysqli_connect_error()
+                    'message' => 'No se pudo conectar al servidor MySQL con las credenciales indicadas.'
                 ]);
             } else {
                 mysqli_close($conn);
@@ -61,63 +91,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
             exit;
 
         case 'write_env':
-            $host = $_POST['host'] ?? 'localhost';
-            $user = $_POST['user'] ?? 'root';
-            $pass = $_POST['pass'] ?? '';
+            $host = starfi_escape_env_val($_POST['host'] ?? 'localhost');
+            $user = starfi_escape_env_val($_POST['user'] ?? 'root');
+            $pass = starfi_escape_env_val($_POST['pass'] ?? '');
 
-            // Escribir archivo .env
-            $verifyToken = trim($_POST['webhook_verify_token'] ?? '');
+            $verifyToken = trim((string)($_POST['webhook_verify_token'] ?? ''));
             if ($verifyToken === '') {
                 $verifyToken = bin2hex(random_bytes(16));
             }
+            $verifyTokenEsc = starfi_escape_env_val($verifyToken);
+
             $envContent = "APP_ENV=\"PRODUCCION\"\n\n";
-            $envContent .= "DB_HOST=\"$host\"\n";
-            $envContent .= "DB_USER=\"$user\"\n";
-            $envContent .= "DB_PASS=\"$pass\"\n";
+            $envContent .= "DB_HOST=\"{$host}\"\n";
+            $envContent .= "DB_USER=\"{$user}\"\n";
+            $envContent .= "DB_PASS=\"{$pass}\"\n";
             $envContent .= "DB_NAME=\"starfi_crm\"\n\n";
-            $envContent .= "WEBHOOK_VERIFY_TOKEN=\"$verifyToken\"\n";
+            $envContent .= "WEBHOOK_VERIFY_TOKEN=\"{$verifyTokenEsc}\"\n";
             $envContent .= "META_GLOBAL_TOKEN=\"\"\n";
             $envContent .= "META_APP_SECRET=\"\"\n";
             $envContent .= "META_API_VERSION=\"v23.0\"\n";
 
-            if (@file_put_contents($envPath, $envContent) !== false) {
+            if (@file_put_contents($envPath, $envContent, LOCK_EX) !== false) {
                 echo json_encode(['status' => 'success', 'message' => 'Archivo de entorno .env configurado correctamente.']);
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'No se pudo escribir el archivo .env. Compruebe los permisos de escritura en la carpeta raíz.']);
+                echo json_encode(['status' => 'error', 'message' => 'No se pudo escribir el archivo .env. Compruebe los permisos de escritura.']);
             }
             exit;
 
         case 'import_db':
-            $host = $_POST['host'] ?? 'localhost';
-            $user = $_POST['user'] ?? 'root';
-            $pass = $_POST['pass'] ?? '';
-            $db = $_POST['db'] ?? '';
+            $host = trim((string)($_POST['host'] ?? 'localhost'));
+            $user = trim((string)($_POST['user'] ?? 'root'));
+            $pass = (string)($_POST['pass'] ?? '');
+            $db = trim((string)($_POST['db'] ?? ''));
 
             $databasesList = ['starfi_crm'];
-            if (!in_array($db, $databasesList)) {
+            if (!in_array($db, $databasesList, true)) {
                 echo json_encode(['status' => 'error', 'message' => 'Base de datos no válida.']);
                 exit;
             }
 
-            $sqlFile = __DIR__ . '/database/install_dumps/' . $db . '.sql';
+            $sqlFile = __DIR__ . '/database/database_schema.sql';
             if (!file_exists($sqlFile)) {
-                echo json_encode(['status' => 'error', 'message' => "No se encontró el archivo de volcado para la base de datos: $db"]);
+                echo json_encode(['status' => 'error', 'message' => "No se encontró el esquema base SQL."]);
                 exit;
             }
 
-            // Realizar importación secuencial y eficiente
             $result = importSqlFileNative($host, $user, $pass, $sqlFile);
             if ($result === true) {
-                echo json_encode(['status' => 'success', 'message' => "Base de datos '$db' importada correctamente."]);
+                echo json_encode(['status' => 'success', 'message' => "Esquema '$db' importado correctamente."]);
             } else {
-                echo json_encode(['status' => 'error', 'message' => "Error importando '$db': $result"]);
+                echo json_encode(['status' => 'error', 'message' => "Error importando esquema."]);
             }
             exit;
 
         case 'create_master':
-            $host = $_POST['host'] ?? 'localhost';
-            $user = $_POST['user'] ?? 'root';
-            $pass = $_POST['pass'] ?? '';
+            $host = trim((string)($_POST['host'] ?? 'localhost'));
+            $user = trim((string)($_POST['user'] ?? 'root'));
+            $pass = (string)($_POST['pass'] ?? '');
+            $masterPass = (string)($_POST['master_pass'] ?? '');
+
+            if (strlen($masterPass) < 8) {
+                echo json_encode(['status' => 'error', 'message' => 'Debe especificar una contraseña maestra de al menos 8 caracteres.']);
+                exit;
+            }
 
             $conn = @mysqli_connect($host, $user, $pass, 'starfi_crm');
             if (!$conn) {
@@ -125,28 +161,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
                 exit;
             }
 
-            // Asegurar que existan la empresa y sede por defecto
             mysqli_query($conn, "INSERT INTO empresas (id, nombre_comercial, razon_social, documento_identidad) 
                                  VALUES (1, 'Empresa Corp. S.A.', 'Empresas Corporativas C.A.', 'J-12345678-9') 
                                  ON DUPLICATE KEY UPDATE id=id");
-            
-            mysqli_query($conn, "INSERT INTO sedes (id, id_empresa, nombre_sede) 
-                                 VALUES (1, 1, 'Sede Principal') 
+            mysqli_query($conn, "INSERT INTO sedes (id, id_empresa, nombre_sede, estado) 
+                                 VALUES (1, 1, 'Sede Principal', 'ACTIVO') 
                                  ON DUPLICATE KEY UPDATE id=id");
+            mysqli_query($conn, "INSERT IGNORE INTO roles (id, nombre) VALUES (1, 'MASTER'), (2, 'ADMINISTRADOR'), (3, 'OPERADOR'), (4, 'MASTER CI')");
 
-            // Crear o actualizar usuario master
-            $passHash = password_hash('1234', PASSWORD_DEFAULT);
-            $query = "INSERT INTO usuarios_agentes (id, id_empresa, id_sede, nombre_completo, email, password_hash, rol, limite_chats_simultaneos, estado) 
-                      VALUES (1, 1, 1, 'Usuario Master', 'master', '$passHash', 'ADMIN', 999, 'ACTIVO') 
-                      ON DUPLICATE KEY UPDATE password_hash='$passHash', email='master', rol='ADMIN', estado='ACTIVO'";
-
-            if (mysqli_query($conn, $query)) {
+            $passHash = password_hash($masterPass, PASSWORD_BCRYPT);
+            $stmtM = $conn->prepare("INSERT INTO usuario (id, usuario, contrasena, estado, rol, id_sede) VALUES (1, 'master', ?, 'ACTIVO', '1', NULL) ON DUPLICATE KEY UPDATE contrasena = VALUES(contrasena), estado = 'ACTIVO', rol = '1'");
+            if ($stmtM && $stmtM->bind_param("s", $passHash) && $stmtM->execute()) {
+                $stmtM->close();
                 mysqli_close($conn);
-                echo json_encode(['status' => 'success', 'message' => 'Usuario master (master / 1234) configurado y validado en la base de datos.']);
+                echo json_encode(['status' => 'success', 'message' => 'Usuario master configurado exitosamente en la base de datos.']);
             } else {
-                $err = mysqli_error($conn);
+                if ($stmtM) {
+                    $stmtM->close();
+                }
                 mysqli_close($conn);
-                echo json_encode(['status' => 'error', 'message' => 'No se pudo insertar el usuario master: ' . $err]);
+                echo json_encode(['status' => 'error', 'message' => 'No se pudo configurar el usuario master.']);
             }
             exit;
     }
@@ -245,18 +279,17 @@ $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writabl
     <link rel="icon" href="docs/identidad_visual/logos/isologo.ico" type="image/x-icon">
     <link href="assets/css/bootstrap.min.css" rel="stylesheet">
     <link href="assets/css/starfi_theme.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
     <style>
         :root {
             --primary: #E85B14;
             --primary-hover: #CC4A0E;
-            --dark-blue: #0F172A;
+            --dark-blue: #37414A;
             --border-color: #E2E8F0;
         }
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+            font-family: 'Gotham', sans-serif;
+            background: linear-gradient(135deg, #37414A 0%, #262D34 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -555,7 +588,7 @@ $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writabl
                     <h5 class="fw-bold mb-3 text-dark">Paso 2: Conexión de Base de Datos</h5>
                     <p class="text-muted small mb-4">Ingresa las credenciales del servidor MySQL para configurar el archivo de variables de entorno y crear las bases de datos necesarias.</p>
                     
-                    <form id="db-form" class="mb-4">
+                    <form id="db-form" class="mb-4" autocomplete="off">
                         <div class="row">
                             <div class="col-md-8 mb-3">
                                 <label class="form-label-custom">Host del Servidor</label>
@@ -636,7 +669,7 @@ $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writabl
                         </div>
                         <div class="row small">
                             <div class="col-4 text-muted">Contraseña:</div>
-                            <div class="col-8 fw-semibold text-dark">1234</div>
+                            <div class="col-8 fw-semibold text-dark">Definida durante la instalación</div>
                         </div>
                     </div>
 

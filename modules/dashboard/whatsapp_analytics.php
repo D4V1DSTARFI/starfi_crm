@@ -32,7 +32,7 @@ if ($res_sedes) {
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <style>
         body { background-color: #f0f2f5; margin: 0; padding: 0; overflow-x: hidden; }
         .app-container { min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }

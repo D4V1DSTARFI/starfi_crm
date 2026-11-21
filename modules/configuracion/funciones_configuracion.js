@@ -1,3 +1,10 @@
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, function (m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+    });
+}
+
 $(document).ready(function() {
     // Cargar datos iniciales desde BD
     loadSedes();
@@ -63,7 +70,7 @@ $(document).ready(function() {
                     let select = $('#api_sede');
                     select.html('<option value="">Seleccione una sede...</option>');
                     res.data.forEach(s => {
-                        select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                        select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtml(s.nombre_sede)}</option>`);
                     });
                     var myModal = new bootstrap.Modal(document.getElementById('modalAPI'));
                     myModal.show();
@@ -120,7 +127,7 @@ $(document).ready(function() {
                     let select = $('#opSede');
                     select.html('<option value="0">Global (Todas)</option>');
                     res.data.forEach(s => {
-                        select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                        select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtml(s.nombre_sede)}</option>`);
                     });
                     var myModal = new bootstrap.Modal(document.getElementById('modalOperador'));
                     myModal.show();
@@ -1712,8 +1719,13 @@ $(document).ready(function () {
     });
 
     $('#btnResetSlaOverride').on('click', function () {
+        const $btn = $(this);
+        if ($btn.prop('disabled')) return;
         const sedeId = parseInt($('#cfgSlaSedeSelect').val() || '0', 10);
         if (sedeId <= 0) return;
+        $btn.prop('disabled', true);
+        const origHtml = $btn.html();
+
         Swal.fire({
             title: '¿Restaurar a Regla Global?',
             text: 'Esta sede volverá a usar los tiempos SLA globales del sistema.',
@@ -1722,16 +1734,21 @@ $(document).ready(function () {
             confirmButtonText: 'Sí, restaurar',
             cancelButtonText: 'Cancelar'
         }).then((r) => {
-            if (r.isConfirmed) {
-                $.post('back_configuracion.php', { action: 'reset_sla_sede', id_sede: sedeId }, function (res) {
-                    if (res && res.status === 'success') {
-                        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 2200 });
-                        loadSlaSettingsModule(sedeId);
-                    } else {
-                        Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo restaurar.', 'error');
-                    }
-                }, 'json');
+            if (!r.isConfirmed) {
+                $btn.prop('disabled', false);
+                return;
             }
+            $btn.html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Restaurando...');
+            $.post('back_configuracion.php', { action: 'reset_sla_sede', id_sede: sedeId }, function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 2200 });
+                    loadSlaSettingsModule(sedeId);
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo restaurar.', 'error');
+                }
+            }, 'json').always(function () {
+                $btn.prop('disabled', false).html(origHtml);
+            });
         });
     });
 });
@@ -1763,7 +1780,7 @@ function loadSlaSettingsModule(targetSede) {
                 $sel.append('<option value="0">🌎 Regla Global por Defecto (Todas las Sedes)</option>');
             }
             (res.sedes || []).forEach(s => {
-                $sel.append(`<option value="${s.id}">🏢 ${s.nombre_sede}</option>`);
+                $sel.append(`<option value="${parseInt(s.id, 10) || 0}">🏢 ${escapeHtml(s.nombre_sede)}</option>`);
             });
             if (!res.is_master && res.user_sede > 0) {
                 $sel.val(String(res.user_sede)).prop('disabled', true);
@@ -1804,7 +1821,7 @@ function loadSlaSettingsModule(targetSede) {
             const activeCls = (sid === reqSede) ? 'table-active fw-bold' : '';
             $tbody.append(`
                 <tr class="${activeCls}" style="cursor:pointer;" onclick="window.selectSlaRuleRow(${sid})">
-                    <td>${r.ambito_nombre}</td>
+                    <td>${escapeHtml(r.ambito_nombre)}</td>
                     <td class="text-center text-success fw-bold">&lt;${v}m</td>
                     <td class="text-center text-warning-emphasis fw-bold">${v}-${a}m</td>
                     <td class="text-center text-danger fw-bold">&gt;${a}m</td>

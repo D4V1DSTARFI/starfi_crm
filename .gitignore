@@ -5,9 +5,27 @@
 config/.env*
 assets/uploads/.env*
 
-# Archivos multimedia subidos (preservando .htaccess de seguridad)
+# Archivos multimedia y documentos confidenciales subidos (preservando .htaccess y .gitkeep)
 assets/uploads/*
 !assets/uploads/.htaccess
+uploads/*
+!uploads/.htaccess
+!uploads/expedientes/
+uploads/expedientes/*
+!uploads/expedientes/.htaccess
+!uploads/documentos/
+uploads/documentos/*
+!uploads/documentos/.htaccess
+assets/docs/expedientes/*
+!assets/docs/expedientes/.htaccess
+!assets/docs/expedientes/.gitkeep
+
+# Binarios pesados/externos y volcados SQL con datos reales
+cloudflared.exe
+*.exe
+database/install_dumps/*.sql
+database/db_bot_data.sql
+db_bot_data.sql
 
 # Registros y diagnósticos
 logs/*

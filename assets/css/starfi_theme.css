@@ -1,16 +1,26 @@
-/* STARFI 2.0 - Theme Variables & Core Styles */
+/* STARFI 2.0 - Theme Variables & Core Styles (100% Local Zero-CDN) */
 @font-face {
     font-family: 'Gotham';
-    src: url('../../docs/identidad_visual/tipografia/GothamMedium.ttf') format('truetype');
-    font-weight: 500;
+    src: url('../fonts/GothamMedium.ttf') format('truetype');
+    font-weight: 400 700;
     font-style: normal;
+    font-display: swap;
 }
 
 @font-face {
     font-family: 'Gotham';
-    src: url('../../docs/identidad_visual/tipografia/GothamBookItalic.ttf') format('truetype');
+    src: url('../fonts/GothamBookItalic.ttf') format('truetype');
     font-weight: 400;
     font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Mont';
+    src: url('../fonts/GothamMedium.ttf') format('truetype');
+    font-weight: 300 800;
+    font-style: normal;
+    font-display: swap;
 }
 
 :root {
@@ -32,8 +42,8 @@
     --starfi-text-main: #212529;
     --starfi-text-inverse: #ffffff;
 
-    /* Tipografía */
-    --font-heading: 'Gotham', sans-serif;
+    /* Tipografía Oficial Local */
+    --font-heading: 'Mont', 'Gotham', sans-serif;
     --font-body: 'Gotham', sans-serif;
 }
 

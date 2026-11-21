@@ -1,8 +1,11 @@
 <?php
 // modules/bandeja/back_bandeja.php
+@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
-header('Content-Type: application/json');
+requirePermission('bandeja');
+header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 $agente_info_global = getAgenteInfo();
@@ -12,8 +15,9 @@ session_write_close();
 
 starfi_ensure_sprint2_schema($con);
 
-// Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez
-$migration_flag = sys_get_temp_dir() . '/starfi_bandeja_migrated_v4.flag';
+// Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez por esquema de BD
+$bandeja_db_hash = starfi_db_schema_hash($con);
+$migration_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_bandeja_migrated_v5_' . $bandeja_db_hash . '.flag';
 if (!file_exists($migration_flag)) {
     @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
     @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
@@ -71,41 +75,85 @@ function get_conversacion_window_24h($con, $conversacion_id) {
 }
 
 /**
- * [COM-02] Obtiene la oportunidad del Embudo Kanban vinculada a la conversación o al cliente.
+ * [COM-02] Obtiene la oportunidad del Embudo Kanban vinculada estrictamente a la misma id_sede de la conversación.
  */
-function get_conversacion_deal_info($con, $conversacion_id, $cliente_id = 0) {
+function get_conversacion_deal_info($con, $conversacion_id, $cliente_id = 0, $id_sede = 0) {
     $cid = intval($conversacion_id);
     $clid = intval($cliente_id);
+    $sede = intval($id_sede);
     if ($cid <= 0 && $clid <= 0) {
         return null;
     }
-    $where = ($cid > 0 && $clid > 0)
-        ? "(id_conversacion = $cid OR id_cliente = $clid)"
-        : ($cid > 0 ? "id_conversacion = $cid" : "id_cliente = $clid");
-    $order = ($cid > 0) ? "ORDER BY (id_conversacion = $cid) DESC, id DESC LIMIT 1" : "ORDER BY id DESC LIMIT 1";
-    $res = @$con->query("SELECT id, id_sede, id_cliente, id_conversacion, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE $where $order");
-    if ($res && ($row = $res->fetch_assoc())) {
-        $monto = round(floatval($row['monto_estimado_usd']), 2);
-        if ($monto <= 0 && function_exists('starfi_extract_deal_enrichment')) {
-            $enr = starfi_extract_deal_enrichment($con, intval($row['id_sede']), intval($row['id_cliente'] ?: $clid), intval($row['id_conversacion'] ?: $cid));
-            if ($enr['monto_usd'] > 0) {
-                $monto = $enr['monto_usd'];
-                $did = intval($row['id']);
-                @$con->query("UPDATE pipeline_oportunidades SET monto_estimado_usd = " . number_format($monto, 2, '.', '') . ", fecha_actualizacion = fecha_actualizacion WHERE id = $did");
+
+    if ($cid > 0 && ($sede <= 0 || $clid <= 0)) {
+        $stmtS = $con->prepare("SELECT c.id_cliente, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1");
+        if ($stmtS) {
+            $stmtS->bind_param("i", $cid);
+            $stmtS->execute();
+            if ($rs = $stmtS->get_result()->fetch_assoc()) {
+                if ($sede <= 0) $sede = intval($rs['id_sede'] ?? 0);
+                if ($clid <= 0) $clid = intval($rs['id_cliente'] ?? 0);
             }
+            $stmtS->close();
         }
-        return [
-            'id' => intval($row['id']),
-            'etapa' => $row['etapa'],
-            'monto_estimado_usd' => $monto,
-            'titulo' => $row['titulo'],
-            'probabilidad' => intval($row['probabilidad'])
-        ];
     }
 
-    // Si aún no tiene tarjeta en pipeline_oportunidades pero la conversación tiene monto transaccional/cotización, mostrarlo pre-cargado
-    if (function_exists('starfi_extract_deal_enrichment')) {
-        $enr = starfi_extract_deal_enrichment($con, 0, $clid, $cid);
+    if ($cid > 0 && $clid > 0 && $sede > 0) {
+        $stmt = $con->prepare("
+            SELECT id, id_sede, id_cliente, id_conversacion, etapa, monto_estimado_usd, titulo, probabilidad
+            FROM pipeline_oportunidades
+            WHERE (id_conversacion = ? AND id_sede = ?)
+               OR (id_cliente = ? AND id_sede = ? AND etapa NOT IN ('GANADO', 'PERDIDO'))
+            ORDER BY (id_conversacion = ?) DESC, id DESC
+            LIMIT 1
+        ");
+        if ($stmt) {
+            $stmt->bind_param("iiiii", $cid, $sede, $clid, $sede, $cid);
+        }
+    } elseif ($cid > 0) {
+        $stmt = $con->prepare("SELECT id, id_sede, id_cliente, id_conversacion, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE id_conversacion = ? ORDER BY id DESC LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param("i", $cid);
+        }
+    } else {
+        $stmt = $con->prepare("SELECT id, id_sede, id_cliente, id_conversacion, etapa, monto_estimado_usd, titulo, probabilidad FROM pipeline_oportunidades WHERE id_cliente = ? AND id_sede = ? AND etapa NOT IN ('GANADO', 'PERDIDO') ORDER BY id DESC LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param("ii", $clid, $sede);
+        }
+    }
+
+    if (isset($stmt) && $stmt && $stmt->execute()) {
+        $res = $stmt->get_result();
+        if ($res && ($row = $res->fetch_assoc())) {
+            $stmt->close();
+            $monto = round(floatval($row['monto_estimado_usd']), 2);
+            if ($monto <= 0 && function_exists('starfi_extract_deal_enrichment')) {
+                $enr = starfi_extract_deal_enrichment($con, intval($row['id_sede']), intval($row['id_cliente'] ?: $clid), intval($row['id_conversacion'] ?: $cid));
+                if ($enr['monto_usd'] > 0) {
+                    $monto = $enr['monto_usd'];
+                    $did = intval($row['id']);
+                    $stmtUpM = $con->prepare("UPDATE pipeline_oportunidades SET monto_estimado_usd = ?, fecha_actualizacion = fecha_actualizacion WHERE id = ? AND monto_estimado_usd <= 0");
+                    if ($stmtUpM) {
+                        $stmtUpM->bind_param("di", $monto, $did);
+                        $stmtUpM->execute();
+                        $stmtUpM->close();
+                    }
+                }
+            }
+            return [
+                'id' => intval($row['id']),
+                'etapa' => $row['etapa'],
+                'monto_estimado_usd' => $monto,
+                'titulo' => $row['titulo'],
+                'probabilidad' => intval($row['probabilidad'])
+            ];
+        }
+        $stmt->close();
+    }
+
+    // Pre-cargar desde enriquecimiento estrictamente de la misma sede si aún no existe tarjeta en BD
+    if ($sede > 0 && function_exists('starfi_extract_deal_enrichment')) {
+        $enr = starfi_extract_deal_enrichment($con, $sede, $clid, $cid);
         if ($enr['monto_usd'] > 0) {
             return [
                 'id' => 0,
@@ -416,6 +464,7 @@ switch ($action) {
             SELECT 
                 c.id, 
                 cl.id AS id_cliente, 
+                IFNULL(l.id_sede, IFNULL(cl.id_sede, 0)) AS id_sede,
                 cl.nombre AS cliente_nombre, 
                 cl.numero_whatsapp, 
                 IFNULL(c.estado, 'SIN INICIAR') AS estado, 
@@ -551,7 +600,7 @@ switch ($action) {
 
                 $deals_by_client_map = [];
                 $resDeals = @$con->query("
-                    SELECT p.id, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
+                    SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
                     FROM pipeline_oportunidades p
                     INNER JOIN (
                         SELECT id_conversacion, MAX(id) AS max_pid
@@ -567,19 +616,23 @@ switch ($action) {
                 }
                 if (!empty($cli_ids_page)) {
                     $clids_csv = implode(',', array_unique($cli_ids_page));
+                    // Aislar estrictamente por id_sede y excluir oportunidades cerradas (GANADO/PERDIDO) en hilos nuevos
                     $resDealsCli = @$con->query("
-                        SELECT p.id, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
+                        SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
                         FROM pipeline_oportunidades p
                         INNER JOIN (
-                            SELECT id_cliente, MAX(id) AS max_pid
+                            SELECT id_sede, id_cliente, MAX(id) AS max_pid
                             FROM pipeline_oportunidades
                             WHERE id_cliente IN ($clids_csv)
-                            GROUP BY id_cliente
+                              AND id_sede > 0
+                              AND etapa NOT IN ('GANADO', 'PERDIDO')
+                            GROUP BY id_sede, id_cliente
                         ) pmc ON pmc.max_pid = p.id
                     ");
                     if ($resDealsCli) {
                         while ($rdc = $resDealsCli->fetch_assoc()) {
-                            $deals_by_client_map[intval($rdc['id_cliente'])] = $rdc;
+                            $key_sc = intval($rdc['id_sede']) . '_' . intval($rdc['id_cliente']);
+                            $deals_by_client_map[$key_sc] = $rdc;
                         }
                     }
                 }
@@ -588,11 +641,16 @@ switch ($action) {
             foreach ($chats as &$ch) {
                 $cid = intval($ch['id']);
                 $clid_cur = intval($ch['id_cliente'] ?? 0);
+                $sede_cur = intval($ch['id_sede'] ?? 0);
                 $mid = intval($ch['ultimo_msg_id'] ?? 0);
                 $lm = ($mid > 0 && isset($last_msgs_map[$mid])) ? $last_msgs_map[$mid] : null;
                 $fl = isset($flags_map[$cid]) ? $flags_map[$cid] : null;
                 $ws = isset($win_sla_map[$cid]) ? $win_sla_map[$cid] : null;
-                $dl = isset($deals_map[$cid]) ? $deals_map[$cid] : ($deals_by_client_map[$clid_cur] ?? null);
+                $direct_dl = isset($deals_map[$cid]) ? $deals_map[$cid] : null;
+                if ($direct_dl && $sede_cur > 0 && intval($direct_dl['id_sede'] ?? 0) > 0 && intval($direct_dl['id_sede']) !== $sede_cur) {
+                    $direct_dl = null;
+                }
+                $dl = $direct_dl ?: (($sede_cur > 0 && isset($deals_by_client_map[$sede_cur . '_' . $clid_cur])) ? $deals_by_client_map[$sede_cur . '_' . $clid_cur] : null);
 
                 $ch['ultimo_mensaje_ts']     = $lm ? $lm['timestamp'] : $ch['fecha_inicio'];
                 $ch['ultimo_mensaje_texto']  = $lm ? $lm['contenido'] : null;
@@ -939,16 +997,31 @@ switch ($action) {
         }
         
         $file = $_FILES['file'];
-        $ext = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', pathinfo($file['name'], PATHINFO_EXTENSION)));
-        $mime = @mime_content_type($file['tmp_name']);
-        
-        $allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'video/mp4'];
-        if (!$mime || !in_array($mime, $allowed)) {
+        if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+            echo json_encode(['status' => 'error', 'message' => 'Carga de archivo inválida.']);
+            exit;
+        }
+        if (intval($file['size'] ?? 0) <= 0 || intval($file['size'] ?? 0) > 5 * 1024 * 1024) {
+            echo json_encode(['status' => 'error', 'message' => 'El archivo excede el tamaño máximo permitido (5 MB).']);
+            exit;
+        }
+
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = (string)$finfo->file($file['tmp_name']);
+        $allowed_mime_map = [
+            'image/jpeg'      => 'jpg',
+            'image/png'       => 'png',
+            'image/webp'      => 'webp',
+            'application/pdf' => 'pdf',
+            'video/mp4'       => 'mp4',
+        ];
+        if (!isset($allowed_mime_map[$mime])) {
             echo json_encode(['status' => 'error', 'message' => 'Tipo de archivo no permitido.']);
             exit;
         }
 
-        $filename = uniqid('media_') . '.' . $ext;
+        $ext = $allowed_mime_map[$mime];
+        $filename = 'media_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
         $dest_path = __DIR__ . '/../../assets/uploads/' . $filename;
         
         if (@move_uploaded_file($file['tmp_name'], $dest_path)) {
@@ -2125,10 +2198,15 @@ switch ($action) {
 
         $sede_deal = intval($agente_info_global['id_sede'] ?? 0);
         if ($conversacion_id > 0) {
-            $rC = $con->query("SELECT c.id_cliente, c.id_agente, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
-            if ($rC && ($rc = $rC->fetch_assoc())) {
-                $sede_deal = intval($rc['id_sede'] ?? $sede_deal);
-                if ($cliente_id <= 0) $cliente_id = intval($rc['id_cliente']);
+            $stmtCD = $con->prepare("SELECT c.id_cliente, c.id_agente, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1");
+            if ($stmtCD) {
+                $stmtCD->bind_param("i", $conversacion_id);
+                $stmtCD->execute();
+                if ($rc = $stmtCD->get_result()->fetch_assoc()) {
+                    $sede_deal = intval($rc['id_sede'] ?? $sede_deal);
+                    if ($cliente_id <= 0) $cliente_id = intval($rc['id_cliente']);
+                }
+                $stmtCD->close();
             }
         }
 
@@ -2148,24 +2226,54 @@ switch ($action) {
             exit;
         }
 
-        $cierre_sql = in_array($etapa, ['GANADO', 'PERDIDO'], true) ? ", fecha_cierre = NOW()" : ", fecha_cierre = NULL";
-        $tit_sql = ($titulo !== '') ? ", titulo = '" . $con->real_escape_string(mb_substr($titulo, 0, 195)) . "'" : "";
-        $con->query("UPDATE pipeline_oportunidades SET etapa = '$etapa', monto_estimado_usd = $monto, probabilidad = $prob $tit_sql $cierre_sql WHERE id = $deal_id");
+        $fecha_cierre_q = in_array($etapa, ['GANADO', 'PERDIDO'], true) ? date('Y-m-d H:i:s') : null;
+        if ($titulo !== '') {
+            $tit_q = mb_substr($titulo, 0, 195);
+            $stmtQ = $con->prepare("UPDATE pipeline_oportunidades SET etapa = ?, monto_estimado_usd = ?, probabilidad = ?, titulo = ?, fecha_cierre = ? WHERE id = ?");
+            if ($stmtQ) {
+                $stmtQ->bind_param("sdissi", $etapa, $monto, $prob, $tit_q, $fecha_cierre_q, $deal_id);
+                $stmtQ->execute();
+                $stmtQ->close();
+            }
+        } else {
+            $stmtQ = $con->prepare("UPDATE pipeline_oportunidades SET etapa = ?, monto_estimado_usd = ?, probabilidad = ?, fecha_cierre = ? WHERE id = ?");
+            if ($stmtQ) {
+                $stmtQ->bind_param("sdisi", $etapa, $monto, $prob, $fecha_cierre_q, $deal_id);
+                $stmtQ->execute();
+                $stmtQ->close();
+            }
+        }
 
         if ($conversacion_id > 0) {
             if ($etapa === 'GANADO') {
-                $con->query("UPDATE conversaciones SET resultado_comercial = 'VENTA_CERRADA', fecha_cierre_venta = IFNULL(fecha_cierre_venta, NOW()) WHERE id = $conversacion_id");
+                $stmtCG = $con->prepare("UPDATE conversaciones SET resultado_comercial = 'VENTA_CERRADA', fecha_cierre_venta = IFNULL(fecha_cierre_venta, NOW()) WHERE id = ?");
+                if ($stmtCG) {
+                    $stmtCG->bind_param("i", $conversacion_id);
+                    $stmtCG->execute();
+                    $stmtCG->close();
+                }
             }
             $etapa_pretty = str_replace('_', ' ', $etapa);
             $monto_fmt = number_format($monto, 2);
-            $ev_msg = $con->real_escape_string("💼 Embudo actualizado a [$etapa_pretty] · Monto estimado: \$$monto_fmt USD.");
-            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', '$ev_msg')");
-            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
+            $ev_msg = "💼 Embudo actualizado a [$etapa_pretty] · Monto estimado: \$$monto_fmt USD.";
+            $stmtEvQ = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES (?, 'EVENTO_SISTEMA', 'EVENTO_SISTEMA', ?)");
+            if ($stmtEvQ) {
+                $stmtEvQ->bind_param("is", $conversacion_id, $ev_msg);
+                $stmtEvQ->execute();
+                sync_ultimo_msg_conversacion($con, $conversacion_id, $stmtEvQ->insert_id);
+                $stmtEvQ->close();
+            }
         }
+
+        registrar_auditoria($con, 'bandeja', 'QUICK_SAVE_DEAL', 'pipeline_oportunidades', $deal_id, [
+            'etapa' => $etapa,
+            'monto_usd' => $monto,
+            'conversacion_id' => $conversacion_id
+        ], $agente_id, $sede_deal);
 
         echo json_encode([
             'status' => 'success',
-            'deal' => get_conversacion_deal_info($con, $conversacion_id, $cliente_id)
+            'deal' => get_conversacion_deal_info($con, $conversacion_id, $cliente_id, $sede_deal)
         ]);
         break;
 
@@ -2194,6 +2302,10 @@ switch ($action) {
             echo json_encode(['status' => 'error', 'message' => $saved_sla['message']]);
             exit;
         }
+        registrar_auditoria($con, 'bandeja', 'GUARDAR_SLA_RAPIDO', 'config_sla', $target_sede_sla, [
+            'verde_max_min'    => $v_in,
+            'amarillo_max_min' => $a_in
+        ], $ag_id_c, $target_sede_sla);
         echo json_encode([
             'status' => 'success',
             'message' => 'Tiempos del Semáforo SLA actualizados correctamente.',

@@ -19,11 +19,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome Local -->
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
     <style>
         /* Estilos específicos para el Directorio 360 */
@@ -680,9 +677,9 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <div class="profile-data-col d-flex flex-column h-100 p-0" style="width: 45%; background-color: #ffffff; border-right: 1px solid rgba(0,0,0,0.06);">
                         <div class="p-4 flex-grow-1 overflow-auto">
                             <div class="profile-avatar-large">
-                                <img id="profAvatarImg" src="https://ui-avatars.com/api/?name=User&background=E85B14&color=fff" alt="Avatar">
+                                <img id="profAvatarImg" src="<?= htmlspecialchars(starfi_local_avatar_data_uri('Cliente', '#E85B14', '#FFFFFF'), ENT_QUOTES, 'UTF-8') ?>" alt="Avatar">
                                 <div>
-                                    <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #0F172A;">Nombre Cliente</h4>
+                                    <h4 class="brand-font fw-bold mb-1" id="profTitleName" style="color: #37414A;">Nombre Cliente</h4>
                                     <span class="badge bg-light text-secondary border" id="profTitleId">ID: CLI-000</span>
                                 </div>
                             </div>

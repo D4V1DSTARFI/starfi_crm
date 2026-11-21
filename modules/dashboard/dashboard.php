@@ -29,11 +29,8 @@ if ($res_sedes) {
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome Local -->
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
     
     <style>
@@ -362,7 +359,7 @@ if ($res_sedes) {
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="../../assets/js/chart.umd.min.js"></script>
     <script src="funciones_dashboard.js?v=<?= time() ?>"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {

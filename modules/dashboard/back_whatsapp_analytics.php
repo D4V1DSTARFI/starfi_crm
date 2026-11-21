@@ -1,9 +1,11 @@
 <?php
+@ini_set('display_errors', '0');
 date_default_timezone_set('America/Caracas');
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../config/database.php';
 
 requireAuth();
+requirePermission('whatsapp_analytics');
 header('Content-Type: application/json; charset=utf-8');
 
 $agente = getAgenteInfo();

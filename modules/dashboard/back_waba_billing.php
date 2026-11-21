@@ -646,7 +646,9 @@ if (defined('WABA_BILLING_LIB_ONLY') && WABA_BILLING_LIB_ONLY === true) {
 // =========================================================================
 // CONTROLADOR HTTP / AJAX
 // =========================================================================
+@ini_set('display_errors', '0');
 requireAuth();
+requirePermission('waba_ordenes');
 header('Content-Type: application/json; charset=utf-8');
 
 $agente = getAgenteInfo();

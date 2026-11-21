@@ -1,21 +1,22 @@
 <?php
 /**
  * Backend Controller - Gestión de Roles y Permisos STARFI CRM
- * Procesa peticiones AJAX para listar la matriz de permisos y alternar (toggle) los accesos de cada rol.
+ * Protege inmutablemente role_id = 1 (MASTER) y restringe edición de MASTER CI a MASTER puro.
  */
 
+@ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=utf-8');
 
 require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
-// Restringir módulo de roles y permisos únicamente a MASTER
 requirePermission('gestion_roles');
 
 require_once __DIR__ . '/../../config/database.php';
 
 $con = getDbConnection('core');
-
 if (!$con) {
+    http_response_code(500);
     echo json_encode(['success' => false, 'message' => 'Error de conexión con la base de datos central.']);
     exit();
 }
@@ -23,7 +24,8 @@ if (!$con) {
 $action = $_REQUEST['action'] ?? 'list';
 
 $agente_info = getAgenteInfo();
-$es_master_puro = ($agente_info && strtoupper(trim($agente_info['rol'] ?? '')) === 'MASTER');
+$mi_id = intval($agente_info['id'] ?? 0);
+$es_master_puro = ($mi_id === 1 || strtoupper(trim((string)($agente_info['rol'] ?? ''))) === 'MASTER');
 
 $modulos_definidos = [
     'bandeja' => 'Centro de Mensajes',
@@ -41,33 +43,38 @@ $modulos_definidos = [
     'configuracion' => 'Configuración del Sistema'
 ];
 
-// Ocultar 'Facturación WhatsApp' de la matriz de permisos si el usuario no es MASTER puro
 if (!$es_master_puro) {
-    unset($modulos_definidos['whatsapp_analytics']);
+    unset($modulos_definidos['whatsapp_analytics'], $modulos_definidos['waba_ordenes']);
 }
 
 switch ($action) {
     case 'list':
-        // Si no es el usuario MASTER puro, ocultar el rol MASTER de la pestaña de roles
-        $sql_roles = $es_master_puro ? "SELECT id, nombre FROM roles ORDER BY id ASC" : "SELECT id, nombre FROM roles WHERE nombre != 'MASTER' ORDER BY id ASC";
+        $sql_roles = $es_master_puro
+            ? "SELECT id, nombre FROM roles ORDER BY id ASC"
+            : "SELECT id, nombre FROM roles WHERE id != 1 AND UPPER(TRIM(nombre)) != 'MASTER' ORDER BY id ASC";
         $res_roles = mysqli_query($con, $sql_roles);
         $roles = [];
 
-
         if ($res_roles) {
-            while ($row = mysqli_fetch_assoc($res_roles)) {
-                $role_id = (int) $row['id'];
+            $stmt_sel = $con->prepare("SELECT permitido FROM permisos_roles WHERE id_rol = ? AND modulo = ? LIMIT 1");
+            $stmt_ins = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, 0)");
 
-                // Cargar los permisos del rol actual
+            while ($row = mysqli_fetch_assoc($res_roles)) {
+                $role_id = (int)$row['id'];
                 $permisos = [];
+
                 foreach ($modulos_definidos as $mod_key => $mod_name) {
-                    $res_p = mysqli_query($con, "SELECT permitido FROM permisos_roles WHERE id_rol = $role_id AND modulo = '$mod_key' LIMIT 1");
-                    $status = 0;
-                    if ($res_p && $row_p = mysqli_fetch_assoc($res_p)) {
-                        $status = (int) $row_p['permitido'];
-                    } else {
-                        // Si no existe, insertar por defecto como inactivo
-                        mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($role_id, '$mod_key', 0)");
+                    $status = ($role_id === 1) ? 1 : 0;
+                    if ($role_id !== 1 && $stmt_sel) {
+                        $stmt_sel->bind_param("is", $role_id, $mod_key);
+                        $stmt_sel->execute();
+                        $res_p = $stmt_sel->get_result();
+                        if ($res_p && ($row_p = $res_p->fetch_assoc())) {
+                            $status = (int)$row_p['permitido'];
+                        } elseif ($stmt_ins) {
+                            $stmt_ins->bind_param("is", $role_id, $mod_key);
+                            @$stmt_ins->execute();
+                        }
                     }
                     $permisos[] = [
                         'modulo' => $mod_key,
@@ -82,26 +89,32 @@ switch ($action) {
                     'permisos' => $permisos
                 ];
             }
+            if ($stmt_sel) $stmt_sel->close();
+            if ($stmt_ins) $stmt_ins->close();
         }
 
-        echo json_encode([
-            'success' => true,
-            'roles' => $roles
-        ]);
+        echo json_encode(['success' => true, 'roles' => $roles]);
         break;
 
     case 'create_role':
-        $nombre_rol = trim($_POST['nombre'] ?? '');
-        if (empty($nombre_rol)) {
+        $nombre_rol = trim((string)($_POST['nombre'] ?? ''));
+        if ($nombre_rol === '') {
             echo json_encode(['success' => false, 'message' => 'El nombre del rol no puede estar vacío.']);
             exit();
         }
 
-        $stmt_check = $con->prepare("SELECT id FROM roles WHERE nombre = ?");
+        if (in_array(strtoupper($nombre_rol), ['MASTER', 'MASTER CI'], true)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'No se pueden crear roles con nombres reservados de sistema.']);
+            exit();
+        }
+
+        $stmt_check = $con->prepare("SELECT id FROM roles WHERE UPPER(TRIM(nombre)) = UPPER(?) LIMIT 1");
         $stmt_check->bind_param("s", $nombre_rol);
         $stmt_check->execute();
         $res_check = $stmt_check->get_result();
         if ($res_check && $res_check->num_rows > 0) {
+            $stmt_check->close();
             echo json_encode(['success' => false, 'message' => 'Ya existe un rol con ese nombre.']);
             exit();
         }
@@ -110,41 +123,89 @@ switch ($action) {
         $stmt_ins = $con->prepare("INSERT INTO roles (nombre) VALUES (?)");
         $stmt_ins->bind_param("s", $nombre_rol);
         if ($stmt_ins->execute()) {
-            $nuevo_id_rol = $stmt_ins->insert_id;
+            $nuevo_id_rol = (int)$stmt_ins->insert_id;
+            $stmt_ins->close();
 
-            // Asignar permisos predeterminados (todos 1 excepto whatsapp_analytics)
+            $stmt_p = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, ?)");
             foreach ($modulos_definidos as $mod_key => $mod_name) {
-                $permitido = ($mod_key === 'whatsapp_analytics' || $mod_key === 'waba_ordenes') ? 0 : 1;
-                $stmt_p = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, ?)");
+                $permitido = in_array($mod_key, ['whatsapp_analytics', 'waba_ordenes', 'gestion_roles'], true) ? 0 : 1;
                 $stmt_p->bind_param("isi", $nuevo_id_rol, $mod_key, $permitido);
                 $stmt_p->execute();
-                $stmt_p->close();
             }
+            $stmt_p->close();
+
+            registrar_auditoria($con, 'gestion_roles', 'CREAR_ROL', 'roles', $nuevo_id_rol, [
+                'nombre' => $nombre_rol
+            ], $mi_id);
 
             echo json_encode(['success' => true, 'id' => $nuevo_id_rol, 'message' => 'Rol creado con éxito.']);
         } else {
+            $stmt_ins->close();
             echo json_encode(['success' => false, 'message' => 'Error al crear el rol en base de datos.']);
         }
         break;
 
     case 'toggle_permission':
-        $role_id = (int) ($_POST['role_id'] ?? 0);
-        $modulo = trim($_POST['modulo'] ?? '');
+        $role_id = (int)($_POST['role_id'] ?? 0);
+        $modulo = trim((string)($_POST['modulo'] ?? ''));
 
         if ($role_id <= 0 || !array_key_exists($modulo, $modulos_definidos)) {
             echo json_encode(['success' => false, 'message' => 'Parámetros inválidos.']);
             exit();
         }
 
-        // Cargar estado actual
-        $res = mysqli_query($con, "SELECT permitido FROM permisos_roles WHERE id_rol = $role_id AND modulo = '$modulo' LIMIT 1");
-        $nuevo_estado = 1;
-        if ($res && $row = mysqli_fetch_assoc($res)) {
-            $nuevo_estado = $row['permitido'] == 1 ? 0 : 1;
-            mysqli_query($con, "UPDATE permisos_roles SET permitido = $nuevo_estado WHERE id_rol = $role_id AND modulo = '$modulo'");
-        } else {
-            mysqli_query($con, "INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES ($role_id, '$modulo', 1)");
+        // Bloquear absolutamente cualquier modificación sobre role_id = 1 (MASTER)
+        $stmt_rn = $con->prepare("SELECT nombre FROM roles WHERE id = ? LIMIT 1");
+        $stmt_rn->bind_param("i", $role_id);
+        $stmt_rn->execute();
+        $row_rn = $stmt_rn->get_result()->fetch_assoc();
+        $stmt_rn->close();
+
+        if (!$row_rn) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'Rol no encontrado.']);
+            exit();
         }
+
+        $target_rname = strtoupper(trim((string)$row_rn['nombre']));
+        if ($role_id === 1 || $target_rname === 'MASTER') {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Operación prohibida: los permisos del rol MASTER son inmutables.']);
+            exit();
+        }
+
+        if (!$es_master_puro && ($role_id === 4 || $target_rname === 'MASTER CI' || $modulo === 'gestion_roles')) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Solo MASTER puede modificar permisos administrativos globales.']);
+            exit();
+        }
+
+        $stmt_cur = $con->prepare("SELECT permitido FROM permisos_roles WHERE id_rol = ? AND modulo = ? LIMIT 1");
+        $stmt_cur->bind_param("is", $role_id, $modulo);
+        $stmt_cur->execute();
+        $res = $stmt_cur->get_result();
+        $nuevo_estado = 1;
+
+        if ($res && ($row = $res->fetch_assoc())) {
+            $stmt_cur->close();
+            $nuevo_estado = ((int)$row['permitido'] === 1) ? 0 : 1;
+            $stmt_upd = $con->prepare("UPDATE permisos_roles SET permitido = ? WHERE id_rol = ? AND modulo = ?");
+            $stmt_upd->bind_param("iis", $nuevo_estado, $role_id, $modulo);
+            $stmt_upd->execute();
+            $stmt_upd->close();
+        } else {
+            $stmt_cur->close();
+            $stmt_add = $con->prepare("INSERT INTO permisos_roles (id_rol, modulo, permitido) VALUES (?, ?, 1)");
+            $stmt_add->bind_param("is", $role_id, $modulo);
+            $stmt_add->execute();
+            $stmt_add->close();
+        }
+
+        registrar_auditoria($con, 'gestion_roles', 'TOGGLE_PERMISO_ROL', 'permisos_roles', $role_id, [
+            'role_id'      => $role_id,
+            'modulo'       => $modulo,
+            'nuevo_estado' => $nuevo_estado
+        ], $mi_id);
 
         echo json_encode([
             'success' => true,
@@ -154,6 +215,7 @@ switch ($action) {
         break;
 
     default:
+        http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'Acción no permitida.']);
         break;
 }

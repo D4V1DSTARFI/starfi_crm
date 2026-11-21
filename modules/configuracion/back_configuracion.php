@@ -1,7 +1,10 @@
 <?php
+@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
-header('Content-Type: application/json');
+requirePermission('configuracion');
+header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
@@ -1207,7 +1210,7 @@ switch ($action) {
             '../../config/database.php' => 'Configuración de base de datos',
             '../../api_notificaciones.php' => 'API de Notificaciones',
             '../../webhook.php' => 'Webhook de recepción de mensajes',
-            '../../simulador_whatsapp.php' => 'Simulador de entrada de WhatsApp'
+            '../../core/audit.php' => 'Motor de Auditoría Formal'
         ];
         $archivos_status = [];
         foreach ($archivos as $ruta => $nombre) {
@@ -1283,28 +1286,47 @@ switch ($action) {
         $current_cfg = starfi_get_sla_config($con, $req_sede);
 
         $sedes_list = [];
-        $where_s = (!$is_master && $user_sede > 0) ? "WHERE id = $user_sede" : "WHERE estado = 'ACTIVO'";
-        $rS = $con->query("SELECT id, nombre_sede FROM sedes $where_s ORDER BY nombre_sede ASC");
-        if ($rS) {
+        if (!$is_master && $user_sede > 0) {
+            $stmtS = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE id = ? ORDER BY nombre_sede ASC");
+            if ($stmtS) $stmtS->bind_param("i", $user_sede);
+        } else {
+            $stmtS = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+        }
+        if ($stmtS && $stmtS->execute()) {
+            $rS = $stmtS->get_result();
             while ($rs = $rS->fetch_assoc()) {
                 $sedes_list[] = $rs;
             }
+            $stmtS->close();
         }
 
-        // Resumen de reglas guardadas (Global + sedes personalizadas)
+        // Resumen de reglas guardadas (Global + sedes personalizadas) con mysqli_prepare
         $rules = [];
-        $rR = $con->query("
-            SELECT cs.id_sede, cs.verde_max_min, cs.amarillo_max_min, cs.round_robin_online_min, cs.alerta_sonora_activa,
-                   IFNULL(s.nombre_sede, '🌎 Regla Global (Por defecto)') AS ambito_nombre
-            FROM config_sla cs
-            LEFT JOIN sedes s ON cs.id_sede = s.id
-            " . (!$is_master && $user_sede > 0 ? "WHERE cs.id_sede IN (0, $user_sede)" : "") . "
-            ORDER BY (cs.id_sede = 0) DESC, ambito_nombre ASC
-        ");
-        if ($rR) {
+        if (!$is_master && $user_sede > 0) {
+            $stmtR = $con->prepare("
+                SELECT cs.id_sede, cs.verde_max_min, cs.amarillo_max_min, cs.round_robin_online_min, cs.alerta_sonora_activa,
+                       IFNULL(s.nombre_sede, '🌎 Regla Global (Por defecto)') AS ambito_nombre
+                FROM config_sla cs
+                LEFT JOIN sedes s ON cs.id_sede = s.id
+                WHERE cs.id_sede IN (0, ?)
+                ORDER BY (cs.id_sede = 0) DESC, ambito_nombre ASC
+            ");
+            if ($stmtR) $stmtR->bind_param("i", $user_sede);
+        } else {
+            $stmtR = $con->prepare("
+                SELECT cs.id_sede, cs.verde_max_min, cs.amarillo_max_min, cs.round_robin_online_min, cs.alerta_sonora_activa,
+                       IFNULL(s.nombre_sede, '🌎 Regla Global (Por defecto)') AS ambito_nombre
+                FROM config_sla cs
+                LEFT JOIN sedes s ON cs.id_sede = s.id
+                ORDER BY (cs.id_sede = 0) DESC, ambito_nombre ASC
+            ");
+        }
+        if ($stmtR && $stmtR->execute()) {
+            $rR = $stmtR->get_result();
             while ($rr = $rR->fetch_assoc()) {
                 $rules[] = $rr;
             }
+            $stmtR->close();
         }
 
         echo json_encode([
@@ -1350,6 +1372,13 @@ switch ($action) {
             exit;
         }
 
+        registrar_auditoria($con, 'configuracion', 'GUARDAR_CONFIG_SLA', 'config_sla', $target_sede, [
+            'verde_max_min'          => $v_min,
+            'amarillo_max_min'       => $a_min,
+            'round_robin_online_min' => $rr_min,
+            'alerta_sonora_activa'   => $snd
+        ], $ag_id, $target_sede);
+
         echo json_encode([
             'status'  => 'success',
             'message' => $target_sede === 0
@@ -1377,7 +1406,15 @@ switch ($action) {
             echo json_encode(['status' => 'error', 'message' => 'La Regla Global no puede eliminarse, solo editarse.']);
             exit;
         }
-        $con->query("DELETE FROM config_sla WHERE id_sede = $target_sede");
+        $stmtDelSla = $con->prepare("DELETE FROM config_sla WHERE id_sede = ?");
+        if ($stmtDelSla) {
+            $stmtDelSla->bind_param("i", $target_sede);
+            $stmtDelSla->execute();
+            $stmtDelSla->close();
+        }
+        registrar_auditoria($con, 'configuracion', 'RESTAURAR_SLA_SEDE', 'config_sla', $target_sede, [
+            'id_sede' => $target_sede
+        ], $ag_id, $target_sede);
         echo json_encode([
             'status'  => 'success',
             'message' => 'La sede ahora hereda nuevamente la Regla Global de SLA.',

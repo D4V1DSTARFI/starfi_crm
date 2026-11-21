@@ -17,17 +17,17 @@ let bcTemplates = [];
 let bcIsRunning = false;
 let bcShouldStop = false;
 
-$(document).ready(function() {
+$(document).ready(function () {
     loadSedes();
     loadClients();
 
     // Botón Abrir Centro de Difusión Inteligente
-    $('#btnOpenBroadcast').on('click', function() {
+    $('#btnOpenBroadcast').on('click', function () {
         openBroadcastModal();
     });
 
     // Limpiar selección de checkboxes
-    $('#btnClearSelection').on('click', function() {
+    $('#btnClearSelection').on('click', function () {
         selectedClientIds.clear();
         $('#chkSelectAllClients').prop('checked', false);
         $('.chk-client-row').prop('checked', false);
@@ -35,7 +35,7 @@ $(document).ready(function() {
     });
 
     // Seleccionar todos los filtrados
-    $('#chkSelectAllClients').on('change', function() {
+    $('#chkSelectAllClients').on('change', function () {
         const checked = $(this).is(':checked');
         filteredClients.forEach(c => {
             if (checked) {
@@ -49,30 +49,30 @@ $(document).ready(function() {
     });
 
     // Filtro por Sede en el Directorio
-    $('#filterDirSede').on('change', function() {
+    $('#filterDirSede').on('change', function () {
         currentPage = 1;
         applyFiltersAndRender();
     });
 
     // Eventos del Modal de Difusión
-    $('#bcSedeSelect').on('change', function() {
+    $('#bcSedeSelect').on('change', function () {
         updateBroadcastPreview();
         updateBroadcastRecipientCounters();
     });
 
-    $('#bcDirectoryScope').on('change', function() {
+    $('#bcDirectoryScope').on('change', function () {
         updateBroadcastRecipientCounters();
     });
 
-    $('#bcManualList').on('input', function() {
+    $('#bcManualList').on('input', function () {
         updateBroadcastRecipientCounters();
     });
 
-    $('#bcCsvInput').on('change', function(e) {
+    $('#bcCsvInput').on('change', function (e) {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = function(evt) {
+        reader.onload = function (evt) {
             const content = evt.target.result || '';
             const current = $('#bcManualList').val().trim();
             $('#bcManualList').val(current ? (current + '\n' + content.trim()) : content.trim());
@@ -82,70 +82,81 @@ $(document).ready(function() {
         $(this).val('');
     });
 
-    $('#bcParam2, #bcParam3, #bcDefaultName, #bcTestName').on('input', function() {
+    $('#bcParam2, #bcParam3, #bcDefaultName, #bcTestName').on('input', function () {
         updateBroadcastPreview();
     });
 
-    $('#btnStartBroadcast').on('click', function() {
+    $('#btnStartBroadcast').on('click', function () {
         startBroadcastExecution();
     });
 
-    $('#btnStopBroadcast').on('click', function() {
+    $('#btnStopBroadcast').on('click', function () {
         bcShouldStop = true;
         $('#bcStatusLabel').removeClass('bg-primary bg-success').addClass('bg-warning text-dark').text('Deteniendo...');
     });
 
+    function getDirectorioAvatarSvg(name, bg, fg) {
+        let clean = String(name || 'CL').trim();
+        let parts = clean.split(/\s+/);
+        let initials = (parts.length >= 2)
+            ? (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase()
+            : clean.substring(0, 2).toUpperCase();
+        initials = initials.replace(/[^A-Z0-9ÁÉÍÓÚÑ]/gi, '') || 'CL';
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="${bg || '#F3F4F6'}"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="${fg || '#37414A'}" font-family="Gotham, Arial, sans-serif" font-size="24" font-weight="bold">${initials}</text></svg>`;
+        return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
+
     // Botón Nuevo Cliente
-    $('#btnAddClient').on('click', function() {
+    $('#btnAddClient').on('click', function () {
         currentClientId = null; // Modo creación
-        
+
         $('#profTitleId').text('NUEVO CLIENTE');
         $('#profTitleName').text('Crear Ficha');
-        $('#profAvatarImg').attr('src', 'https://ui-avatars.com/api/?name=Nuevo&background=E85B14&color=fff');
-        
+        $('#profAvatarImg').attr('src', getDirectorioAvatarSvg('Nuevo Cliente', '#E85B14', '#FFFFFF'));
+
         $('#profName').val('').prop('disabled', false);
         $('#profSede').val('').prop('disabled', false);
         $('#profPrefix').prop('disabled', false).val('58414');
         $('#profPhone').prop('disabled', false).val('');
         $('#profAddress').val('').prop('disabled', false);
         $('#profNotes').val('').prop('disabled', false);
-        
+
         $('#btnEditProfile').hide();
         $('#btnSaveProfile').html('<i class="fa-solid fa-user-plus me-2"></i>Crear Cliente').show();
-        
+
         $('#profileConversationsFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-comments"></i></div><h5>Sin conversaciones</h5><p>Este cliente aún no tiene conversaciones registradas.</p></div>');
         $('#profileSalesFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-receipt"></i></div><h5>Sin ventas</h5><p>Este cliente aún no registra ventas ni compras.</p></div>');
-        
+
         $('#profileModal').modal('show');
     });
 
     // Botón Editar Perfil
-    $('#btnEditProfile').on('click', function() {
+    $('#btnEditProfile').on('click', function () {
         $('#profName, #profSede, #profPrefix, #profPhone, #profAddress, #profNotes').prop('disabled', false);
         $(this).hide();
         $('#btnSaveProfile').html('<i class="fa-solid fa-floppy-disk me-2"></i>Guardar Cambios').show();
         $('#profName').focus();
     });
 
-    $('#btnSaveProfile').on('click', function() {
+    $('#btnSaveProfile').on('click', function () {
         saveProfile();
     });
 
     // Búsqueda en tiempo real
-    $('#searchClient').on('keyup', function() {
+    $('#searchClient').on('keyup', function () {
         currentPage = 1;
         applyFiltersAndRender();
     });
 
     // Paginación
-    $('#btnPrevPage').on('click', function() {
+    $('#btnPrevPage').on('click', function () {
         if (currentPage > 1) {
             currentPage--;
             renderTablePage();
         }
     });
 
-    $('#btnNextPage').on('click', function() {
+    $('#btnNextPage').on('click', function () {
         const totalPages = Math.ceil(filteredClients.length / pageSize);
         if (currentPage < totalPages) {
             currentPage++;
@@ -154,7 +165,7 @@ $(document).ready(function() {
     });
 
     // Ordenamiento por cabeceras
-    $('th.sortable').on('click', function() {
+    $('th.sortable').on('click', function () {
         const col = $(this).data('sort');
         if (currentSortCol === col) {
             currentSortAsc = !currentSortAsc;
@@ -162,14 +173,14 @@ $(document).ready(function() {
             currentSortCol = col;
             currentSortAsc = true;
         }
-        
+
         $('th.sortable').removeClass('asc desc');
         $('th.sortable i').removeClass('fa-sort-up fa-sort-down').addClass('fa-sort');
-        
+
         let icon = currentSortAsc ? 'fa-sort-up' : 'fa-sort-down';
         $(this).addClass(currentSortAsc ? 'asc' : 'desc');
         $(this).find('i').removeClass('fa-sort').addClass(icon);
-        
+
         currentPage = 1;
         applyFiltersAndRender();
     });
@@ -181,19 +192,19 @@ function loadSedes() {
         type: 'POST',
         dataType: 'json',
         data: { action: 'get_sedes' },
-        success: function(res) {
+        success: function (res) {
             if (res.status === 'success') {
                 allSedes = res.data;
                 let select = $('#profSede');
                 let filterSelect = $('#filterDirSede');
                 select.empty();
                 filterSelect.html('<option value="">📍 Todas las Sedes</option>');
-                
+
                 if (res.is_master) {
                     select.append('<option value="">General / Central</option>');
-                    select.prop('disabled', false).css({'background-color': '', 'cursor': ''});
+                    select.prop('disabled', false).css({ 'background-color': '', 'cursor': '' });
                 } else {
-                    select.prop('disabled', true).css({'background-color': '#F1F5F9', 'cursor': 'not-allowed'});
+                    select.prop('disabled', true).css({ 'background-color': '#F1F5F9', 'cursor': 'not-allowed' });
                 }
 
                 allSedes.forEach(s => {
@@ -215,7 +226,7 @@ function loadClients() {
         type: 'POST',
         dataType: 'json',
         data: { action: 'load_clients' },
-        success: function(res) {
+        success: function (res) {
             if (res.status === 'success') {
                 allClients = res.data;
                 applyFiltersAndRender();
@@ -228,7 +239,7 @@ function loadClients() {
 function applyFiltersAndRender() {
     let query = $('#searchClient').val().toLowerCase().trim();
     let sedeFilter = $('#filterDirSede').val();
-    
+
     // 1. Filtrar
     filteredClients = allClients.filter(c => {
         if (sedeFilter && String(c.id_sede || '') !== String(sedeFilter)) {
@@ -274,10 +285,10 @@ function applyFiltersAndRender() {
 function renderTablePage() {
     let tbody = $('#clientsTableBody');
     tbody.empty();
-    
+
     let totalItems = filteredClients.length;
     let totalPages = Math.ceil(totalItems / pageSize) || 1;
-    
+
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
@@ -293,13 +304,13 @@ function renderTablePage() {
             let isChecked = selectedClientIds.has(cid) ? 'checked' : '';
             let displayName = c.nombre || 'Cliente sin nombre';
 
-            let statusBadge = c.estado === 'ACTIVO' ? 
-                '<span class="badge bg-success bg-opacity-10 text-success border border-success">Activo</span>' : 
+            let statusBadge = c.estado === 'ACTIVO' ?
+                '<span class="badge bg-success bg-opacity-10 text-success border border-success">Activo</span>' :
                 '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary">Inactivo</span>';
-            
+
             let dateObj = new Date(c.fecha_registro);
             let formattedDate = isNaN(dateObj.getTime()) ? '-' : dateObj.toLocaleDateString();
-            
+
             let sedeName = c.nombre_sede ? `<span class="fw-bold" style="color:#4a5568;">${c.nombre_sede}</span>` : '<span class="text-muted fst-italic">General</span>';
 
             let tagsHtml = '<span class="tag text-muted small">Sin tags</span>';
@@ -309,7 +320,7 @@ function renderTablePage() {
                     if (Array.isArray(parsedTags) && parsedTags.length > 0) {
                         tagsHtml = parsedTags.map(t => `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary me-1">${t}</span>`).join('');
                     }
-                } catch (e) {}
+                } catch (e) { }
             }
 
             let tr = `
@@ -319,7 +330,7 @@ function renderTablePage() {
                     </td>
                     <td>
                         <div class="client-cell">
-                            <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=F3F4F6&color=37414A" alt="Avatar">
+                            <img src="${getDirectorioAvatarSvg(displayName, '#F3F4F6', '#37414A')}" alt="Avatar">
                             <div class="client-cell-info">
                                 <h6>${displayName}</h6>
                                 <small>ID: CLI-${c.id}</small>
@@ -339,13 +350,13 @@ function renderTablePage() {
 
     let displayEnd = Math.min(endIndex, totalItems);
     let displayStart = totalItems === 0 ? 0 : startIndex + 1;
-    
+
     $('#pageInfo').text(`Mostrando ${displayStart} - ${displayEnd} de ${totalItems} clientes`);
     $('#btnPrevPage').prop('disabled', currentPage === 1);
     $('#btnNextPage').prop('disabled', currentPage === totalPages || totalItems === 0);
 }
 
-window.toggleClientSelection = function(id, checked) {
+window.toggleClientSelection = function (id, checked) {
     const cid = parseInt(id);
     if (checked) {
         selectedClientIds.add(cid);
@@ -379,17 +390,17 @@ function openBroadcastModal() {
         if (selectedClientIds && selectedClientIds.size > 0) {
             sessionStorage.setItem('starfi_campana_preseleccion', JSON.stringify(Array.from(selectedClientIds)));
         }
-    } catch (e) {}
+    } catch (e) { }
     window.location.href = '../campanas/campanas.php';
 }
 
-window.loadBroadcastConfig = function() {
+window.loadBroadcastConfig = function () {
     $.ajax({
         url: 'back_directorio.php',
         type: 'POST',
         dataType: 'json',
         data: { action: 'get_broadcast_config' },
-        success: function(res) {
+        success: function (res) {
             if (res.status === 'success') {
                 bcLineas = res.lineas || [];
                 bcTemplates = res.plantillas || [];
@@ -427,7 +438,7 @@ window.loadBroadcastConfig = function() {
     });
 };
 
-window.setBroadcastRecipientMode = function(mode) {
+window.setBroadcastRecipientMode = function (mode) {
     bcMode = mode;
     $('.mode-pill-btn').removeClass('active');
     $(`.mode-pill-btn[data-mode="${mode}"]`).addClass('active');
@@ -441,7 +452,7 @@ window.setBroadcastRecipientMode = function(mode) {
     updateBroadcastRecipientCounters();
 };
 
-window.applyBroadcastPreset = function(preset) {
+window.applyBroadcastPreset = function (preset) {
     if (preset === 'inauguracion') {
         $('#bcCampaignName').val('Gran Inauguración Carpintero Express');
         $('#bcParam2').val('invitarte a la próxima inauguración de nuestra tienda Carpintero Express, donde tendremos grandes ofertas especiales de apertura para ti');
@@ -654,7 +665,7 @@ async function startBroadcastExecution() {
         if (campRes.status === 'success') {
             campaignId = campRes.campaign_id;
         }
-    } catch (e) {}
+    } catch (e) { }
 
     let sentCount = 0;
     let failedCount = 0;
@@ -761,7 +772,7 @@ function renderBroadcastHistory(campanas) {
 
 function loadProfile(id, rowElement) {
     currentClientId = id;
-    
+
     $('#clientsTableBody tr').removeClass('active');
     if (rowElement) $(rowElement).addClass('active');
 
@@ -770,36 +781,36 @@ function loadProfile(id, rowElement) {
         type: 'POST',
         dataType: 'json',
         data: { action: 'load_profile', id: id },
-        success: function(res) {
+        success: function (res) {
             if (res.status === 'success') {
                 const client = res.data.client;
-                
+
                 $('#profTitleName').text(client.nombre);
                 $('#profTitleId').text(`ID: CLI-${client.id}`);
-                $('#profAvatarImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(client.nombre)}&background=E85B14&color=fff`);
+                $('#profAvatarImg').attr('src', getDirectorioAvatarSvg(client.nombre, '#E85B14', '#FFFFFF'));
 
                 $('#profName').val(client.nombre).prop('disabled', true);
                 $('#profSede').val(client.id_sede || '').prop('disabled', true);
                 $('#profAddress').val(client.direccion || '').prop('disabled', true);
                 $('#profNotes').val(client.notas_internas || '').prop('disabled', true);
-                
+
                 let phoneStr = client.numero_whatsapp || '';
                 let prefix = phoneStr.substring(0, 5);
                 let num = phoneStr.substring(5);
-                
+
                 if ($(`#profPrefix option[value='${prefix}']`).length === 0) {
                     $('#profPrefix').append(`<option value="${prefix}">${prefix}</option>`);
                 }
                 $('#profPrefix').val(prefix).prop('disabled', true);
                 $('#profPhone').val(num).prop('disabled', true);
-                
+
                 $('#btnEditProfile').show();
                 $('#btnSaveProfile').hide();
-                
+
                 // 1. Render Historial de Conversaciones
                 let convFeed = $('#profileConversationsFeed');
                 convFeed.empty();
-                
+
                 let convs = res.data.conversaciones || [];
                 if (convs.length === 0) {
                     convFeed.append('<div class="empty-timeline"><div><i class="fa-solid fa-comments"></i></div><h5>Sin conversaciones</h5><p>Este cliente aún no tiene conversaciones registradas.</p></div>');
@@ -834,7 +845,7 @@ function loadProfile(id, rowElement) {
                 // 2. Render Historial de Ventas
                 let salesFeed = $('#profileSalesFeed');
                 salesFeed.empty();
-                
+
                 let sales = res.data.ventas || [];
                 if (sales.length === 0) {
                     salesFeed.append('<div class="empty-timeline"><div><i class="fa-solid fa-receipt"></i></div><h5>Sin ventas</h5><p>Este cliente aún no registra ventas ni compras.</p></div>');
@@ -843,7 +854,7 @@ function loadProfile(id, rowElement) {
                         let dateStr = v.timestamp ? new Date(v.timestamp).toLocaleString() : (v.fecha_cierre_venta ? new Date(v.fecha_cierre_venta).toLocaleString() : '');
                         let iconClass = 'icon-api';
                         let iconFa = 'fa-bolt';
-                        
+
                         let item = `
                             <div class="timeline-item">
                                 <div class="timeline-icon ${iconClass}" style="background-color: rgba(16, 185, 129, 0.1); color: #10B981;"><i class="fa-solid ${iconFa}"></i></div>
@@ -857,7 +868,7 @@ function loadProfile(id, rowElement) {
                         salesFeed.append(item);
                     });
                 }
-                
+
                 $('#tab-conv-btn').tab('show');
                 $('#profileModal').modal('show');
                 $('.profile-data-col').scrollTop(0);
@@ -873,34 +884,34 @@ function saveProfile() {
     const id_sede = $('#profSede').val();
     const prefix = $('#profPrefix').val();
     const phone = $('#profPhone').val().trim();
-    
-    if(!phone || !nombre) {
+
+    if (!phone || !nombre) {
         Swal.fire('Atención', 'El nombre y el número son obligatorios.', 'warning');
         return;
     }
 
     const full_whatsapp = prefix + phone;
     let action = currentClientId ? 'save_profile' : 'create_profile';
-    let data = { 
-        action: action, 
-        nombre: nombre, 
-        numero_whatsapp: full_whatsapp, 
-        direccion: direccion, 
-        notas: notas, 
-        id_sede: id_sede 
+    let data = {
+        action: action,
+        nombre: nombre,
+        numero_whatsapp: full_whatsapp,
+        direccion: direccion,
+        notas: notas,
+        id_sede: id_sede
     };
-    
+
     if (currentClientId) {
         data.id = currentClientId;
     }
-    
+
     if (currentClientId === null) {
         $.ajax({
             url: 'back_directorio.php',
             type: 'POST',
             dataType: 'json',
             data: { action: 'check_duplicate', numero_whatsapp: data.numero_whatsapp, id_sede: data.id_sede },
-            success: function(res) {
+            success: function (res) {
                 if (res.status === 'exists') {
                     Swal.fire({
                         title: 'Número ya registrado',
@@ -932,7 +943,7 @@ function executeSaveProfile(data) {
         type: 'POST',
         dataType: 'json',
         data: data,
-        success: function(res) {
+        success: function (res) {
             if (res.status === 'success') {
                 Swal.fire({
                     icon: 'success',

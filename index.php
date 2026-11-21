@@ -146,22 +146,21 @@ if (!$db_online && $is_master_emergency) {
     <link href="assets/css/bootstrap.min.css" rel="stylesheet">
     <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="assets/icons/bootstrap-icons/font/bootstrap-icons.min.css">
-    <!-- Starfi CSS Theme -->
+    <!-- Starfi CSS Theme (Local Zero-CDN) -->
     <link href="assets/css/starfi_theme.css" rel="stylesheet">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
     <style>
         :root {
             --primary-orange: #E85B14;
-            --primary-dark: #0F172A;
-            --bg-light: #F8FAFC;
+            --primary-dark: #37414A;
+            --bg-light: #F4F6F9;
             --border-light: #E2E8F0;
         }
 
         body {
             background-color: var(--bg-light);
-            font-family: 'Inter', sans-serif;
-            color: #1E293B;
+            font-family: 'Gotham', sans-serif;
+            color: #212529;
             min-height: 100vh;
             display: flex;
             flex-direction: column;

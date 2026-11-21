@@ -1,144 +1,270 @@
 <?php
+/**
+ * API Transaccional y Sincronización WABA — STARFI CRM
+ * Autenticación obligatoria mediante api_token de 64 caracteres perteneciente a una sede ACTIVA
+ * en todas sus ramas (cero fallbacks anónimos, cero tokens hardcodeados, cero exposición de errores SQL).
+ */
+
+@ini_set('display_errors', '0');
 date_default_timezone_set('America/Caracas');
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header('Content-Type: application/json; charset=utf-8');
 
+require_once __DIR__ . '/config/database.php';
 
-// Check for remote sync command from Starfi 2.0 decentralized installations
-if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
-    require_once __DIR__ . '/config/database.php';
-    $con = getDbConnection();
-    
-    $id_sede = $_POST['id_sede'] ?? '';
-    $token = trim($_POST['token'] ?? '');
-    $instance_id = trim($_POST['instance_id'] ?? '');
-    $phone_number = preg_replace('/[^0-9]/', '', $_POST['phone_number'] ?? '');
-    $activo = isset($_POST['activo']) ? intval($_POST['activo']) : 1;
-    
-    if (empty($id_sede) && empty($token)) {
-        echo json_encode(['status' => 'error', 'message' => 'Falta id_sede para sincronizar']);
-        exit;
+// Política CORS restringida (solo orígenes explícitos en ALLOWED_CORS_ORIGINS o mismo host)
+$req_origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
+if ($req_origin !== '') {
+    $allowed_raw = isset($env['ALLOWED_CORS_ORIGINS']) ? (string)$env['ALLOWED_CORS_ORIGINS'] : (string)(getenv('ALLOWED_CORS_ORIGINS') ?: '');
+    $allowed_origins = array_filter(array_map('trim', explode(',', $allowed_raw)));
+    $req_host = parse_url($req_origin, PHP_URL_HOST);
+    $srv_host = explode(':', (string)($_SERVER['HTTP_HOST'] ?? ''))[0];
+    if (in_array($req_origin, $allowed_origins, true) || ($req_host && $srv_host && strcasecmp($req_host, $srv_host) === 0)) {
+        header('Access-Control-Allow-Origin: ' . $req_origin);
+        header('Vary: Origin');
+        header('Access-Control-Allow-Methods: POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type, Authorization');
     }
-    
-    $crm_token_esc = $con->real_escape_string($token);
-    $crm_sede_id = 0;
+}
 
-    // 1. Priorizar identificar la sede por su api_token real de 64 caracteres
-    if (!empty($token) && strpos($token, 'EAA') !== 0) {
-        $q_sede_tok = $con->query("SELECT id FROM sedes WHERE api_token = '$crm_token_esc' LIMIT 1");
-        if ($q_sede_tok && $q_sede_tok->num_rows > 0) {
-            $crm_sede_id = intval($q_sede_tok->fetch_assoc()['id']);
-        }
-    }
-
-    // 2. Fallback a mapeo de id_sede únicamente si no se identificó por api_token y la sede existe
-    if ($crm_sede_id <= 0 && !empty($id_sede)) {
-        $getCrmSedeId = function($legacy_id) {
-            if ($legacy_id == 23) { return 24; }
-            return intval($legacy_id) + 2;
-        };
-        $candidate_id = $getCrmSedeId($id_sede);
-        $check_sede_crm = $con->query("SELECT id FROM sedes WHERE id = $candidate_id LIMIT 1");
-        if ($check_sede_crm && $check_sede_crm->num_rows > 0) {
-            $crm_sede_id = $candidate_id;
-        }
-    }
-
-    if ($crm_sede_id <= 0) {
-        echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada en el CRM']);
-        $con->close();
-        exit;
-    }
-
-    // Nunca sobrescribir meta_token con un api_token de 64 caracteres; usar META_GLOBAL_TOKEN
-    $valid_meta_token = (strpos($token, 'EAA') === 0) ? $token : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
-    $crm_meta_token = $con->real_escape_string($valid_meta_token);
-    $crm_instance_id = $con->real_escape_string($instance_id);
-    $crm_phone_number = $con->real_escape_string($phone_number);
-    $crm_estado = ($activo === 1) ? 'ACTIVO' : 'INACTIVO';
-
-    $check_crm = $con->query("SELECT id, id_negocio, meta_app_id, numero_telefono FROM lineas_whatsapp WHERE id_sede = $crm_sede_id LIMIT 1");
-    if ($check_crm && $check_crm->num_rows > 0) {
-        $existing = $check_crm->fetch_assoc();
-        if (!empty($existing['id_negocio']) && !empty($existing['meta_app_id'])) {
-            $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_meta_token', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
-        } else {
-            $q = "UPDATE lineas_whatsapp SET meta_token = '$crm_meta_token', meta_app_id = '$crm_instance_id', numero_telefono = '$crm_phone_number', estado = '$crm_estado' WHERE id_sede = $crm_sede_id";
-        }
-    } else {
-        $q = "INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, estado) VALUES ($crm_sede_id, 'API WSAP AUTO SYNCED', '$crm_phone_number', '$crm_instance_id', '$crm_meta_token', '$crm_estado')";
-    }
-    
-    if ($con->query($q)) {
-        echo json_encode(['status' => 'success', 'message' => 'Sincronizado con CRM correctamente']);
-    } else {
-        echo json_encode(['status' => 'error', 'message' => 'Error al guardar en CRM: ' . $con->error]);
-    }
-    $con->close();
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+    http_response_code(204);
     exit;
 }
 
-// Endpoint para que Starfi 2.0 (o sistemas externos) auto-completen sus credenciales leyendo desde el CRM
-if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
-    require_once __DIR__ . '/config/database.php';
-    $con = getDbConnection();
-    
-    $token = $_POST['token'] ?? '';
-    if (empty($token)) {
-        echo json_encode(['status' => 'error', 'message' => 'Token no proporcionado']);
+function starfi_api_log_error($msg) {
+    $log_dir = __DIR__ . '/logs';
+    if (!is_dir($log_dir)) {
+        @mkdir($log_dir, 0755, true);
+    }
+    @file_put_contents(
+        $log_dir . '/logs_api_notificaciones.log',
+        '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL,
+        FILE_APPEND
+    );
+}
+
+function starfi_extract_bearer_or_token(array $json_body = []) {
+    $auth_hdr = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if ($auth_hdr === '' && function_exists('apache_request_headers')) {
+        $hdrs = apache_request_headers();
+        if (is_array($hdrs)) {
+            foreach ($hdrs as $hk => $hv) {
+                if (strcasecmp($hk, 'Authorization') === 0) {
+                    $auth_hdr = (string)$hv;
+                    break;
+                }
+            }
+        }
+    }
+    if (preg_match('/^\s*Bearer\s+([a-f0-9]{64})\s*$/i', $auth_hdr, $m)) {
+        return strtolower($m[1]);
+    }
+
+    $candidates = [
+        $_POST['api_token'] ?? '',
+        $_POST['verify_token'] ?? '',
+        $_POST['token_tienda'] ?? '',
+        $_POST['api_key'] ?? '',
+        $_POST['token'] ?? '',
+        $json_body['api_token'] ?? '',
+        $json_body['verify_token'] ?? '',
+        $json_body['token_tienda'] ?? '',
+        $json_body['api_key'] ?? '',
+        $json_body['token'] ?? '',
+    ];
+    foreach ($candidates as $cand) {
+        $t = strtolower(trim((string)$cand));
+        if (preg_match('/^[a-f0-9]{64}$/', $t)) {
+            return $t;
+        }
+    }
+    return '';
+}
+
+$raw_input = file_get_contents('php://input');
+$raw_json = json_decode((string)$raw_input, true);
+if (!is_array($raw_json)) {
+    $raw_json = [];
+}
+foreach ($raw_json as $k => $v) {
+    if (!isset($_POST[$k])) {
+        $_POST[$k] = $v;
+    }
+}
+
+$api_token_validado = starfi_extract_bearer_or_token($raw_json);
+
+// =========================================================================
+// RAMA 1: SINCRONIZACIÓN REMOTA DE LÍNEA (accion = sync_linea)
+// =========================================================================
+if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
+    if ($api_token_validado === '') {
+        http_response_code(401);
+        echo json_encode(['status' => 'error', 'message' => 'No autorizado: se requiere un api_token válido de 64 caracteres.']);
         exit;
     }
-    
+
+    $con = getDbConnection();
+    if (!$con) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Error interno de conexión.']);
+        exit;
+    }
+
+    $stmt_sede = $con->prepare("SELECT id, estado FROM sedes WHERE api_token = ? LIMIT 1");
+    if (!$stmt_sede) {
+        $con->close();
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Error interno al validar credenciales.']);
+        exit;
+    }
+    $stmt_sede->bind_param("s", $api_token_validado);
+    $stmt_sede->execute();
+    $res_sede = $stmt_sede->get_result();
+    $row_sede = $res_sede ? $res_sede->fetch_assoc() : null;
+    $stmt_sede->close();
+
+    if (!$row_sede) {
+        $con->close();
+        http_response_code(401);
+        echo json_encode(['status' => 'error', 'message' => 'Token inválido o no reconocido.']);
+        exit;
+    }
+    if (strtoupper(trim((string)($row_sede['estado'] ?? ''))) !== 'ACTIVO') {
+        $con->close();
+        http_response_code(403);
+        echo json_encode(['status' => 'error', 'message' => 'La sede asociada al token se encuentra pausada o inactiva.']);
+        exit;
+    }
+
+    $crm_sede_id = intval($row_sede['id']);
+    $instance_id = trim((string)($_POST['instance_id'] ?? ''));
+    $phone_number = preg_replace('/[^0-9]/', '', (string)($_POST['phone_number'] ?? ''));
+    $activo = isset($_POST['activo']) ? intval($_POST['activo']) : 1;
+    $crm_estado = ($activo === 1) ? 'ACTIVO' : 'INACTIVO';
+
+    $meta_token_param = trim((string)($_POST['meta_token'] ?? ''));
+    $raw_tok_post = trim((string)($_POST['token'] ?? ''));
+    if ($meta_token_param !== '' && strpos($meta_token_param, 'EAA') === 0) {
+        $valid_meta_token = $meta_token_param;
+    } elseif ($raw_tok_post !== '' && strpos($raw_tok_post, 'EAA') === 0) {
+        $valid_meta_token = $raw_tok_post;
+    } else {
+        $valid_meta_token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
+    }
+
+    $stmt_chk = $con->prepare("SELECT id, id_negocio, meta_app_id FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1");
+    $stmt_chk->bind_param("i", $crm_sede_id);
+    $stmt_chk->execute();
+    $existing = $stmt_chk->get_result()->fetch_assoc();
+    $stmt_chk->close();
+
+    $ok_sync = false;
+    if ($existing) {
+        if (!empty($existing['id_negocio']) && !empty($existing['meta_app_id'])) {
+            $stmt_up = $con->prepare("UPDATE lineas_whatsapp SET meta_token = ?, estado = ? WHERE id_sede = ?");
+            $stmt_up->bind_param("ssi", $valid_meta_token, $crm_estado, $crm_sede_id);
+        } else {
+            $stmt_up = $con->prepare("UPDATE lineas_whatsapp SET meta_token = ?, meta_app_id = ?, numero_telefono = ?, estado = ? WHERE id_sede = ?");
+            $stmt_up->bind_param("ssssi", $valid_meta_token, $instance_id, $phone_number, $crm_estado, $crm_sede_id);
+        }
+        $ok_sync = $stmt_up->execute();
+        if (!$ok_sync) {
+            starfi_api_log_error('sync_linea UPDATE error sede=' . $crm_sede_id . ': ' . $stmt_up->error);
+        }
+        $stmt_up->close();
+    } else {
+        $stmt_in = $con->prepare("INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, estado) VALUES (?, 'API WSAP AUTO SYNCED', ?, ?, ?, ?)");
+        $stmt_in->bind_param("issss", $crm_sede_id, $phone_number, $instance_id, $valid_meta_token, $crm_estado);
+        $ok_sync = $stmt_in->execute();
+        if (!$ok_sync) {
+            starfi_api_log_error('sync_linea INSERT error sede=' . $crm_sede_id . ': ' . $stmt_in->error);
+        }
+        $stmt_in->close();
+    }
+
+    $con->close();
+    if ($ok_sync) {
+        echo json_encode(['status' => 'success', 'message' => 'Sincronizado con CRM correctamente.']);
+    } else {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'No se pudo completar la sincronización de línea en el CRM.']);
+    }
+    exit;
+}
+
+// =========================================================================
+// RAMA 2: CONSULTA DE CREDENCIALES DE LÍNEA (accion = get_info)
+// =========================================================================
+if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
+    if ($api_token_validado === '') {
+        http_response_code(401);
+        echo json_encode(['status' => 'error', 'message' => 'No autorizado: se requiere un api_token válido de 64 caracteres.']);
+        exit;
+    }
+
+    $con = getDbConnection();
+    if (!$con) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Error interno de conexión.']);
+        exit;
+    }
+
     $stmt = $con->prepare("
-        SELECT l.meta_app_id as instance_id, l.numero_telefono as phone_number, s.nombre_sede, l.estado
+        SELECT l.meta_app_id AS instance_id, l.numero_telefono AS phone_number, s.nombre_sede, s.estado AS estado_sede, l.estado
         FROM sedes s
         LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id
-        WHERE s.api_token = ? 
+        WHERE s.api_token = ?
         LIMIT 1
     ");
     if ($stmt) {
-        $stmt->bind_param("s", $token);
+        $stmt->bind_param("s", $api_token_validado);
         $stmt->execute();
         $res = $stmt->get_result();
-        if ($res && $res->num_rows > 0) {
-            $data = $res->fetch_assoc();
-            echo json_encode([
-                'status' => 'success', 
-                'data' => [
-                    'instance_id' => $data['instance_id'] ?? '',
-                    'phone_number' => $data['phone_number'] ?? '',
-                    'nombre_sede' => $data['nombre_sede'],
-                    'estado_linea' => $data['estado'] ?? 'SIN_LINEA'
-                ]
-            ]);
+        if ($res && ($data = $res->fetch_assoc())) {
+            if (strtoupper(trim((string)($data['estado_sede'] ?? ''))) !== 'ACTIVO') {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'La sede asociada al token se encuentra inactiva.']);
+            } else {
+                echo json_encode([
+                    'status' => 'success',
+                    'data' => [
+                        'instance_id' => $data['instance_id'] ?? '',
+                        'phone_number' => $data['phone_number'] ?? '',
+                        'nombre_sede' => $data['nombre_sede'],
+                        'estado_linea' => $data['estado'] ?? 'SIN_LINEA'
+                    ]
+                ]);
+            }
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'Token inválido o Sede no encontrada']);
+            http_response_code(401);
+            echo json_encode(['status' => 'error', 'message' => 'Token inválido o Sede no encontrada.']);
         }
         $stmt->close();
     } else {
-        echo json_encode(['status' => 'error', 'message' => 'Error de base de datos']);
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Error de base de datos.']);
     }
     $con->close();
     exit;
 }
 
-// Recibir datos POST o JSON
-$raw_json = json_decode(file_get_contents('php://input'), true);
-if ($raw_json && is_array($raw_json)) {
-    foreach ($raw_json as $k => $v) {
-        if (!isset($_POST[$k])) {
-            $_POST[$k] = $v;
-        }
-    }
+// =========================================================================
+// RAMA 3: DESPACHO TRANSACCIONAL DE PLANTILLAS OFICIALES META
+// =========================================================================
+if ($api_token_validado === '') {
+    http_response_code(401);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'No autorizado: toda solicitud de notificación requiere un api_token válido de 64 caracteres.'
+    ]);
+    exit;
+}
+
+if (!empty($raw_json)) {
     if (empty($_POST['telefono'])) {
         $_POST['telefono'] = $raw_json['telefono_destino'] ?? $raw_json['telefono'] ?? '';
     }
-    if (empty($_POST['verify_token'])) {
-        $_POST['verify_token'] = $raw_json['verify_token'] ?? $raw_json['token_tienda'] ?? $raw_json['api_key'] ?? $raw_json['token'] ?? '';
-    }
-    
-    // Mapear el arreglo variables de NotificacionWhatsApp al formato esperado
     if (isset($raw_json['variables']) && is_array($raw_json['variables'])) {
         $vars = $raw_json['variables'];
         if (!isset($_POST['nombre_cliente'])) $_POST['nombre_cliente'] = $vars[0] ?? 'Cliente';
@@ -148,244 +274,142 @@ if ($raw_json && is_array($raw_json)) {
         if (!isset($_POST['correlativo'])) $_POST['correlativo'] = $vars[5] ?? '';
         if (!isset($_POST['telefono_asesor'])) $_POST['telefono_asesor'] = $vars[6] ?? '0000000000';
     }
-    
     if (isset($raw_json['template_name'])) {
         $_POST['template_name'] = $raw_json['template_name'];
     } elseif (isset($raw_json['plantilla'])) {
         $_POST['template_name'] = $raw_json['plantilla'];
     }
-    
     if (isset($raw_json['template_params'])) {
         $_POST['template_params'] = $raw_json['template_params'];
     }
 }
 
-$telefono = $_POST['telefono'] ?? '';
-$telefono_asesor = $_POST['telefono_asesor'] ?? '0000000000';
-$nombre_cliente = $_POST['nombre_cliente'] ?? 'Cliente';
-$monto_total = $_POST['monto_total'] ?? '0.00';
-$asesor_ventas = $_POST['asesor_ventas'] ?? 'Nuestro Asesor';
-$correlativo = $_POST['correlativo'] ?? '';
-$nombre_empresa = $_POST['nombre_empresa'] ?? 'Nuestra Empresa';
-$id_sede = $_POST['id_sede'] ?? null;
-$verify_token = $_POST['verify_token'] ?? $_POST['token_tienda'] ?? $_POST['token'] ?? $_POST['api_key'] ?? '';
-$meta_token_val = $_POST['meta_token_val'] ?? '';
+$telefono = (string)($_POST['telefono'] ?? '');
+$telefono_asesor = (string)($_POST['telefono_asesor'] ?? '0000000000');
+$nombre_cliente = (string)($_POST['nombre_cliente'] ?? 'Cliente');
+$monto_total = (string)($_POST['monto_total'] ?? '0.00');
+$asesor_ventas = (string)($_POST['asesor_ventas'] ?? 'Nuestro Asesor');
+$correlativo = (string)($_POST['correlativo'] ?? '');
+$nombre_empresa = (string)($_POST['nombre_empresa'] ?? 'Nuestra Empresa');
 $fecha_compra = date('Y-m-d');
 $hora_actual = date('H:i:s');
-$signo = $_POST['moneda'] ?? 'USD';
+$signo = (string)($_POST['moneda'] ?? 'USD');
 
-if(empty($telefono)) {
+if ($telefono === '') {
+    http_response_code(400);
     echo json_encode(['status' => 'error', 'message' => 'No phone number provided']);
     exit;
 }
 
-// Limpiar el teléfono para la API
 $telefono = preg_replace('/[^0-9]/', '', $telefono);
-
-// --- CAPA DE FORMATEO (ASUMIENDO VENEZUELA POR DEFECTO) ---
-if (strlen($telefono) == 11 && strpos($telefono, '0') === 0) {
+if (strlen($telefono) === 11 && strpos($telefono, '0') === 0) {
     $telefono = substr($telefono, 1);
-} elseif (strlen($telefono) == 13 && strpos($telefono, '580') === 0) {
+} elseif (strlen($telefono) === 13 && strpos($telefono, '580') === 0) {
     $telefono = '58' . substr($telefono, 3);
 }
-
-if (strlen($telefono) == 10) {
+if (strlen($telefono) === 10) {
     $telefono = '58' . $telefono;
 }
 
 if (strlen($telefono) !== 12 || !preg_match('/^58(414|424|412|416|426|2[0-9]{2})[0-9]{7}$/', $telefono)) {
+    http_response_code(400);
     echo json_encode([
-        'status' => 'error', 
-        'message' => "El número de teléfono provisto es inválido. El sistema asume formato venezolano y requiere un formato celular/local válido. Número procesado: $telefono."
+        'status' => 'error',
+        'message' => 'El número de teléfono provisto es inválido para el formato requerido.'
     ]);
     exit;
 }
 
-// Configuración de la base de datos de CRM
-require_once __DIR__ . '/config/database.php';
 $con = getDbConnection();
+if (!$con) {
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Error interno de conexión.']);
+    exit;
+}
 
-$telefonoID = '';
-$token = '';
-$id_linea = 0;
-$id_empresa = 1;
-$crm_id_sede = null;
+// Autenticación exclusiva por api_token de sede activa (cero fallbacks por id_sede, nombre_empresa o primera línea)
+$stmt_token = $con->prepare("
+    SELECT l.id AS id_linea, l.meta_app_id, l.meta_token, l.estado AS estado_linea,
+           s.estado AS estado_sede, s.id_empresa, s.id AS crm_id_sede, s.nombre_sede
+    FROM sedes s
+    LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id
+    WHERE s.api_token = ?
+    ORDER BY (l.estado = 'ACTIVO') DESC, l.id ASC
+    LIMIT 1
+");
+if (!$stmt_token) {
+    $con->close();
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Error interno al autenticar la sede.']);
+    exit;
+}
 
-// Bloqueo explícito de sedes pausadas (MADETEK y MADEPEG)
-$empresa_upper = strtoupper(trim($nombre_empresa));
-$tokens_pausados = [
-    'cdaeb739d625bb8321f3054e596e4ae585241023409fa84c8249b507c9253550', // MADETEK CRM
-    '876350aeb378b4429dd158b031564cc0fdaa845adda5b70c6be8092b09128fff', // MADETEK Legacy
-    'adfe3e0937e268c21014a374cb7613fb2d2a61b4205ba85a8f5f304eceda0e8b'  // MADEPEG Legacy
-];
-if (
-    strpos($empresa_upper, 'MADETEK') !== false ||
-    strpos($empresa_upper, 'MADEPEG') !== false ||
-    (!empty($verify_token) && in_array(strtolower(trim($verify_token)), $tokens_pausados, true))
-) {
+$stmt_token->bind_param("s", $api_token_validado);
+$stmt_token->execute();
+$res_tok = $stmt_token->get_result();
+$row_auth = $res_tok ? $res_tok->fetch_assoc() : null;
+$stmt_token->close();
+
+if (!$row_auth) {
+    $con->close();
+    http_response_code(401);
+    echo json_encode(['status' => 'error', 'message' => 'No autorizado: api_token inválido.']);
+    exit;
+}
+
+if (strtoupper(trim((string)($row_auth['estado_sede'] ?? ''))) !== 'ACTIVO') {
+    $con->close();
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Envío denegado: la sede autenticada se encuentra pausada o inactiva.']);
+    exit;
+}
+
+$telefonoID = trim((string)($row_auth['meta_app_id'] ?? ''));
+$token = trim((string)($row_auth['meta_token'] ?? ''));
+if ($token === '' && defined('META_GLOBAL_TOKEN') && META_GLOBAL_TOKEN !== '') {
+    $token = META_GLOBAL_TOKEN;
+}
+$id_linea = intval($row_auth['id_linea'] ?? 0);
+$id_empresa = intval($row_auth['id_empresa'] ?? 1);
+$crm_id_sede = intval($row_auth['crm_id_sede'] ?? 0);
+
+if (strtoupper(trim((string)($row_auth['estado_linea'] ?? ''))) !== 'ACTIVO' || $token === '' || $telefonoID === '') {
+    $con->close();
+    http_response_code(403);
     echo json_encode([
         'status' => 'error',
-        'message' => 'Envío denegado: La sede (MADETEK / MADEPEG) se encuentra pausada y deshabilitada para enviar mensajes.'
-    ]);
-    $con->close();
-    exit;
-}
-
-$sede_inactiva_detectada = false;
-
-// 1. Intentar buscar por token de verificación único (api_token de sedes)
-if (!empty($verify_token)) {
-    $stmt_token = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, s.estado as estado_sede, s.id_empresa, s.id as crm_id_sede FROM sedes s LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id WHERE s.api_token = ? LIMIT 1");
-    if ($stmt_token) {
-        $stmt_token->bind_param("s", $verify_token);
-        $stmt_token->execute();
-        $q_linea = $stmt_token->get_result();
-        if ($q_linea && $q_linea->num_rows > 0) {
-            $row = $q_linea->fetch_assoc();
-            if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
-                $sede_inactiva_detectada = true;
-            } else {
-                $telefonoID = $row['meta_app_id'];
-                $token = $row['meta_token'];
-                $id_linea = $row['id_linea'];
-                $id_empresa = $row['id_empresa'];
-                $crm_id_sede = $row['crm_id_sede'];
-            }
-        }
-        $stmt_token->close();
-    }
-}
-
-// 2. Intentar coincidencia por nombre explícito de empresa/sede si se envió en los datos
-if (empty($token) && !$sede_inactiva_detectada && !empty($nombre_empresa) && $nombre_empresa !== 'Nuestra Empresa') {
-    $clean_nombre = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nombre_empresa));
-    $q_all = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, s.estado as estado_sede, s.id_empresa, s.nombre_sede, s.id as crm_id_sede FROM sedes s LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id");
-    if ($q_all && $q_all->num_rows > 0) {
-        while ($row = $q_all->fetch_assoc()) {
-            $clean_db = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $row['nombre_sede']));
-            if (!empty($clean_db) && (stripos($clean_nombre, $clean_db) !== false || stripos($clean_db, $clean_nombre) !== false)) {
-                if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
-                    $sede_inactiva_detectada = true;
-                } else {
-                    $telefonoID = $row['meta_app_id'];
-                    $token = $row['meta_token'];
-                    $id_linea = $row['id_linea'];
-                    $id_empresa = $row['id_empresa'];
-                    $crm_id_sede = $row['crm_id_sede'];
-                }
-                break;
-            }
-        }
-    }
-}
-
-// 3. Intentar buscar por ID de Sede preciso
-if (empty($token) && !$sede_inactiva_detectada && !empty($id_sede)) {
-    $raw_id = intval($id_sede);
-    $target_crm_id = ($raw_id == 23) ? 24 : ($raw_id > 23 ? $raw_id : $raw_id + 2);
-    $q_linea = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, l.estado as estado_linea, COALESCE(s.estado, 'ACTIVO') as estado_sede, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE (l.id_sede = $target_crm_id OR l.id_sede = $raw_id OR s.id = $target_crm_id OR s.id = $raw_id) LIMIT 1");
-    if ($q_linea && $q_linea->num_rows > 0) {
-        $row = $q_linea->fetch_assoc();
-        if ($row['estado_sede'] !== 'ACTIVO' || $row['estado_linea'] !== 'ACTIVO') {
-            $sede_inactiva_detectada = true;
-        } else {
-            $telefonoID = $row['meta_app_id'];
-            $token = $row['meta_token'];
-            $id_linea = $row['id_linea'];
-            $id_empresa = $row['id_empresa'];
-            $crm_id_sede = $row['crm_id_sede'];
-        }
-    }
-}
-
-// Si la sede fue identificada pero está INACTIVA/PAUSADA, rechazar inmediatamente sin usar fallback
-if ($sede_inactiva_detectada) {
-    echo json_encode([
-        'status' => 'error',
-        'message' => 'La sede solicitada se encuentra pausada o inactiva para el envío de mensajes.'
-    ]);
-    $con->close();
-    exit;
-}
-
-// 4. Intentar buscar por token de Meta (si se envió)
-if (empty($token) && !empty($meta_token_val)) {
-    $stmt_meta = $con->prepare("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.meta_token = ? AND l.estado = 'ACTIVO' AND COALESCE(s.estado, 'ACTIVO') = 'ACTIVO' LIMIT 1");
-    if ($stmt_meta) {
-        $stmt_meta->bind_param("s", $meta_token_val);
-        $stmt_meta->execute();
-        $q_linea = $stmt_meta->get_result();
-        if ($q_linea && $q_linea->num_rows > 0) {
-            $row = $q_linea->fetch_assoc();
-            $telefonoID = $row['meta_app_id'];
-            $token = $row['meta_token'];
-            $id_linea = $row['id_linea'];
-            $id_empresa = $row['id_empresa'];
-            $crm_id_sede = $row['crm_id_sede'];
-        }
-        $stmt_meta->close();
-    }
-}
-
-// 5. Fallback a la primera línea activa del CRM solo si no se especificó sede/empresa alguna
-if (empty($token) && empty($verify_token) && empty($id_sede) && (empty($nombre_empresa) || $nombre_empresa === 'Nuestra Empresa')) {
-    $q_active = $con->query("SELECT l.id as id_linea, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) as id_empresa, l.id_sede as crm_id_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.estado = 'ACTIVO' AND COALESCE(s.estado, 'ACTIVO') = 'ACTIVO' ORDER BY l.id ASC LIMIT 1");
-    if ($q_active && $q_active->num_rows > 0) {
-        $row = $q_active->fetch_assoc();
-        $telefonoID = $row['meta_app_id'];
-        $token = $row['meta_token'];
-        $id_linea = $row['id_linea'];
-        $id_empresa = $row['id_empresa'];
-        $crm_id_sede = $row['crm_id_sede'];
-    }
-}
-
-// Si la Sede no posee una línea de WhatsApp activa configurada, DENEGAR el envío
-if (empty($token) || empty($telefonoID)) {
-    echo json_encode([
-        'status' => 'error', 
-        'message' => 'Línea de WhatsApp inactiva o no configurada para la sede solicitada.'
+        'message' => 'Línea de WhatsApp inactiva o no configurada para la sede autenticada.'
     ]);
     exit;
 }
 
-// Obtener plantilla configurada para la sede y módulo VENTAS
-$template_name = $_POST['template_name'] ?? '';
-
-if (empty($template_name) && isset($crm_id_sede)) {
-    $legacy_id = ($crm_id_sede == 24) ? 23 : ($crm_id_sede - 2);
-    $con_ventas = getExternalDbConnection('ventas');
+$template_name = trim((string)($_POST['template_name'] ?? ''));
+if ($template_name === '' && $crm_id_sede > 0) {
+    $legacy_id = ($crm_id_sede === 24) ? 23 : ($crm_id_sede - 2);
+    $con_ventas = @getExternalDbConnection('ventas');
     if ($con_ventas) {
-        $q_t = mysqli_query($con_ventas, "SELECT plantilla FROM config_api_wsap_plantillas WHERE id_sede = $legacy_id AND modulo = 'VENTAS' LIMIT 1");
-        if ($q_t && $row_t = mysqli_fetch_assoc($q_t)) {
-            if (!empty($row_t['plantilla'])) {
-                $template_name = $row_t['plantilla'];
+        $stmt_tpl = $con_ventas->prepare("SELECT plantilla FROM config_api_wsap_plantillas WHERE id_sede = ? AND modulo = 'VENTAS' LIMIT 1");
+        if ($stmt_tpl) {
+            $stmt_tpl->bind_param("i", $legacy_id);
+            $stmt_tpl->execute();
+            $res_tpl = $stmt_tpl->get_result();
+            if ($res_tpl && ($row_t = $res_tpl->fetch_assoc()) && !empty($row_t['plantilla'])) {
+                $template_name = (string)$row_t['plantilla'];
             }
+            $stmt_tpl->close();
         }
-        
-        // Si la sede actual no tiene plantilla configurada, intentar usar la de la sede de la línea activa de WhatsApp
-        if (empty($template_name) && isset($row_active['crm_id_sede'])) {
-            $active_legacy_id = ($row_active['crm_id_sede'] == 23) ? 23 : ($row_active['crm_id_sede'] - 2);
-            $q_t_active = mysqli_query($con_ventas, "SELECT plantilla FROM config_api_wsap_plantillas WHERE id_sede = $active_legacy_id AND modulo = 'VENTAS' LIMIT 1");
-            if ($q_t_active && $row_t_active = mysqli_fetch_assoc($q_t_active)) {
-                if (!empty($row_t_active['plantilla'])) {
-                    $template_name = $row_t_active['plantilla'];
-                }
-            }
-        }
-        
         mysqli_close($con_ventas);
     }
 }
 
-if (empty($template_name)) {
+if ($template_name === '') {
     $template_name = 'send_confirmacion_compra_cn_sn_btn';
 }
 
-$url = 'https://graph.facebook.com/v23.0/'.$telefonoID.'/messages';
-$header = array("Authorization: Bearer " . $token, "Content-Type: application/json");
+$api_ver = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+$url = 'https://graph.facebook.com/' . $api_ver . '/' . $telefonoID . '/messages';
+$header = ["Authorization: Bearer " . $token, "Content-Type: application/json"];
 
-// CONFIGURACION DEL MENSAJE (Plantilla dinámica)
 if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
     $params = $_POST['template_params'];
 } elseif (isset($_POST['template_params']) && is_string($_POST['template_params'])) {
@@ -393,7 +417,6 @@ if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
 } elseif (isset($raw_json['variables']) && is_array($raw_json['variables']) && !empty($raw_json['variables'])) {
     $params = $raw_json['variables'];
 } else {
-    // Fallback legacy
     $params = [
         $nombre_cliente,
         $fecha_compra,
@@ -405,126 +428,136 @@ if (isset($_POST['template_params']) && is_array($_POST['template_params'])) {
     ];
 }
 
-// CONSTRUCCION INTELIGENTE DE COMPONENTES (Header Documento / Imagen / Video + Body)
 $components = [];
-
-// 1. Manejo del encabezado multimedia / documento (Header)
-$document_url = $_POST['documento_url'] ?? $_POST['document_url'] ?? $_POST['url_documento'] ?? ($raw_json['documento_url'] ?? $raw_json['document_url'] ?? '');
-$media_id = $_POST['media_id'] ?? ($raw_json['media_id'] ?? '');
-$filename = $_POST['archivo_nombre'] ?? $_POST['filename'] ?? ($raw_json['archivo_nombre'] ?? 'Documento.pdf');
+$document_url = (string)($_POST['documento_url'] ?? $_POST['document_url'] ?? $_POST['url_documento'] ?? ($raw_json['documento_url'] ?? $raw_json['document_url'] ?? ''));
+$media_id = (string)($_POST['media_id'] ?? ($raw_json['media_id'] ?? ''));
+$filename = basename((string)($_POST['archivo_nombre'] ?? $_POST['filename'] ?? ($raw_json['archivo_nombre'] ?? 'Documento.pdf')));
 $upload_mime = 'application/pdf';
 $url_archivo_local = '';
 
-// Si viene documento en base64 (REST JSON clients)
-$doc_b64 = $_POST['documento_base64'] ?? $raw_json['documento_base64'] ?? ($raw_json['pdf_base64'] ?? '');
-if (empty($media_id) && empty($document_url) && !empty($doc_b64)) {
-    $decoded_bin = base64_decode($doc_b64);
-    if ($decoded_bin !== false && strlen($decoded_bin) > 0) {
-        $tmp_b64_file = tempnam(sys_get_temp_dir(), 'wsap_doc_');
-        file_put_contents($tmp_b64_file, $decoded_bin);
-        
-        // Guardar copia local en uploads/documentos para la bandeja del CRM
-        $save_dir = __DIR__ . '/uploads/documentos';
-        if (!is_dir($save_dir)) @mkdir($save_dir, 0777, true);
-        $local_name = time() . '_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $filename);
-        @copy($tmp_b64_file, $save_dir . '/' . $local_name);
-        $url_archivo_local = 'uploads/documentos/' . $local_name;
+$allowed_api_mimes = [
+    'application/pdf' => 'pdf',
+    'image/png'       => 'png',
+    'image/jpeg'      => 'jpg',
+    'image/webp'      => 'webp',
+    'video/mp4'       => 'mp4',
+];
 
-        // Subir a Meta Graph API /media para obtener el media_id oficial
-        $media_url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/media';
-        $ch_media = curl_init($media_url);
-        $cfile = new CURLFile($tmp_b64_file, 'application/pdf', $filename);
-        curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch_media, CURLOPT_POST, true);
-        curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
-        curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
-            'messaging_product' => 'whatsapp',
-            'type' => 'application/pdf',
-            'file' => $cfile
-        ]);
-        $res_media = curl_exec($ch_media);
-        curl_close($ch_media);
-        @unlink($tmp_b64_file);
+// Adjunto vía Base64 validado con finfo y límite de 5 MB
+$doc_b64 = (string)($_POST['documento_base64'] ?? ($raw_json['documento_base64'] ?? ($raw_json['pdf_base64'] ?? '')));
+if ($media_id === '' && $document_url === '' && $doc_b64 !== '') {
+    $decoded_bin = base64_decode($doc_b64, true);
+    if ($decoded_bin !== false && strlen($decoded_bin) > 0 && strlen($decoded_bin) <= 5 * 1024 * 1024) {
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $detected_mime = (string)$finfo->buffer($decoded_bin);
+        if (isset($allowed_api_mimes[$detected_mime])) {
+            $upload_mime = $detected_mime;
+            $safe_ext = $allowed_api_mimes[$detected_mime];
+            $tmp_b64_file = tempnam(sys_get_temp_dir(), 'wsap_doc_');
+            file_put_contents($tmp_b64_file, $decoded_bin);
 
-        $json_media = json_decode($res_media, true);
-        if (!empty($json_media['id'])) {
-            $media_id = $json_media['id'];
+            $save_dir = __DIR__ . '/uploads/documentos';
+            if (!is_dir($save_dir)) {
+                @mkdir($save_dir, 0755, true);
+            }
+            $base_stem = preg_replace('/[^a-zA-Z0-9_-]/', '_', pathinfo($filename, PATHINFO_FILENAME)) ?: 'documento';
+            $local_name = time() . '_' . bin2hex(random_bytes(3)) . '_' . substr($base_stem, 0, 60) . '.' . $safe_ext;
+            @copy($tmp_b64_file, $save_dir . '/' . $local_name);
+            $url_archivo_local = 'uploads/documentos/' . $local_name;
+
+            $media_url = 'https://graph.facebook.com/' . $api_ver . '/' . $telefonoID . '/media';
+            $ch_media = curl_init($media_url);
+            $cfile = new CURLFile($tmp_b64_file, $upload_mime, $base_stem . '.' . $safe_ext);
+            curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch_media, CURLOPT_POST, true);
+            curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
+            curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
+                'messaging_product' => 'whatsapp',
+                'type' => $upload_mime,
+                'file' => $cfile
+            ]);
+            $res_media = curl_exec($ch_media);
+            curl_close($ch_media);
+            @unlink($tmp_b64_file);
+
+            $json_media = json_decode((string)$res_media, true);
+            if (!empty($json_media['id'])) {
+                $media_id = (string)$json_media['id'];
+            }
         }
     }
 }
 
-// Si se recibe un archivo adjunto vía $_FILES (multipart/form-data)
+// Adjunto vía $_FILES validado con finfo y límite de 5 MB
 $file_key = isset($_FILES['documento']) ? 'documento' : (isset($_FILES['file']) ? 'file' : (isset($_FILES['archivo']) ? 'archivo' : null));
-if (empty($media_id) && empty($document_url) && $file_key && $_FILES[$file_key]['error'] === UPLOAD_ERR_OK) {
-    $upload_name = !empty($_FILES[$file_key]['name']) ? $_FILES[$file_key]['name'] : $filename;
-    $upload_mime = !empty($_FILES[$file_key]['type']) ? $_FILES[$file_key]['type'] : 'application/pdf';
-    $upload_path = $_FILES[$file_key]['tmp_name'];
+if ($media_id === '' && $document_url === '' && $file_key && ($_FILES[$file_key]['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+    $upload_path = $_FILES[$file_key]['tmp_name'] ?? '';
+    $upload_size = intval($_FILES[$file_key]['size'] ?? 0);
+    if ($upload_path !== '' && is_uploaded_file($upload_path) && $upload_size > 0 && $upload_size <= 5 * 1024 * 1024) {
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $detected_mime = (string)$finfo->file($upload_path);
+        if (isset($allowed_api_mimes[$detected_mime])) {
+            $upload_mime = $detected_mime;
+            $safe_ext = $allowed_api_mimes[$detected_mime];
+            $raw_up_name = !empty($_FILES[$file_key]['name']) ? basename((string)$_FILES[$file_key]['name']) : $filename;
+            $base_stem = preg_replace('/[^a-zA-Z0-9_-]/', '_', pathinfo($raw_up_name, PATHINFO_FILENAME)) ?: 'documento';
+            $safe_display = $base_stem . '.' . $safe_ext;
 
-    // Guardar copia local en uploads/documentos para la bandeja del CRM
-    $save_dir = __DIR__ . '/uploads/documentos';
-    if (!is_dir($save_dir)) @mkdir($save_dir, 0777, true);
-    $local_name = time() . '_' . preg_replace('/[^a-zA-Z0-9_\.-]/', '_', $upload_name);
-    @copy($upload_path, $save_dir . '/' . $local_name);
-    $url_archivo_local = 'uploads/documentos/' . $local_name;
+            $save_dir = __DIR__ . '/uploads/documentos';
+            if (!is_dir($save_dir)) {
+                @mkdir($save_dir, 0755, true);
+            }
+            $local_name = time() . '_' . bin2hex(random_bytes(3)) . '_' . substr($base_stem, 0, 60) . '.' . $safe_ext;
+            @copy($upload_path, $save_dir . '/' . $local_name);
+            $url_archivo_local = 'uploads/documentos/' . $local_name;
 
-    // Subir a Meta Graph API /media para obtener el media_id oficial
-    $media_url = 'https://graph.facebook.com/v23.0/' . $telefonoID . '/media';
-    $ch_media = curl_init($media_url);
-    $cfile = new CURLFile($upload_path, $upload_mime, $upload_name);
-    curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch_media, CURLOPT_POST, true);
-    curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
-    curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
-        'messaging_product' => 'whatsapp',
-        'type' => $upload_mime,
-        'file' => $cfile
-    ]);
-    $res_media = curl_exec($ch_media);
-    curl_close($ch_media);
+            $media_url = 'https://graph.facebook.com/' . $api_ver . '/' . $telefonoID . '/media';
+            $ch_media = curl_init($media_url);
+            $cfile = new CURLFile($upload_path, $upload_mime, $safe_display);
+            curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch_media, CURLOPT_POST, true);
+            curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
+            curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
+                'messaging_product' => 'whatsapp',
+                'type' => $upload_mime,
+                'file' => $cfile
+            ]);
+            $res_media = curl_exec($ch_media);
+            curl_close($ch_media);
 
-    $json_media = json_decode($res_media, true);
-    if (!empty($json_media['id'])) {
-        $media_id = $json_media['id'];
-        $filename = $upload_name;
+            $json_media = json_decode((string)$res_media, true);
+            if (!empty($json_media['id'])) {
+                $media_id = (string)$json_media['id'];
+                $filename = $safe_display;
+            }
+        }
     }
 }
 
-// Si tenemos media_id o document_url, construir el componente HEADER (soporta DOCUMENT, IMAGE, VIDEO)
-if (!empty($media_id) || !empty($document_url)) {
+if ($media_id !== '' || $document_url !== '') {
     $is_image = (strpos($upload_mime, 'image/') === 0);
     $is_video = (strpos($upload_mime, 'video/') === 0);
 
     if ($is_image) {
-        $img_obj = [];
-        if (!empty($media_id)) $img_obj['id'] = $media_id;
-        else $img_obj['link'] = $document_url;
-        $components[] = [
-            'type' => 'header',
-            'parameters' => [['type' => 'image', 'image' => $img_obj]]
-        ];
+        $img_obj = ($media_id !== '') ? ['id' => $media_id] : ['link' => $document_url];
+        $components[] = ['type' => 'header', 'parameters' => [['type' => 'image', 'image' => $img_obj]]];
     } elseif ($is_video) {
-        $vid_obj = [];
-        if (!empty($media_id)) $vid_obj['id'] = $media_id;
-        else $vid_obj['link'] = $document_url;
-        $components[] = [
-            'type' => 'header',
-            'parameters' => [['type' => 'video', 'video' => $vid_obj]]
-        ];
+        $vid_obj = ($media_id !== '') ? ['id' => $media_id] : ['link' => $document_url];
+        $components[] = ['type' => 'header', 'parameters' => [['type' => 'video', 'video' => $vid_obj]]];
     } else {
         $doc_obj = ['filename' => $filename];
-        if (!empty($media_id)) $doc_obj['id'] = $media_id;
-        else $doc_obj['link'] = $document_url;
-        $components[] = [
-            'type' => 'header',
-            'parameters' => [['type' => 'document', 'document' => $doc_obj]]
-        ];
+        if ($media_id !== '') {
+            $doc_obj['id'] = $media_id;
+        } else {
+            $doc_obj['link'] = $document_url;
+        }
+        $components[] = ['type' => 'header', 'parameters' => [['type' => 'document', 'document' => $doc_obj]]];
     }
 }
 
-// 2. Componente BODY
 $components[] = [
     'type' => 'body',
-    'parameters' => array_map(function($p) {
+    'parameters' => array_map(function ($p) {
         $str = trim((string)$p);
         return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
     }, $params)
@@ -536,39 +569,31 @@ $mensaje_payload = [
     'type' => 'template',
     'template' => [
         'name' => $template_name,
-        'language' => [
-            'code' => 'es'
-        ],
+        'language' => ['code' => 'es'],
         'components' => $components
     ]
 ];
 $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
 
-// -- DEBUG PAYLOAD --
-// Log local de payload desactivado por seguridad (SEC-04)
-// -------------------
-
-// INICIAMOS EL CURL
 $curl = curl_init();
 curl_setopt($curl, CURLOPT_URL, $url);
 curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje);
 curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
 curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
 $raw_exec = curl_exec($curl);
-$estado = json_decode($raw_exec, true);
+$estado = json_decode((string)$raw_exec, true);
 $status_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
 curl_close($curl);
 
-// Auto-Retry on parameter count mismatch (Error code 132000)
 if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['code'] == 132000) {
     $err_data = $estado['error']['error_data']['details'] ?? $estado['error']['message'] ?? '';
-    if (preg_match('/expected number of params \((\d+)\)/i', $err_data, $matches)) {
+    if (preg_match('/expected number of params \((\d+)\)/i', (string)$err_data, $matches)) {
         $expected_count = intval($matches[1]);
         if ($expected_count > 0 && $expected_count < count($params)) {
             $params_sliced = array_slice($params, 0, $expected_count);
             foreach ($mensaje_payload['template']['components'] as &$comp_item) {
                 if ($comp_item['type'] === 'body') {
-                    $comp_item['parameters'] = array_map(function($p) {
+                    $comp_item['parameters'] = array_map(function ($p) {
                         $str = trim((string)$p);
                         return ['type' => 'text', 'text' => ($str !== '' ? $str : 'N/A')];
                     }, $params_sliced);
@@ -576,16 +601,15 @@ if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['
                 }
             }
             unset($comp_item);
-            
+
             $mensaje = json_encode($mensaje_payload, JSON_UNESCAPED_UNICODE);
-            
             $curl = curl_init();
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje);
             curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             $raw_exec = curl_exec($curl);
-            $estado = json_decode($raw_exec, true);
+            $estado = json_decode((string)$raw_exec, true);
             $status_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
             curl_close($curl);
         }
@@ -593,8 +617,7 @@ if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['
 }
 
 $response = [];
-
-if($status_code == 200) {
+if ($status_code == 200) {
     $response['status_envio'] = "[EXITOSO]";
     $status_bd = 'ENVIADO';
 } else {
@@ -602,116 +625,166 @@ if($status_code == 200) {
     $status_bd = 'ERROR';
 }
 
-// Registrar en base de datos
-$telefono_emisor = $telefonoID;   
+$telefono_emisor = $telefonoID;
 $telefono_receptor = $telefono;
 if (isset($_POST['template_name']) || isset($_POST['template_params'])) {
     $contenido = 'Envío dinámico de plantilla: ' . $template_name . '. Params: ' . json_encode($params, JSON_UNESCAPED_UNICODE);
 } else {
-    $contenido = 'Confirmacion de compra, cliente: '.$nombre_cliente.', fecha compra: '.$fecha_compra.', monto total: '.$monto_total.' '.$signo.', asesor de ventas: '.$asesor_ventas.', empresa: '.$nombre_empresa.', correlativo: '.$correlativo.', contacto: '.$telefono_asesor;
+    $contenido = 'Confirmacion de compra, cliente: ' . $nombre_cliente . ', fecha compra: ' . $fecha_compra . ', monto total: ' . $monto_total . ' ' . $signo . ', asesor de ventas: ' . $asesor_ventas . ', empresa: ' . $nombre_empresa . ', correlativo: ' . $correlativo . ', contacto: ' . $telefono_asesor;
 }
 
-$contenido_esc = $con->real_escape_string($contenido);
-$insertar = $con->query("INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status) 
-                         VALUES ('$template_name', '$fecha_compra', '$hora_actual', '$telefono_emisor', '$telefono_receptor', '$contenido_esc', '$status_bd')");
-
-if($insertar) {
-    $response['registro_bd'] = "[EXITOSO]";
-} else {
-    $response['registro_bd'] = "[ERROR]";
+$stmt_notif = $con->prepare("INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+$insertar = false;
+if ($stmt_notif) {
+    $stmt_notif->bind_param("sssssss", $template_name, $fecha_compra, $hora_actual, $telefono_emisor, $telefono_receptor, $contenido, $status_bd);
+    $insertar = $stmt_notif->execute();
+    if (!$insertar) {
+        starfi_api_log_error('notificacion_enviada INSERT error: ' . $stmt_notif->error);
+    }
+    $stmt_notif->close();
 }
+$response['registro_bd'] = $insertar ? "[EXITOSO]" : "[ERROR]";
 
-// Vinculacion con el inbox nativo del CRM (mensajes_y_eventos y conversaciones)
-if($id_linea > 0) {
-    // 1. Buscar o crear cliente
-    $q_cliente = $con->query("SELECT id FROM clientes_contactos WHERE id_empresa = $id_empresa AND numero_whatsapp = '$telefono'");
-    if($q_cliente && $q_cliente->num_rows > 0) {
-        $id_cliente = $q_cliente->fetch_assoc()['id'];
-        $con->query("UPDATE clientes_contactos SET ultimo_contacto = '$fecha_compra $hora_actual' WHERE id = $id_cliente");
-    } else {
-        $nombre_cli_esc = $con->real_escape_string($nombre_cliente);
-        $con->query("INSERT INTO clientes_contactos (id_empresa, numero_whatsapp, nombre, fecha_registro, ultimo_contacto) VALUES ($id_empresa, '$telefono', '$nombre_cli_esc', '$fecha_compra $hora_actual', '$fecha_compra $hora_actual')");
-        $id_cliente = $con->insert_id;
+if ($id_linea > 0) {
+    $ts_now = $fecha_compra . ' ' . $hora_actual;
+    $id_cliente = 0;
+
+    $stmt_cli = $con->prepare("SELECT id FROM clientes_contactos WHERE id_empresa = ? AND numero_whatsapp = ? LIMIT 1");
+    if ($stmt_cli) {
+        $stmt_cli->bind_param("is", $id_empresa, $telefono);
+        $stmt_cli->execute();
+        $rc = $stmt_cli->get_result()->fetch_assoc();
+        $stmt_cli->close();
+        if ($rc) {
+            $id_cliente = intval($rc['id']);
+            $stmt_uc = $con->prepare("UPDATE clientes_contactos SET ultimo_contacto = ? WHERE id = ?");
+            if ($stmt_uc) {
+                $stmt_uc->bind_param("si", $ts_now, $id_cliente);
+                $stmt_uc->execute();
+                $stmt_uc->close();
+            }
+        }
     }
 
-    // 2. Buscar o crear conversación activa (actualizando la id_linea a la sede emisora de la notificación)
-    $q_conv = $con->query("SELECT id FROM conversaciones WHERE id_cliente = $id_cliente AND estado != 'CERRADO' ORDER BY id DESC LIMIT 1");
-    if($q_conv && $q_conv->num_rows > 0) {
-        $id_conversacion = $q_conv->fetch_assoc()['id'];
-        $con->query("UPDATE conversaciones SET id_linea = $id_linea WHERE id = $id_conversacion");
-    } else {
-        $con->query("INSERT INTO conversaciones (id_linea, id_cliente, estado, fecha_inicio) VALUES ($id_linea, $id_cliente, 'RESUELTO', '$fecha_compra $hora_actual')");
-        $id_conversacion = $con->insert_id;
+    if ($id_cliente <= 0) {
+        $stmt_ic = $con->prepare("INSERT INTO clientes_contactos (id_empresa, numero_whatsapp, nombre, fecha_registro, ultimo_contacto) VALUES (?, ?, ?, ?, ?)");
+        if ($stmt_ic) {
+            $stmt_ic->bind_param("issss", $id_empresa, $telefono, $nombre_cliente, $ts_now, $ts_now);
+            $stmt_ic->execute();
+            $id_cliente = intval($stmt_ic->insert_id);
+            $stmt_ic->close();
+        }
     }
 
-    // 3. Insertar mensaje en el chat
-    $id_mensaje_meta = "";
-    if(isset($estado['messages'][0]['id'])) {
-        $id_mensaje_meta = $estado['messages'][0]['id'];
+    // Buscar conversación activa de la MISMA sede/línea para no mezclar historiales entre sedes
+    $id_conversacion = 0;
+    $stmt_cv = $con->prepare("
+        SELECT c.id
+        FROM conversaciones c
+        JOIN lineas_whatsapp l ON c.id_linea = l.id
+        WHERE c.id_cliente = ? AND l.id_sede = ? AND c.estado != 'CERRADO'
+        ORDER BY c.id DESC
+        LIMIT 1
+    ");
+    if ($stmt_cv) {
+        $stmt_cv->bind_param("ii", $id_cliente, $crm_id_sede);
+        $stmt_cv->execute();
+        $rcv = $stmt_cv->get_result()->fetch_assoc();
+        $stmt_cv->close();
+        if ($rcv) {
+            $id_conversacion = intval($rcv['id']);
+            $stmt_upcv = $con->prepare("UPDATE conversaciones SET id_linea = ? WHERE id = ?");
+            if ($stmt_upcv) {
+                $stmt_upcv->bind_param("ii", $id_linea, $id_conversacion);
+                $stmt_upcv->execute();
+                $stmt_upcv->close();
+            }
+        }
     }
-    
-    $contenido_esc = $con->real_escape_string($contenido);
-    
-    $estado_envio = ($status_code == 200 && isset($estado['messages'][0]['id'])) ? 'ENVIADO' : 'FALLIDO';
+
+    if ($id_conversacion <= 0) {
+        $stmt_incv = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, estado, fecha_inicio) VALUES (?, ?, 'RESUELTO', ?)");
+        if ($stmt_incv) {
+            $stmt_incv->bind_param("iis", $id_linea, $id_cliente, $ts_now);
+            $stmt_incv->execute();
+            $id_conversacion = intval($stmt_incv->insert_id);
+            $stmt_incv->close();
+        }
+    }
+
+    $id_mensaje_meta = isset($estado['messages'][0]['id']) ? (string)$estado['messages'][0]['id'] : '';
+    $estado_envio = ($status_code == 200 && $id_mensaje_meta !== '') ? 'ENVIADO' : 'FALLIDO';
     $error_detalle = null;
-    
+
     if ($estado_envio === 'FALLIDO') {
         if (isset($estado['error'])) {
             $code = $estado['error']['code'] ?? '';
             $msg = $estado['error']['message'] ?? '';
             $details = $estado['error']['error_data']['details'] ?? '';
-            
             if ($code == 131047) {
-                $error_detalle = "Ventana de 24 horas excedida (Error Meta 131047). El cliente debe enviar un mensaje primero o utilizar una plantilla aprobada.";
+                $error_detalle = "Ventana de 24 horas excedida (Error Meta 131047).";
             } elseif ($code == 131026) {
-                $error_detalle = "Mensaje no entregable (Error Meta 131026). El número de teléfono no posee WhatsApp activo o fue rechazado.";
+                $error_detalle = "Mensaje no entregable (Error Meta 131026).";
             } elseif ($code == 131049) {
-                $error_detalle = "Mensaje no entregado (Error Meta 131049). Restricción por salud de ecosistema o políticas de Meta.";
+                $error_detalle = "Mensaje no entregado (Error Meta 131049).";
             } elseif ($code == 132000) {
-                $error_detalle = "Incompatibilidad de parámetros en plantilla (Error Meta 132000): " . ($details ? $details : $msg);
+                $error_detalle = "Incompatibilidad de parámetros en plantilla (Error Meta 132000): " . ($details ?: $msg);
             } elseif ($code == 132012) {
-                $error_detalle = "Incompatibilidad de formato en plantilla (Error Meta 132012): El encabezado de la plantilla requiere un documento o medio compatible. " . ($details ? $details : $msg);
+                $error_detalle = "Incompatibilidad de formato en plantilla (Error Meta 132012): " . ($details ?: $msg);
             } elseif ($code == 130472) {
-                $error_detalle = "Restricción de Meta (Error 130472). El número forma parte de una prueba o restricción.";
+                $error_detalle = "Restricción de Meta (Error 130472).";
             } else {
-                $error_detalle = "Rechazado por Meta (Error $code): " . ($details ? $details : $msg);
+                $error_detalle = "Rechazado por Meta (Error $code): " . ($details ?: $msg);
             }
         } else {
             $error_detalle = "Fallo de conexión o error HTTP $status_code con la API de Meta WhatsApp.";
         }
     }
-    
-    $error_det_sql = !empty($error_detalle) ? "'" . $con->real_escape_string($error_detalle) . "'" : "NULL";
 
-    $tipo_msg = (!empty($media_id) || !empty($document_url)) ? 'DOCUMENTO' : 'EVENTO_SISTEMA';
-    $url_archivo_val = !empty($url_archivo_local) ? $url_archivo_local : (!empty($document_url) ? $document_url : '');
-    $url_archivo_sql = !empty($url_archivo_val) ? "'" . $con->real_escape_string($url_archivo_val) . "'" : "NULL";
-    $mime_type_sql = (!empty($media_id) || !empty($document_url)) ? "'" . $con->real_escape_string($upload_mime) . "'" : "NULL";
+    $tipo_msg = ($media_id !== '' || $document_url !== '') ? 'DOCUMENTO' : 'EVENTO_SISTEMA';
+    $url_archivo_val = ($url_archivo_local !== '') ? $url_archivo_local : (($document_url !== '') ? $document_url : null);
+    $mime_val = ($media_id !== '' || $document_url !== '') ? $upload_mime : null;
 
-    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, url_archivo, mime_type, estado_envio, error_detalle, timestamp) 
-                 VALUES ($id_conversacion, '$id_mensaje_meta', '$tipo_msg', 'API_TRANSACCIONAL', '$contenido_esc', $url_archivo_sql, $mime_type_sql, '$estado_envio', $error_det_sql, '$fecha_compra $hora_actual')");
-    $nuevo_msg_id_api = intval($con->insert_id);
-    if ($nuevo_msg_id_api > 0) {
-        $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $nuevo_msg_id_api) WHERE id = " . intval($id_conversacion));
+    $stmt_msg = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, url_archivo, mime_type, estado_envio, error_detalle, timestamp) VALUES (?, ?, ?, 'API_TRANSACCIONAL', ?, ?, ?, ?, ?, ?)");
+    $nuevo_msg_id_api = 0;
+    if ($stmt_msg) {
+        $stmt_msg->bind_param("issssssss", $id_conversacion, $id_mensaje_meta, $tipo_msg, $contenido, $url_archivo_val, $mime_val, $estado_envio, $error_detalle, $ts_now);
+        if ($stmt_msg->execute()) {
+            $nuevo_msg_id_api = intval($stmt_msg->insert_id);
+        }
+        $stmt_msg->close();
     }
 
-    // [COM-02] Sincronizar automáticamente el monto estimado USD en el Embudo Kanban cuando no sea campaña de difusión
-    $tpl_lower = strtolower(trim((string)$template_name));
+    if ($nuevo_msg_id_api > 0) {
+        $stmt_um = $con->prepare("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ?");
+        if ($stmt_um) {
+            $stmt_um->bind_param("ii", $nuevo_msg_id_api, $id_conversacion);
+            $stmt_um->execute();
+            $stmt_um->close();
+        }
+    }
+
+    // [COM-02] Sincronizar monto estimado USD solo cuando monto_estimado_usd <= 0 (nunca sobrescribir COTIZADO / manuales)
+    $tpl_lower = strtolower(trim($template_name));
     if (!in_array($tpl_lower, ['starfi_difusion_directa', 'starfi_csat_survey', 'starfi_notificacion_interna'], true)) {
         require_once __DIR__ . '/core/crm_sprint2_helper.php';
-        $raw_monto_notif = isset($params[2]) ? (string)$params[2] : (string)$monto_total;
+        $raw_monto_notif = isset($params[2]) ? (string)$params[2] : $monto_total;
         $monto_notif_usd = starfi_parse_usd_number($raw_monto_notif);
-        if ($monto_notif_usd > 0 && intval($crm_id_sede ?? 0) > 0 && intval($id_cliente ?? 0) > 0) {
-            $deal_sync_id = starfi_ensure_pipeline_lead($con, intval($crm_id_sede), intval($id_cliente), intval($id_conversacion), null, '', $monto_notif_usd);
+        if ($monto_notif_usd > 0 && $crm_id_sede > 0 && $id_cliente > 0) {
+            $deal_sync_id = starfi_ensure_pipeline_lead($con, $crm_id_sede, $id_cliente, $id_conversacion, null, '', $monto_notif_usd);
             if ($deal_sync_id > 0) {
-                @$con->query("UPDATE pipeline_oportunidades SET monto_estimado_usd = " . number_format($monto_notif_usd, 2, '.', '') . " WHERE id = $deal_sync_id AND (monto_estimado_usd <= 0 OR etapa IN ('NUEVO_LEAD', 'COTIZADO'))");
+                $stmt_pd = $con->prepare("UPDATE pipeline_oportunidades SET monto_estimado_usd = ? WHERE id = ? AND monto_estimado_usd <= 0");
+                if ($stmt_pd) {
+                    $stmt_pd->bind_param("di", $monto_notif_usd, $deal_sync_id);
+                    $stmt_pd->execute();
+                    $stmt_pd->close();
+                }
             }
         }
     }
 }
 
+$con->close();
 $response['meta_response'] = $estado;
 echo json_encode($response);
 ?>
-
-

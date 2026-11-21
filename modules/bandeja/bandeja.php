@@ -19,8 +19,8 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <!-- FontAwesome 6 -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome 6 (Local) -->
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css?v=<?= time() + 3 ?>">
     <!-- Emojis Nativos (Sin dependencias externas) -->
     <style>
@@ -643,7 +643,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
           </div>
           <div class="modal-body p-4 text-center" style="background-color: #F8FAFC; border-radius: 0 0 20px 20px;">
                 <div class="profile-card bg-white p-4 mb-3" style="border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-                    <img id="profPrevImg" src="https://ui-avatars.com/api/?name=Cliente&background=F3F4F6&size=128" alt="Avatar" style="border-radius: 50%; margin-bottom: 15px; width: 100px; height: 100px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); object-fit: cover;">
+                    <img id="profPrevImg" src="<?= htmlspecialchars(starfi_local_avatar_data_uri('Cliente', '#F1F5F9', '#37414A'), ENT_QUOTES, 'UTF-8') ?>" alt="Avatar" style="border-radius: 50%; margin-bottom: 15px; width: 100px; height: 100px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); object-fit: cover;">
                     <div class="input-group mb-2">
                         <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-user text-muted"></i></span>
                         <input type="text" id="profPrevNameInput" class="form-control border-start-0 fw-bold text-center" placeholder="Nombre del Cliente">

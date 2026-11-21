@@ -35,7 +35,7 @@ if ($res_stats) {
     <!-- Bootstrap CSS -->
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <style>
         body { background-color: #f0f2f5; margin: 0; padding: 0; overflow-x: hidden; }
         .app-container { min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
@@ -143,9 +143,9 @@ if ($res_stats) {
     </main>
     </div>
 
-    <!-- Bootstrap & SweetAlert2 -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- Bootstrap & SweetAlert2 (Local) -->
+    <script src="../../assets/js/bootstrap.bundle.min.js"></script>
+    <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script>
     function verError(msg) {
         Swal.fire({

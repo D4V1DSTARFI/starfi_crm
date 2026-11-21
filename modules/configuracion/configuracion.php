@@ -19,14 +19,11 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- Tema Global STARFI -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome Local -->
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
-    <!-- Leaflet CSS for Interactive Map Picker -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet CSS Local for Interactive Map Picker -->
+    <link rel="stylesheet" href="../../assets/vendor/leaflet/leaflet.css" />
     
     <style>
         .config-container {
@@ -599,7 +596,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                         <p class="text-muted small">Esta prueba envía una plantilla real de confirmación de compra usando la API externa configurada en el sistema.</p>
                                     </div>
                                     <div class="card-body p-4">
-                                        <form id="formNotifPrueba">
+                                        <form id="formNotifPrueba" autocomplete="off">
                                             <div class="row g-3">
                                                 <div class="col-md-6">
                                                     <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Teléfono Destino *</label>
@@ -778,7 +775,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <form id="formSede">
+                    <form id="formSede" autocomplete="off">
                         <input type="hidden" id="id_sede" name="id_sede">
                         <div class="row g-3">
                             <div class="col-md-8">
@@ -857,7 +854,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <form id="formAPI">
+                    <form id="formAPI" autocomplete="off">
                         <input type="hidden" id="id_api" name="id_api">
                         
                         <!-- Toggle de Experiencia -->
@@ -1110,7 +1107,7 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <form id="formRespuesta">
+                    <form id="formRespuesta" autocomplete="off">
                         <input type="hidden" id="id_respuesta" name="id_respuesta">
                         <div class="row g-3">
                             <div class="col-md-12">
@@ -1200,8 +1197,8 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
-    <!-- Leaflet JS for Interactive Map -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet JS Local for Interactive Map -->
+    <script src="../../assets/vendor/leaflet/leaflet.js"></script>
     <script src="funciones_configuracion.js?v=<?= time() ?>"></script>
     <script>
         document.getElementById('toggleSidebar').addEventListener('click', function() {

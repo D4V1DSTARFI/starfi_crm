@@ -19,7 +19,7 @@ let clientSearchDebounce = null;
 $(document).ready(function () {
     $(document).ajaxError(function (event, jqxhr) {
         if (jqxhr.status === 401) {
-            window.location.href = '/starfi_crm/login.php';
+            window.location.href = '../../login.php';
         }
     });
 

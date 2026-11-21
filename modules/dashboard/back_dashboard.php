@@ -1,16 +1,19 @@
 <?php
 // modules/dashboard/back_dashboard.php
+@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
+requirePermission('dashboard');
 $agente_dashboard = getAgenteInfo();
 session_write_close();
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
 
-// Asegurar una sola vez índices compuestos para consultas instantáneas de costos WABA y cruce de wamids en Dashboard
-$dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v2.flag';
+// Asegurar una sola vez por BD índices compuestos para consultas instantáneas de costos WABA y cruce de wamids en Dashboard
+$dash_db_hash = starfi_db_schema_hash($con);
+$dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v3_' . $dash_db_hash . '.flag';
 if ($con && !file_exists($dash_idx_flag)) {
     $chkIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
     if ($chkIdx && $chkIdx->num_rows === 0) {

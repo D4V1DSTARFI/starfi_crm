@@ -583,7 +583,13 @@ let hasMoreChats = false;
 let isLoadingChats = false;
 let currentChatsXHR = null;
 
-// Generador local de avatares SVG en memoria (evita 20 peticiones HTTP externas a ui-avatars.com)
+// Generador local de avatares SVG en memoria (100% Cero CDN CHK-LAN-01)
+function escapeHtmlBandeja(val) {
+    if (val === null || val === undefined) return '';
+    return String(val).replace(/[&<>"']/g, function (m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+    });
+}
 function getLocalAvatarSvg(name) {
     let clean = String(name || 'C').trim();
     let parts = clean.split(/\s+/);
@@ -805,18 +811,24 @@ function renderChatList(chats, append = false, has_more = false) {
         const slaReplied = parseInt(chat.sla_human_replied || 0, 10);
         const lastCliEp = parseInt(chat.last_client_epoch || 0, 10);
 
+        const safeName = escapeHtmlBandeja(name);
+        const safePhone = escapeHtmlBandeja(chat.numero_whatsapp || '');
+        const safeSede = escapeHtmlBandeja(chat.nombre_sede || 'Sede Principal');
+        const safeAsesor = escapeHtmlBandeja(chat.nombre_asesor || '');
+        const safeDealEtapa = escapeHtmlBandeja(chat.deal_etapa || '');
+
         let html = `
-            <article class="chat-item ${isActiveClass} ${stageClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${chat.id}" data-cliente-id="${chat.id_cliente}" data-name="${name.replace(/"/g, '&quot;')}" data-phone="${chat.numero_whatsapp}" data-sede="${chat.nombre_sede || ''}" data-asesor="${chat.nombre_asesor || ''}" data-no-leidos="${chat.no_leidos || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${chat.deal_etapa || ''}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? chat.deal_monto_usd : ''}">
+            <article class="chat-item ${isActiveClass} ${stageClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${parseInt(chat.id, 10) || 0}" data-cliente-id="${parseInt(chat.id_cliente, 10) || 0}" data-name="${safeName}" data-phone="${safePhone}" data-sede="${safeSede}" data-asesor="${safeAsesor}" data-no-leidos="${parseInt(chat.no_leidos, 10) || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${safeDealEtapa}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? parseFloat(chat.deal_monto_usd) : ''}">
                 <div class="chat-avatar">
                     <img src="${getLocalAvatarSvg(name)}" alt="Avatar">
                 </div>
                 <div class="chat-summary">
                     <div class="chat-top">
-                        <h4>${name}</h4>
+                        <h4>${safeName}</h4>
                         <span class="time" title="${formatFullDateTime(lastTime)}">${formatChatListDate(lastTime)}</span>
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
-                        <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${chat.nombre_sede || 'Sede Principal'}</span>
+                        <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${safeSede}</span>
                         <span class="sla-slot"></span>
                         ${tipoBadge}
                         ${estadoBadge}
@@ -825,7 +837,7 @@ function renderChatList(chats, append = false, has_more = false) {
                         ${starsHtml}
                     </div>
                     <div class="chat-bottom" style="display:flex; align-items:center;">
-                        <p class="preview" style="margin-right:10px;">${previewText.replace(/</g, '&lt;')}</p>
+                        <p class="preview" style="margin-right:10px;">${escapeHtmlBandeja(previewText)}</p>
                         ${badge}
                         ${unreadDot}
                     </div>
@@ -1102,7 +1114,7 @@ function loadProfile360() {
                 $('#profPrevNameInput').val(client.nombre || '');
                 $('#profPrevEmailInput').val(client.email || '');
                 $('#profPrevPhone').text('+' + client.numero_whatsapp);
-                $('#profPrevImg').attr('src', `https://ui-avatars.com/api/?name=${encodeURIComponent(cName)}&background=F3F4F6&size=128`);
+                $('#profPrevImg').attr('src', getLocalAvatarSvg(cName));
                 
                 // Tags
                 renderTags(client.etiquetas);

@@ -16,8 +16,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="../../assets/icons/bootstrap-icons/font/bootstrap-icons.min.css">
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
     <link rel="stylesheet" href="../../assets/css/drawflow.min.css">
     
@@ -386,7 +385,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <form id="contactoForm">
+                    <form id="contactoForm" autocomplete="off">
                         <input type="hidden" id="contacto_id" name="id">
                         <input type="hidden" id="contacto_sede" name="id_sede" value="0">
                         <div class="mb-3">
@@ -419,7 +418,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body" style="padding: 30px;">
-                    <form id="botForm">
+                    <form id="botForm" autocomplete="off">
                         <input type="hidden" id="ruleId">
                         <input type="hidden" id="parentId" value="">
                         

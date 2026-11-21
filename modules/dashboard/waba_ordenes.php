@@ -35,7 +35,7 @@ if ($res_sedes) {
     <!-- Bootstrap CSS Local -->
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <style>
         body { background-color: #f0f2f5; margin: 0; padding: 0; overflow-x: hidden; }
         .app-container { min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
@@ -330,7 +330,7 @@ if ($res_sedes) {
 <div class="modal fade" id="modalPagoOrden" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <form id="formPagoOrden" enctype="multipart/form-data">
+            <form id="formPagoOrden" enctype="multipart/form-data" autocomplete="off">
                 <div class="modal-header bg-success text-white">
                     <h5 class="modal-title fw-bold">
                         <i class="fas fa-money-check-dollar me-2"></i>

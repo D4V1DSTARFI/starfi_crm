@@ -24,14 +24,11 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <!-- Iconos de Bootstrap -->
     <link rel="stylesheet" href="../../assets/icons/bootstrap-icons/font/bootstrap-icons.min.css">
-    <!-- FontAwesome icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- FontAwesome Local -->
+    <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <!-- Tema Global STARFI & Styles -->
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
     <link rel="stylesheet" href="../../css/styles.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
         .config-container {
@@ -438,7 +435,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-4">
-                    <form id="formPerfilEmpresa" enctype="multipart/form-data">
+                    <form id="formPerfilEmpresa" enctype="multipart/form-data" autocomplete="off">
                         <input type="hidden" id="perfilId" name="id" value="0">
                         <input type="hidden" id="perfilSede" name="id_sede" value="1">
                         
@@ -517,7 +514,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-4">
-                    <form id="formFirmante">
+                    <form id="formFirmante" autocomplete="off">
                         <input type="hidden" id="firmanteId" name="id" value="0">
                         <input type="hidden" id="firmanteEmpresaId" name="id_empresa" value="0">
                         <input type="hidden" id="firmanteSedeId" name="id_sede" value="1">
@@ -569,7 +566,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-4">
-                    <form id="formRegistro">
+                    <form id="formRegistro" autocomplete="off">
                         <input type="hidden" id="registroId" name="id" value="0">
                         <input type="hidden" id="registroEmpresaId" name="id_empresa" value="0">
                         <input type="hidden" id="registroSedeId" name="id_sede" value="1">
@@ -611,7 +608,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body py-4">
-                    <form id="formExpediente" enctype="multipart/form-data">
+                    <form id="formExpediente" enctype="multipart/form-data" autocomplete="off">
                         <input type="hidden" id="expedienteEmpresaId" name="id_empresa" value="0">
                         <input type="hidden" id="expedienteSedeId" name="id_sede" value="1">
                         
@@ -758,7 +755,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         document.getElementById('tdWeb').innerText = p.web || '-';
                         document.getElementById('tdInstagram').innerText = p.instagram || '-';
                         document.getElementById('tdDireccion').innerText = p.direccion || '-';
-                        document.getElementById('tdLogoContainer').innerHTML = p.logo_empresa ? `<img src="../../uploads/empresa/${p.logo_empresa}" style="max-height: 50px;" class="rounded border p-1">` : 'Sin Logo';
+                        document.getElementById('tdLogoContainer').innerHTML = p.logo_empresa ? `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" style="max-height: 50px;" class="rounded border p-1">` : 'Sin Logo';
 
                         // Tab 2: Tabla Firmantes (empresa_firmantes)
                         renderTablaFirmantes(data.firmantes);
@@ -843,7 +840,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <td class="fw-semibold text-dark">${escapeHtml(e.fecha)}</td>
                         <td class="fw-bold text-dark">${escapeHtml(e.descripcion)}</td>
                         <td>
-                            <a href="../../${e.ruta}" target="_blank" class="btn btn-sm btn-outline-primary px-3 rounded-2 fw-semibold">
+                            <a href="back_empresa.php?action=download_expediente&id=${encodeURIComponent(e.id)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary px-3 rounded-2 fw-semibold">
                                 <i class="fa-solid fa-download me-1"></i> Ver / Descargar
                             </a>
                         </td>

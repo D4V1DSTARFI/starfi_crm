@@ -1,0 +1,23 @@
+Options -Indexes
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# Bloquear ejecución de scripts dentro de assets/docs/
+<FilesMatch "(^\.env|\.(php|phtml|phar|php\d|pl|py|cgi|exe|sh|bat|cmd|ps1|ini|sql|log|bak)$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

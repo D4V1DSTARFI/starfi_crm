@@ -1,7 +1,9 @@
 <?php
+@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
-header('Content-Type: application/json');
+requirePermission('gestor_bots');
+header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
