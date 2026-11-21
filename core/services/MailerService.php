@@ -65,12 +65,19 @@ class MailerService {
         }
         $config = $resConfig->fetch_assoc();
 
-        $resCola = $this->db_core->query("SELECT * FROM cola_correos WHERE estado = 'Pendiente' OR (estado = 'Error' AND intentos < 3) ORDER BY created_at ASC LIMIT $limite");
+        $lim = max(1, min(100, intval($limite)));
+        $stmtCola = $this->db_core->prepare("SELECT * FROM cola_correos WHERE estado = 'Pendiente' OR (estado = 'Error' AND intentos < 3) ORDER BY created_at ASC LIMIT ?");
+        if (!$stmtCola) {
+            return ['status' => 'error', 'message' => 'Error al consultar la cola de correos.'];
+        }
+        $stmtCola->bind_param("i", $lim);
+        $stmtCola->execute();
+        $resCola = $stmtCola->get_result();
         
         $exitosos = 0;
         $errores = 0;
 
-        while ($correo = $resCola->fetch_assoc()) {
+        while ($resCola && ($correo = $resCola->fetch_assoc())) {
             $mail = new PHPMailer(true);
             try {
                 // Configuración del servidor
@@ -125,6 +132,8 @@ class MailerService {
                 $errores++;
             }
         }
+
+        $stmtCola->close();
 
         return [
             'status' => 'success',

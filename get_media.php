@@ -157,7 +157,8 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
     $filename = basename(str_replace('\\', '/', $media_id));
     $direct_path = __DIR__ . '/assets/uploads/' . $filename;
     if (file_exists($direct_path) && filesize($direct_path) > 200) {
-        $mime_local = mime_content_type($direct_path);
+        $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
+        $mime_local = $finfo_loc->file($direct_path) ?: 'application/octet-stream';
         if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
         stream_file($direct_path, $mime_local);
         exit;
@@ -172,7 +173,8 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_TIMEOUT => 10
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT => 8
         ]);
         $remBin = curl_exec($chRem);
         $remCode = curl_getinfo($chRem, CURLINFO_HTTP_CODE);
@@ -180,7 +182,8 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
         if ($remCode === 200 && !empty($remBin) && strlen($remBin) > 200) {
             if (!is_dir(__DIR__ . '/assets/uploads')) @mkdir(__DIR__ . '/assets/uploads', 0775, true);
             @file_put_contents($direct_path, $remBin);
-            $mime_local = mime_content_type($direct_path);
+            $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
+            $mime_local = $finfo_loc->file($direct_path) ?: 'application/octet-stream';
             if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
             stream_file($direct_path, $mime_local);
             exit;
@@ -208,7 +211,8 @@ if ($stmtCache) {
             $safe_name = basename(substr($url, strpos($url, '/assets/uploads/') + strlen('/assets/uploads/')));
             $local_path = __DIR__ . '/assets/uploads/' . $safe_name;
             if (file_exists($local_path) && filesize($local_path) > 200) {
-                $mime_local = mime_content_type($local_path);
+                $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
+                $mime_local = $finfo_loc->file($local_path) ?: 'application/octet-stream';
                 if (strpos($local_path, '.ogg') !== false) $mime_local = 'audio/ogg';
                 stream_file($local_path, $mime_local);
                 exit;
@@ -230,7 +234,8 @@ curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+curl_setopt($ch, CURLOPT_TIMEOUT, 8);
 $response = curl_exec($ch);
 curl_close($ch);
 
@@ -269,7 +274,8 @@ curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
 curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch2, CURLOPT_SSL_VERIFYHOST, 2);
-curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
+curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 4);
+curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
 curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 $binary = curl_exec($ch2);
 curl_close($ch2);
@@ -290,7 +296,8 @@ if ($binary) {
         $stmtUpd->close();
     }
 
-    $mime_local = mime_content_type($save_path);
+    $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
+    $mime_local = $finfo_loc->file($save_path) ?: 'application/octet-stream';
     if (strpos($save_path, '.ogg') !== false) $mime_local = 'audio/ogg';
     stream_file($save_path, $mime_local);
     exit;

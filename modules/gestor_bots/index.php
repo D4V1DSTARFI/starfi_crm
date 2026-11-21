@@ -1,5 +1,2 @@
 <?php
-// Redirección al archivo principal del módulo
-header('Location: gestor_bots.php');
-exit;
-?>
+require __DIR__ . '/gestor_bots.php';

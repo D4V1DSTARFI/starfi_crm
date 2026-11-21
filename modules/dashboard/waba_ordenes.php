@@ -12,16 +12,23 @@ if (!$es_master && !hasPermission('waba_ordenes') && !hasPermission('whatsapp_an
 }
 
 $con = getDbConnection();
-if ($es_master) {
-    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
-} else {
-    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE id = $id_sede_agente LIMIT 1");
-}
-
 $sedes = [];
-if ($res_sedes) {
-    while ($row = $res_sedes->fetch_assoc()) {
-        $sedes[] = $row;
+if ($con) {
+    if ($es_master) {
+        $stmt_sedes = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+    } else {
+        $stmt_sedes = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE id = ? LIMIT 1");
+        if ($stmt_sedes) {
+            $stmt_sedes->bind_param("i", $id_sede_agente);
+        }
+    }
+    if ($stmt_sedes) {
+        $stmt_sedes->execute();
+        $res_sedes = $stmt_sedes->get_result();
+        while ($res_sedes && ($row = $res_sedes->fetch_assoc())) {
+            $sedes[] = $row;
+        }
+        $stmt_sedes->close();
     }
 }
 ?>
@@ -442,7 +449,7 @@ if ($res_sedes) {
                         <div class="col-12">
                             <label class="form-label fw-semibold small" id="lblPagoComprobante">Comprobante Adjunto (Imagen o PDF)</label>
                             <input type="file" name="comprobante" id="pago_comprobante" class="form-control" accept=".jpg,.jpeg,.png,.webp,.pdf">
-                            <small class="text-muted">Formatos aceptados: JPG, PNG, WEBP o PDF (Máx. 10MB).</small>
+                            <small class="text-muted">Formatos aceptados: JPG, PNG, WEBP o PDF (Máx. 5MB).</small>
                         </div>
 
                         <div class="col-12">
@@ -864,6 +871,13 @@ $(document).ready(function() {
     // Envío de Formulario de Pago con Comprobante Adjunto [FAC-02]
     $('#formPagoOrden').submit(function(e) {
         e.preventDefault();
+        let fileInput = document.getElementById('pago_comprobante');
+        if (fileInput && fileInput.files && fileInput.files.length > 0) {
+            if (fileInput.files[0].size > 5 * 1024 * 1024) {
+                Swal.fire('Archivo demasiado grande', 'El comprobante no debe superar el tamaño máximo de 5 MB.', 'warning');
+                return;
+            }
+        }
         let formData = new FormData(this);
 
         Swal.fire({
@@ -926,9 +940,11 @@ $(document).ready(function() {
 
         let cont = $('#verPagoComprobanteContainer');
         cont.empty();
-        if (o.comprobante_path) {
-            let fileUrl = '../../' + o.comprobante_path;
-            let ext = o.comprobante_path.split('.').pop().toLowerCase();
+        let compRel = o.comprobante_ruta || o.comprobante_path || '';
+        if (compRel) {
+            let fileBase = compRel.replace(/\\/g, '/').split('/').pop();
+            let fileUrl = o.comprobante_url || ('../../ver_documento.php?tipo=comprobante_waba&file=' + encodeURIComponent(fileBase));
+            let ext = fileBase.split('.').pop().toLowerCase();
             if (ext === 'pdf') {
                 cont.html(`
                     <div class="py-4">

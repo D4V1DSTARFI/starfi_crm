@@ -1,7 +1,11 @@
 <?php
 // modules/directorio/back_directorio.php
+// Controlador del Directorio 360 de Clientes — STARFI CRM (QA-STD-GLOBAL-2.1)
+// Blindado con RBAC, 100% mysqli_prepare(), cero fugas SQL, starfi_log_exception() y registrar_auditoria().
+
 @ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
 requirePermission('directorio');
 $agente_dir = getAgenteInfo();
@@ -9,11 +13,18 @@ session_write_close();
 header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
-$action = $_POST['action'] ?? '';
+if (!$con) {
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Error de conexión a la base de datos.']);
+    exit;
+}
 
-$rol_dir = strtoupper(trim($agente_dir['rol'] ?? 'AGENTE'));
+$action = trim((string)($_POST['action'] ?? ''));
+
+$agente_id_dir = intval($agente_dir['id'] ?? 0);
+$rol_dir       = strtoupper(trim((string)($agente_dir['rol'] ?? 'AGENTE')));
 $user_sede_dir = isset($agente_dir['id_sede']) ? intval($agente_dir['id_sede']) : 0;
-$is_master_dir = ($rol_dir === 'MASTER' || $rol_dir === 'MASTER CI' || intval($agente_dir['id'] ?? 0) === 1 || ($rol_dir === 'ADMIN' && $user_sede_dir === 0));
+$is_master_dir = ($rol_dir === 'MASTER' || $rol_dir === 'MASTER CI' || $agente_id_dir === 1 || ($rol_dir === 'ADMIN' && $user_sede_dir === 0));
 
 function authorize_directorio_cliente($con, $cliente_id, $is_master, $user_sede) {
     $cid = intval($cliente_id);
@@ -54,49 +65,70 @@ function authorize_directorio_cliente($con, $cliente_id, $is_master, $user_sede)
 
 switch ($action) {
     case 'get_sedes':
-        $user_sede = $user_sede_dir;
-        $is_master = $is_master_dir;
-        
-        $where = "";
-        if (!$is_master && $user_sede > 0) {
-            $where = "WHERE id = $user_sede";
-        }
-        $res = $con->query("SELECT id, nombre_sede FROM sedes $where ORDER BY nombre_sede ASC");
         $sedes = [];
-        if ($res) {
-            while ($row = $res->fetch_assoc()) $sedes[] = $row;
+        if (!$is_master_dir && $user_sede_dir > 0) {
+            $stmt = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE id = ? ORDER BY nombre_sede ASC");
+            if ($stmt) {
+                $stmt->bind_param("i", $user_sede_dir);
+            }
+        } else {
+            $stmt = $con->prepare("SELECT id, nombre_sede FROM sedes ORDER BY nombre_sede ASC");
         }
-        echo json_encode(['status' => 'success', 'is_master' => $is_master, 'data' => $sedes]);
+        if ($stmt) {
+            if ($stmt->execute()) {
+                $res = $stmt->get_result();
+                while ($res && ($row = $res->fetch_assoc())) {
+                    $sedes[] = $row;
+                }
+            } else {
+                starfi_log_exception('directorio', 'Error ejecutando get_sedes', ['errno' => $stmt->errno]);
+            }
+            $stmt->close();
+        }
+        echo json_encode(['status' => 'success', 'is_master' => $is_master_dir, 'data' => $sedes]);
         break;
 
     case 'load_clients':
-        $user_sede = $user_sede_dir;
-        $is_master = $is_master_dir;
-        
-        $where = "";
-        if (!$is_master && $user_sede > 0) {
-            $where = "WHERE (c.id_sede = $user_sede OR EXISTS (
-                SELECT 1 FROM conversaciones cv2
-                INNER JOIN lineas_whatsapp lw2 ON lw2.id = cv2.id_linea
-                WHERE cv2.id_cliente = c.id AND lw2.id_sede = $user_sede
-            ))";
-        } elseif (!$is_master) {
+        if (!$is_master_dir && $user_sede_dir <= 0) {
             echo json_encode(['status' => 'success', 'data' => []]);
             break;
         }
-        
-        $query = "SELECT c.id, c.id_sede, c.nombre, c.numero_whatsapp, c.estado, c.etiquetas, c.fecha_registro, s.nombre_sede 
-                  FROM clientes_contactos c 
-                  LEFT JOIN sedes s ON c.id_sede = s.id 
-                  $where
-                  ORDER BY c.fecha_registro DESC";
-        $res = $con->query($query);
-        
-        $clients = [];
-        if ($res) {
-            while ($row = $res->fetch_assoc()) {
-                $clients[] = $row;
+
+        if (!$is_master_dir) {
+            $stmt = $con->prepare("
+                SELECT c.id, c.id_sede, c.nombre, c.numero_whatsapp, c.estado, c.etiquetas, c.fecha_registro, s.nombre_sede 
+                FROM clientes_contactos c 
+                LEFT JOIN sedes s ON c.id_sede = s.id 
+                WHERE (c.id_sede = ? OR EXISTS (
+                    SELECT 1 FROM conversaciones cv2
+                    INNER JOIN lineas_whatsapp lw2 ON lw2.id = cv2.id_linea
+                    WHERE cv2.id_cliente = c.id AND lw2.id_sede = ?
+                ))
+                ORDER BY c.fecha_registro DESC
+            ");
+            if ($stmt) {
+                $stmt->bind_param("ii", $user_sede_dir, $user_sede_dir);
             }
+        } else {
+            $stmt = $con->prepare("
+                SELECT c.id, c.id_sede, c.nombre, c.numero_whatsapp, c.estado, c.etiquetas, c.fecha_registro, s.nombre_sede 
+                FROM clientes_contactos c 
+                LEFT JOIN sedes s ON c.id_sede = s.id 
+                ORDER BY c.fecha_registro DESC
+            ");
+        }
+
+        $clients = [];
+        if ($stmt) {
+            if ($stmt->execute()) {
+                $res = $stmt->get_result();
+                while ($res && ($row = $res->fetch_assoc())) {
+                    $clients[] = $row;
+                }
+            } else {
+                starfi_log_exception('directorio', 'Error ejecutando load_clients', ['errno' => $stmt->errno]);
+            }
+            $stmt->close();
         }
         echo json_encode(['status' => 'success', 'data' => $clients]);
         break;
@@ -107,10 +139,10 @@ switch ($action) {
     case 'finish_broadcast_campaign':
         http_response_code(410);
         echo json_encode([
-            'status' => 'error',
+            'status'     => 'error',
             'deprecated' => true,
-            'redirect' => '../campanas/campanas.php',
-            'message' => 'La lógica de campañas de difusión fue centralizada exclusivamente en el módulo Campañas (modules/campanas/back_campanas.php).'
+            'redirect'   => '../campanas/campanas.php',
+            'message'    => 'La lógica de campañas de difusión fue centralizada exclusivamente en el módulo Campañas (modules/campanas/back_campanas.php).',
         ]);
         break;
 
@@ -121,83 +153,140 @@ switch ($action) {
             echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
             exit;
         }
-        $stmt = $con->prepare("SELECT c.*, s.nombre_sede FROM clientes_contactos c LEFT JOIN sedes s ON c.id_sede = s.id WHERE c.id = ?");
-        
-        if ($stmt) {
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $client = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
+        $stmt = $con->prepare("SELECT c.*, s.nombre_sede FROM clientes_contactos c LEFT JOIN sedes s ON c.id_sede = s.id WHERE c.id = ? LIMIT 1");
+        if (!$stmt) {
+            starfi_log_exception('directorio', 'Error preparando load_profile', ['errno' => $con->errno]);
+            echo json_encode(['status' => 'error', 'message' => 'Error al consultar el perfil del cliente.']);
+            break;
+        }
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $client = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
 
-            if ($client) {
-                $sede_conv_filter = (!$is_master_dir && $user_sede_dir > 0) ? " AND lw.id_sede = " . intval($user_sede_dir) : "";
+        if (!$client) {
+            echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado']);
+            break;
+        }
 
-                // 1. Historial de Conversaciones (aislado por sede si no es MASTER)
-                $stmt_conv = $con->prepare("
-                    SELECT conv.id, conv.estado, conv.fecha_inicio, conv.fecha_resolucion, conv.resultado_comercial,
-                           COALESCE(up.nombre, 'Sin Asesor') as agente_nombre,
-                           (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) as ultimo_mensaje,
-                           (SELECT timestamp FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) as ultimo_timestamp
-                    FROM conversaciones conv
-                    LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
-                    LEFT JOIN usuario_perfil up ON conv.id_agente = up.id_usuario
-                    WHERE conv.id_cliente = ? $sede_conv_filter
-                    ORDER BY conv.fecha_inicio DESC
-                ");
-                $conversaciones = [];
-                if ($stmt_conv) {
-                    $stmt_conv->bind_param("i", $id);
-                    $stmt_conv->execute();
-                    $conv_res = $stmt_conv->get_result();
-                    while ($c = $conv_res->fetch_assoc()) {
-                        $conversaciones[] = $c;
-                    }
-                    $stmt_conv->close();
-                }
+        $colsConvRes = @$con->query("SHOW COLUMNS FROM `conversaciones`");
+        $convCols = [];
+        if ($colsConvRes) {
+            while ($rc = $colsConvRes->fetch_assoc()) $convCols[$rc['Field']] = true;
+        }
+        $resComSelect = isset($convCols['resultado_comercial']) ? "conv.resultado_comercial" : "NULL AS resultado_comercial";
+        $fecCierreSelect = isset($convCols['fecha_cierre_venta']) ? "conv.fecha_cierre_venta" : "NULL AS fecha_cierre_venta";
+        $ventasExtraCond = isset($convCols['resultado_comercial'])
+            ? "OR conv.resultado_comercial = 'VENTA_CERRADA' OR conv.resultado_comercial LIKE '%VENTA%'"
+            : "";
 
-                // 2. Historial de Ventas (BAN-02: excluir mensajes de campañas masivas)
-                $stmt_ventas = $con->prepare("
-                    SELECT m.tipo, m.origen, m.contenido, m.timestamp, conv.id as id_conversacion, conv.fecha_cierre_venta, conv.resultado_comercial
-                    FROM mensajes_y_eventos m
-                    JOIN conversaciones conv ON m.id_conversacion = conv.id
-                    LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
-                    WHERE conv.id_cliente = ? $sede_conv_filter
-                      AND (
-                          (m.origen = 'API_TRANSACCIONAL'
-                           AND m.contenido NOT LIKE '%starfi_difusion_directa%'
-                           AND m.contenido NOT LIKE '%[DIFUSIÓN:%'
-                           AND m.contenido NOT LIKE '%| Texto:%'
-                           AND IFNULL(m.categoria_meta, '') != 'MARKETING')
-                          OR m.tipo = 'VENTA'
-                          OR conv.resultado_comercial = 'VENTA_CERRADA'
-                          OR conv.resultado_comercial LIKE '%VENTA%'
-                      )
-                    ORDER BY m.timestamp DESC LIMIT 30
-                ");
-                $ventas = [];
-                if ($stmt_ventas) {
-                    $stmt_ventas->bind_param("i", $id);
-                    $stmt_ventas->execute();
-                    $ventas_res = $stmt_ventas->get_result();
-                    while ($v = $ventas_res->fetch_assoc()) {
-                        $ventas[] = $v;
-                    }
-                    $stmt_ventas->close();
-                }
-                
-                echo json_encode([
-                    'status' => 'success',
-                    'data' => [
-                        'client' => $client,
-                        'conversaciones' => $conversaciones,
-                        'ventas' => $ventas,
-                        'events' => $ventas
-                    ]
-                ]);
-            } else {
-                echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado']);
+        // 1. Historial de Conversaciones (100% mysqli_prepare())
+        if (!$is_master_dir && $user_sede_dir > 0) {
+            $stmt_conv = $con->prepare("
+                SELECT conv.id, conv.estado, conv.fecha_inicio, conv.fecha_resolucion, $resComSelect,
+                       COALESCE(up.nombre, 'Sin Asesor') AS agente_nombre,
+                       (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) AS ultimo_mensaje,
+                       (SELECT timestamp FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) AS ultimo_timestamp
+                FROM conversaciones conv
+                LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
+                LEFT JOIN usuario_perfil up ON conv.id_agente = up.id_usuario
+                WHERE conv.id_cliente = ? AND lw.id_sede = ?
+                ORDER BY conv.fecha_inicio DESC
+            ");
+            if ($stmt_conv) {
+                $stmt_conv->bind_param("ii", $id, $user_sede_dir);
+            }
+        } else {
+            $stmt_conv = $con->prepare("
+                SELECT conv.id, conv.estado, conv.fecha_inicio, conv.fecha_resolucion, $resComSelect,
+                       COALESCE(up.nombre, 'Sin Asesor') AS agente_nombre,
+                       (SELECT contenido FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) AS ultimo_mensaje,
+                       (SELECT timestamp FROM mensajes_y_eventos WHERE id_conversacion = conv.id ORDER BY id DESC LIMIT 1) AS ultimo_timestamp
+                FROM conversaciones conv
+                LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
+                LEFT JOIN usuario_perfil up ON conv.id_agente = up.id_usuario
+                WHERE conv.id_cliente = ?
+                ORDER BY conv.fecha_inicio DESC
+            ");
+            if ($stmt_conv) {
+                $stmt_conv->bind_param("i", $id);
             }
         }
+
+        $conversaciones = [];
+        if ($stmt_conv) {
+            $stmt_conv->execute();
+            $conv_res = $stmt_conv->get_result();
+            while ($conv_res && ($c = $conv_res->fetch_assoc())) {
+                $conversaciones[] = $c;
+            }
+            $stmt_conv->close();
+        }
+
+        // 2. Historial de Ventas (100% mysqli_prepare())
+        if (!$is_master_dir && $user_sede_dir > 0) {
+            $stmt_ventas = $con->prepare("
+                SELECT m.tipo, m.origen, m.contenido, m.timestamp, conv.id AS id_conversacion, $fecCierreSelect, $resComSelect
+                FROM mensajes_y_eventos m
+                JOIN conversaciones conv ON m.id_conversacion = conv.id
+                LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
+                WHERE conv.id_cliente = ? AND lw.id_sede = ?
+                  AND (
+                      (m.origen = 'API_TRANSACCIONAL'
+                       AND m.contenido NOT LIKE '%starfi_difusion_directa%'
+                       AND m.contenido NOT LIKE '%[DIFUSIÓN:%'
+                       AND m.contenido NOT LIKE '%| Texto:%'
+                       AND IFNULL(m.categoria_meta, '') != 'MARKETING')
+                      OR m.tipo = 'VENTA'
+                      $ventasExtraCond
+                  )
+                ORDER BY m.timestamp DESC LIMIT 30
+            ");
+            if ($stmt_ventas) {
+                $stmt_ventas->bind_param("ii", $id, $user_sede_dir);
+            }
+        } else {
+            $stmt_ventas = $con->prepare("
+                SELECT m.tipo, m.origen, m.contenido, m.timestamp, conv.id AS id_conversacion, $fecCierreSelect, $resComSelect
+                FROM mensajes_y_eventos m
+                JOIN conversaciones conv ON m.id_conversacion = conv.id
+                LEFT JOIN lineas_whatsapp lw ON conv.id_linea = lw.id
+                WHERE conv.id_cliente = ?
+                  AND (
+                      (m.origen = 'API_TRANSACCIONAL'
+                       AND m.contenido NOT LIKE '%starfi_difusion_directa%'
+                       AND m.contenido NOT LIKE '%[DIFUSIÓN:%'
+                       AND m.contenido NOT LIKE '%| Texto:%'
+                       AND IFNULL(m.categoria_meta, '') != 'MARKETING')
+                      OR m.tipo = 'VENTA'
+                      $ventasExtraCond
+                  )
+                ORDER BY m.timestamp DESC LIMIT 30
+            ");
+            if ($stmt_ventas) {
+                $stmt_ventas->bind_param("i", $id);
+            }
+        }
+
+        $ventas = [];
+        if ($stmt_ventas) {
+            $stmt_ventas->execute();
+            $ventas_res = $stmt_ventas->get_result();
+            while ($ventas_res && ($v = $ventas_res->fetch_assoc())) {
+                $ventas[] = $v;
+            }
+            $stmt_ventas->close();
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'data'   => [
+                'client'         => $client,
+                'conversaciones' => $conversaciones,
+                'ventas'         => $ventas,
+                'events'         => $ventas,
+            ],
+        ]);
         break;
 
     case 'save_profile':
@@ -207,77 +296,121 @@ switch ($action) {
             echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para modificar este cliente.']);
             exit;
         }
-        $nombre = $_POST['nombre'] ?? '';
-        $numero_whatsapp = preg_replace('/[^0-9]/', '', $_POST['numero_whatsapp'] ?? '');
-        $direccion = $_POST['direccion'] ?? '';
-        $notas = $_POST['notas'] ?? '';
+        $nombre          = trim((string)($_POST['nombre'] ?? ''));
+        $numero_whatsapp = preg_replace('/[^0-9]/', '', (string)($_POST['numero_whatsapp'] ?? ''));
+        $direccion       = trim((string)($_POST['direccion'] ?? ''));
+        $notas           = trim((string)($_POST['notas'] ?? ''));
         if ($is_master_dir) {
             $id_sede = !empty($_POST['id_sede']) ? intval($_POST['id_sede']) : null;
         } else {
             $id_sede = ($user_sede_dir > 0) ? $user_sede_dir : null;
         }
 
-        if ($id > 0) {
-            if (!empty($numero_whatsapp)) {
-                $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, numero_whatsapp = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
-                if ($stmt) {
-                    $stmt->bind_param("ssssii", $nombre, $numero_whatsapp, $direccion, $notas, $id_sede, $id);
-                    if ($stmt->execute()) {
-                        echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
-                    } else {
-                        echo json_encode(['status' => 'error', 'message' => 'Error al actualizar el perfil (posible número duplicado)']);
-                    }
-                    $stmt->close();
+        if ($id <= 0 || $nombre === '') {
+            echo json_encode(['status' => 'error', 'message' => 'Datos de cliente inválidos.']);
+            break;
+        }
+
+        // Capturar estado anterior para auditoría formal
+        $prevClient = null;
+        $stmtPrev = $con->prepare("SELECT id, id_sede, nombre, numero_whatsapp, direccion, notas_internas, estado FROM clientes_contactos WHERE id = ? LIMIT 1");
+        if ($stmtPrev) {
+            $stmtPrev->bind_param("i", $id);
+            $stmtPrev->execute();
+            $prevClient = $stmtPrev->get_result()->fetch_assoc();
+            $stmtPrev->close();
+        }
+
+        $okUpdate = false;
+        if ($numero_whatsapp !== '') {
+            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, numero_whatsapp = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+            if ($stmt) {
+                $stmt->bind_param("ssssii", $nombre, $numero_whatsapp, $direccion, $notas, $id_sede, $id);
+                $okUpdate = $stmt->execute();
+                if (!$okUpdate) {
+                    starfi_log_exception('directorio', 'Error UPDATE save_profile con teléfono', ['id' => $id, 'errno' => $stmt->errno]);
                 }
-            } else {
-                $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
-                if ($stmt) {
-                    $stmt->bind_param("sssii", $nombre, $direccion, $notas, $id_sede, $id);
-                    if ($stmt->execute()) {
-                        echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
-                    } else {
-                        echo json_encode(['status' => 'error', 'message' => 'Error al actualizar']);
-                    }
-                    $stmt->close();
-                }
+                $stmt->close();
             }
+        } else {
+            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+            if ($stmt) {
+                $stmt->bind_param("sssii", $nombre, $direccion, $notas, $id_sede, $id);
+                $okUpdate = $stmt->execute();
+                if (!$okUpdate) {
+                    starfi_log_exception('directorio', 'Error UPDATE save_profile sin teléfono', ['id' => $id, 'errno' => $stmt->errno]);
+                }
+                $stmt->close();
+            }
+        }
+
+        if ($okUpdate) {
+            registrar_auditoria(
+                'directorio',
+                'ACTUALIZAR_CLIENTE',
+                "Ficha de cliente #$id actualizada ($nombre)",
+                $prevClient,
+                [
+                    'id'              => $id,
+                    'id_sede'         => $id_sede,
+                    'nombre'          => $nombre,
+                    'numero_whatsapp' => ($numero_whatsapp !== '') ? $numero_whatsapp : ($prevClient['numero_whatsapp'] ?? ''),
+                    'direccion'       => $direccion,
+                    'notas_internas'  => $notas,
+                ],
+                $con,
+                $agente_id_dir,
+                $id_sede ?? $user_sede_dir
+            );
+            echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Error al actualizar el perfil (verifique que el número no esté duplicado en la sede).']);
         }
         break;
 
     case 'check_duplicate':
-        $numero_whatsapp = preg_replace('/[^0-9]/', '', $_POST['numero_whatsapp'] ?? '');
-        if ($is_master_dir) {
-            $id_sede = !empty($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
-        } else {
-            $id_sede = $user_sede_dir;
-        }
-        
-        if (empty($numero_whatsapp)) {
+        $numero_whatsapp = preg_replace('/[^0-9]/', '', (string)($_POST['numero_whatsapp'] ?? ''));
+        $id_sede = $is_master_dir
+            ? (!empty($_POST['id_sede']) ? intval($_POST['id_sede']) : 0)
+            : $user_sede_dir;
+
+        if ($numero_whatsapp === '') {
             echo json_encode(['status' => 'error', 'message' => 'Número vacío']);
             exit;
         }
-        
-        $sede_cond = $id_sede > 0 ? "AND id_sede = " . intval($id_sede) : "AND id_sede IS NULL";
-        
-        $stmt = $con->prepare("SELECT id, nombre FROM clientes_contactos WHERE numero_whatsapp = ? $sede_cond LIMIT 1");
+
+        if ($id_sede > 0) {
+            $stmt = $con->prepare("SELECT id, nombre FROM clientes_contactos WHERE numero_whatsapp = ? AND id_sede = ? LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("si", $numero_whatsapp, $id_sede);
+            }
+        } else {
+            $stmt = $con->prepare("SELECT id, nombre FROM clientes_contactos WHERE numero_whatsapp = ? AND id_sede IS NULL LIMIT 1");
+            if ($stmt) {
+                $stmt->bind_param("s", $numero_whatsapp);
+            }
+        }
+
         if ($stmt) {
-            $stmt->bind_param("s", $numero_whatsapp);
             $stmt->execute();
             $res = $stmt->get_result();
-            if ($res->num_rows > 0) {
+            if ($res && $res->num_rows > 0) {
                 $client = $res->fetch_assoc();
                 echo json_encode(['status' => 'exists', 'client' => $client]);
             } else {
                 echo json_encode(['status' => 'clean']);
             }
             $stmt->close();
+        } else {
+            starfi_log_exception('directorio', 'Error preparando check_duplicate', ['errno' => $con->errno]);
+            echo json_encode(['status' => 'clean']);
         }
         break;
 
     case 'create_profile':
-        $nombre = $_POST['nombre'] ?? '';
-        $direccion = $_POST['direccion'] ?? '';
-        $notas = $_POST['notas'] ?? '';
+        $nombre    = trim((string)($_POST['nombre'] ?? ''));
+        $direccion = trim((string)($_POST['direccion'] ?? ''));
+        $notas     = trim((string)($_POST['notas'] ?? ''));
         if ($is_master_dir) {
             $id_sede = !empty($_POST['id_sede']) ? intval($_POST['id_sede']) : null;
         } else {
@@ -288,26 +421,98 @@ switch ($action) {
             }
             $id_sede = $user_sede_dir;
         }
-        $numero_whatsapp = preg_replace('/[^0-9]/', '', $_POST['numero_whatsapp'] ?? '');
-        
-        if (empty($numero_whatsapp) || empty($nombre)) {
+        $numero_whatsapp = preg_replace('/[^0-9]/', '', (string)($_POST['numero_whatsapp'] ?? ''));
+
+        if ($numero_whatsapp === '' || $nombre === '') {
             echo json_encode(['status' => 'error', 'message' => 'Nombre y número son obligatorios']);
             exit;
         }
 
-        $id_empresa = 1;
-
+        $id_empresa = max(1, intval($agente_dir['id_empresa'] ?? 1));
         $stmt = $con->prepare("INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre, direccion, notas_internas) VALUES (?, ?, ?, ?, ?, ?)");
         if ($stmt) {
             $stmt->bind_param("iissss", $id_empresa, $id_sede, $numero_whatsapp, $nombre, $direccion, $notas);
             if ($stmt->execute()) {
-                echo json_encode(['status' => 'success', 'message' => 'Cliente creado con éxito']);
+                $newClientId = intval($stmt->insert_id);
+                $stmt->close();
+                registrar_auditoria(
+                    'directorio',
+                    'CREAR_CLIENTE',
+                    "Nuevo cliente #$newClientId registrado en directorio ($nombre)",
+                    null,
+                    [
+                        'id'              => $newClientId,
+                        'id_empresa'      => $id_empresa,
+                        'id_sede'         => $id_sede,
+                        'numero_whatsapp' => $numero_whatsapp,
+                        'nombre'          => $nombre,
+                        'direccion'       => $direccion,
+                        'notas_internas'  => $notas,
+                    ],
+                    $con,
+                    $agente_id_dir,
+                    $id_sede
+                );
+                echo json_encode(['status' => 'success', 'id' => $newClientId, 'message' => 'Cliente creado con éxito']);
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'Error: El número de WhatsApp ya podría estar registrado para esta sede.']);
+                starfi_log_exception('directorio', 'Error INSERT create_profile', ['errno' => $stmt->errno]);
+                $stmt->close();
+                echo json_encode(['status' => 'error', 'message' => 'El número de WhatsApp ya podría estar registrado para esta sede.']);
             }
-            $stmt->close();
         } else {
-            echo json_encode(['status' => 'error', 'message' => 'Error al preparar la consulta.']);
+            starfi_log_exception('directorio', 'Error preparando INSERT create_profile', ['errno' => $con->errno]);
+            echo json_encode(['status' => 'error', 'message' => 'Error interno al preparar el registro del cliente.']);
+        }
+        break;
+
+    case 'delete_profile':
+        if (!$is_master_dir && !in_array($rol_dir, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Solo Administradores o MASTER pueden eliminar contactos.']);
+            exit;
+        }
+        $id = intval($_POST['id'] ?? 0);
+        if (!authorize_directorio_cliente($con, $id, $is_master_dir, $user_sede_dir)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
+            exit;
+        }
+        $prevDel = null;
+        $stmtP = $con->prepare("SELECT * FROM clientes_contactos WHERE id = ? LIMIT 1");
+        if ($stmtP) {
+            $stmtP->bind_param("i", $id);
+            $stmtP->execute();
+            $prevDel = $stmtP->get_result()->fetch_assoc();
+            $stmtP->close();
+        }
+        if (!$prevDel) {
+            echo json_encode(['status' => 'error', 'message' => 'Cliente no encontrado.']);
+            break;
+        }
+        $stmtDel = $con->prepare("DELETE FROM clientes_contactos WHERE id = ?");
+        $okDel = false;
+        if ($stmtDel) {
+            $stmtDel->bind_param("i", $id);
+            $okDel = $stmtDel->execute();
+            if (!$okDel) {
+                starfi_log_exception('directorio', 'Error DELETE delete_profile', ['id' => $id, 'errno' => $stmtDel->errno]);
+            }
+            $stmtDel->close();
+        }
+        if ($okDel) {
+            registrar_auditoria(
+                'directorio',
+                'ELIMINAR_CLIENTE',
+                "Cliente #$id eliminado del directorio (" . ($prevDel['nombre'] ?? '') . ")",
+                $prevDel,
+                ['eliminado' => true, 'id' => $id],
+                $con,
+                $agente_id_dir,
+                intval($prevDel['id_sede'] ?? $user_sede_dir)
+            );
+            echo json_encode(['status' => 'success', 'message' => 'Cliente eliminado correctamente.']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'No se pudo eliminar el cliente.']);
         }
         break;
 
@@ -315,4 +520,3 @@ switch ($action) {
         echo json_encode(['status' => 'error', 'message' => 'Acción no válida']);
         break;
 }
-?>

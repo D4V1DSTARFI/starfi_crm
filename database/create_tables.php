@@ -1,4 +1,5 @@
 <?php
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit('CLI only'); }
 /**
  * Script para crear las tablas de registro en la base de datos starfi_crm.
  */

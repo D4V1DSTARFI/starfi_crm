@@ -138,6 +138,44 @@ if ($exp_id > 0 || $tipo === 'expediente' || $tipo === 'expediente_legacy') {
         exit('Documento no encontrado.');
     }
     $target_path = $cand;
+} elseif ($tipo === 'comprobante_waba') {
+    if (!$is_global && !hasPermission('waba_ordenes') && !hasPermission('dashboard')) {
+        http_response_code(403);
+        exit('Acceso denegado a comprobantes WABA.');
+    }
+
+    $rel1 = 'assets/uploads/comprobantes_waba/' . $file;
+    $likeComp = '%comprobantes_waba/' . $file;
+    $stmt_c = $con->prepare("SELECT id, id_sede, comprobante_ruta FROM waba_ordenes_cobro WHERE comprobante_ruta = ? OR comprobante_ruta LIKE ? LIMIT 1");
+    $row_comp = null;
+    if ($stmt_c) {
+        $stmt_c->bind_param("ss", $rel1, $likeComp);
+        $stmt_c->execute();
+        $res_c = $stmt_c->get_result();
+        $row_comp = $res_c ? $res_c->fetch_assoc() : null;
+        $stmt_c->close();
+    }
+
+    if (!$row_comp) {
+        if (!$is_global) {
+            http_response_code(403);
+            exit('Comprobante no autorizado para su sede.');
+        }
+    } else {
+        $comp_sede = intval($row_comp['id_sede'] ?? 0);
+        if (!$is_global && ($user_sede <= 0 || $comp_sede !== $user_sede)) {
+            http_response_code(403);
+            exit('Acceso denegado: este comprobante pertenece a otra sede.');
+        }
+    }
+
+    $baseComp = realpath(__DIR__ . '/assets/uploads/comprobantes_waba');
+    $cand = $baseComp ? realpath($baseComp . '/' . $file) : false;
+    if (!$cand || !$baseComp || strpos($cand, $baseComp) !== 0 || !is_file($cand)) {
+        http_response_code(404);
+        exit('Comprobante no encontrado.');
+    }
+    $target_path = $cand;
 } else {
     http_response_code(400);
     exit('Tipo de recurso no soportado.');

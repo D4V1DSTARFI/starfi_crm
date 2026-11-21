@@ -6,18 +6,24 @@ $agente = getAgenteInfo();
 $es_master = (($agente['rol'] ?? '') === 'MASTER');
 $id_sede_agente = intval($agente['id_sede'] ?? 0);
 
-// Cargar sedes activas para el filtro
 $con = getDbConnection();
-if ($es_master) {
-    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
-} else {
-    $res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE id = $id_sede_agente LIMIT 1");
-}
-
 $sedes = [];
-if ($res_sedes) {
-    while ($row = $res_sedes->fetch_assoc()) {
-        $sedes[] = $row;
+if ($con) {
+    if ($es_master) {
+        $stmt_sedes = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+    } else {
+        $stmt_sedes = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE id = ? LIMIT 1");
+        if ($stmt_sedes) {
+            $stmt_sedes->bind_param("i", $id_sede_agente);
+        }
+    }
+    if ($stmt_sedes) {
+        $stmt_sedes->execute();
+        $res_sedes = $stmt_sedes->get_result();
+        while ($res_sedes && ($row = $res_sedes->fetch_assoc())) {
+            $sedes[] = $row;
+        }
+        $stmt_sedes->close();
     }
 }
 ?>

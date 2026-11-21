@@ -279,6 +279,7 @@ function requirePermission($modulo) {
         <head>
             <meta charset="UTF-8">
             <title>Acceso Denegado | STARFI CRM</title>
+            <link rel="icon" href="' . htmlspecialchars($prefix, ENT_QUOTES, 'UTF-8') . 'docs/identidad_visual/logos/isologo.ico" type="image/x-icon">
             <link href="' . htmlspecialchars($prefix, ENT_QUOTES, 'UTF-8') . 'assets/css/bootstrap.min.css" rel="stylesheet">
             <link href="' . htmlspecialchars($prefix, ENT_QUOTES, 'UTF-8') . 'assets/icons/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet">
             <link href="' . htmlspecialchars($prefix, ENT_QUOTES, 'UTF-8') . 'assets/css/starfi_theme.css" rel="stylesheet">
@@ -345,10 +346,10 @@ function renderSidebar($active = '') {
         'bandeja' => ['link' => '../bandeja/bandeja.php', 'icon' => 'fa-solid fa-inbox', 'label' => 'Bandeja Omnicanal'],
         'pipeline' => ['link' => '../pipeline/pipeline.php', 'icon' => 'fa-solid fa-filter-circle-dollar', 'label' => 'Embudo de Ventas'],
         'campanas' => ['link' => '../campanas/campanas.php', 'icon' => 'fa-solid fa-bullhorn', 'label' => 'Campañas Difusión'],
-        'perfil_empresa' => ['link' => '../perfil_empresa/index.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
+        'perfil_empresa' => ['link' => '../perfil_empresa/perfil_empresa.php', 'icon' => 'fa-solid fa-building', 'label' => 'Perfil Empresa'],
         'directorio' => ['link' => '../directorio/directorio.php', 'icon' => 'fa-solid fa-address-book', 'label' => 'Directorio 360'],
-        'gestion_usuarios' => ['link' => '../gestion_usuarios/index.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],
-        'gestion_roles' => ['link' => '../gestion_roles/index.php', 'icon' => 'fa-solid fa-user-shield', 'label' => 'Roles y Permisos'],
+        'gestion_usuarios' => ['link' => '../gestion_usuarios/gestion_usuarios.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],
+        'gestion_roles' => ['link' => '../gestion_roles/gestion_roles.php', 'icon' => 'fa-solid fa-user-shield', 'label' => 'Roles y Permisos'],
         'dashboard' => ['link' => '../dashboard/dashboard.php', 'icon' => 'fa-solid fa-chart-line', 'label' => 'Métricas y KPIs'],
         'gestor_bots' => ['link' => '../gestor_bots/gestor_bots.php', 'icon' => 'fa-solid fa-robot', 'label' => 'Gestor de Bots'],
         'configuracion' => ['link' => '../configuracion/configuracion.php', 'icon' => 'fa-solid fa-gear', 'label' => 'Configuración']

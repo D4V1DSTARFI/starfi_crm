@@ -10,6 +10,14 @@ $(document).ready(function() {
     $('#btnApplyFilters').on('click', function() {
         loadDashboardData();
     });
+
+    const toggleBtn = document.getElementById('toggleSidebar');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function() {
+            const sb = document.getElementById('sidebar');
+            if (sb) sb.classList.toggle('collapsed');
+        });
+    }
 });
 
 function loadDashboardData() {

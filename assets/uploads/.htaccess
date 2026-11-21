@@ -1,7 +1,21 @@
 Options -Indexes
 
-# Bloquear ejecución de scripts y lectura de archivos ocultos/.env dentro de uploads
-<FilesMatch "(^\.env|\.(php|php5|php7|phtml|phar|ini|sql|log|sh|bak)$)">
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# Bloquear ejecución de scripts y archivos sensibles dentro de assets/uploads
+<FilesMatch "(^\.env|\.(php|php\d|phtml|phar|pl|py|cgi|exe|sh|bat|cmd|ps1|ini|sql|log|bak)$)">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -11,3 +25,8 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
+# Enrutar comprobantes WABA obligatoriamente por controlador autenticado por sede
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^comprobantes_waba/([A-Za-z0-9._-]+)$ ../../ver_documento.php?tipo=comprobante_waba&file=$1 [L,QSA]
+</IfModule>

@@ -4,34 +4,33 @@ let currentPage = 1;
 const pageSize = 10;
 let currentSortCol = 'disparador';
 let currentSortAsc = true;
+let allContactos = [];
 
 $(document).ready(function() {
     loadBotRules();
 
-    // Toggle de Botones Interactivos (Meta API)
     $('#enableButtons').on('change', function() {
         if ($(this).is(':checked')) {
             $('#buttonsContainer').slideDown();
         } else {
             $('#buttonsContainer').slideUp();
-            $('#buttonsList input').val(''); // Limpiar los inputs
+            $('#buttonsList input').val('');
         }
     });
-    
-    // Limpiar al cerrar modal
+
     $('#botModal').on('hidden.bs.modal', function () {
         $('#buttonsContainer').hide();
         $('#enableButtons').prop('checked', false);
         $('#buttonsList input').val('');
+        $('#mediaFields').hide();
+        $('#locationFields').hide();
     });
 
-    // Búsqueda en tiempo real
     $('#searchRule').on('keyup', function() {
         currentPage = 1;
         applyFiltersAndRender();
     });
 
-    // Paginación
     $('#btnPrevPage').on('click', function() {
         if (currentPage > 1) {
             currentPage--;
@@ -47,23 +46,22 @@ $(document).ready(function() {
         }
     });
 
-    // Ordenamiento por cabeceras
     $('th.sortable').on('click', function() {
         const col = $(this).data('sort');
         if (currentSortCol === col) {
-            currentSortAsc = !currentSortAsc; // Toggle direction
+            currentSortAsc = !currentSortAsc;
         } else {
             currentSortCol = col;
             currentSortAsc = true;
         }
-        
+
         $('th.sortable').removeClass('asc desc');
         $('th.sortable i').removeClass('fa-sort-up fa-sort-down').addClass('fa-sort');
-        
+
         let icon = currentSortAsc ? 'fa-sort-up' : 'fa-sort-down';
         $(this).addClass(currentSortAsc ? 'asc' : 'desc');
         $(this).find('i').removeClass('fa-sort').addClass(icon);
-        
+
         currentPage = 1;
         applyFiltersAndRender();
     });
@@ -71,20 +69,39 @@ $(document).ready(function() {
 
 let botModalObj = null;
 
+function toggleFormatFields() {
+    const fmt = $('#ruleFormat').val();
+    if (fmt === 'IMAGEN' || fmt === 'DOCUMENTO') {
+        $('#mediaFields').slideDown();
+        $('#locationFields').slideUp();
+    } else if (fmt === 'UBICACION') {
+        $('#locationFields').slideDown();
+        $('#mediaFields').slideUp();
+    } else {
+        $('#mediaFields').slideUp();
+        $('#locationFields').slideUp();
+    }
+}
+
+function handleFileUpload(input) {
+    if (input && input.files && input.files[0]) {
+        $('#ruleMediaUrl').val('uploads/bots/' + input.files[0].name);
+    }
+}
+
 function loadBotRules() {
     let selectObj = $('#sedeFilter');
     let idSede = selectObj.val();
-    
+
     if (!idSede || idSede === "0") {
         $('#botToggleContainer').hide();
         $('#botContentContainer').hide();
         return;
     }
-    
-    // Set current bot status
+
     let botActivo = selectObj.find('option:selected').data('bot-activo');
     $('#botStatusToggle').prop('checked', botActivo == 1);
-    
+
     $('#botToggleContainer').css('display', 'flex');
     $('#botContentContainer').fadeIn();
 
@@ -95,10 +112,10 @@ function loadBotRules() {
         data: { action: 'load_rules', id_sede: idSede },
         success: function(response) {
             if (response.status === 'success') {
-                allRules = response.data;
+                allRules = response.data || [];
                 applyFiltersAndRender();
             } else {
-                Swal.fire('Error', response.message, 'error');
+                Swal.fire('Error', response.message || 'No se pudieron cargar las reglas.', 'error');
             }
         }
     });
@@ -107,7 +124,7 @@ function loadBotRules() {
 function toggleBotStatus() {
     let idSede = $('#sedeFilter').val();
     let isActive = $('#botStatusToggle').is(':checked') ? 1 : 0;
-    
+
     $.ajax({
         url: 'back_gestor_bots.php',
         type: 'POST',
@@ -126,25 +143,23 @@ function toggleBotStatus() {
                 });
             } else {
                 $('#botStatusToggle').prop('checked', !isActive);
-                Swal.fire('Error', response.message, 'error');
+                Swal.fire('Error', response.message || 'Error al actualizar el bot.', 'error');
             }
         }
     });
 }
 
 function applyFiltersAndRender() {
-    let query = $('#searchRule').val().toLowerCase().trim();
-    
-    // Filtrar
+    let query = ($('#searchRule').val() || '').toLowerCase().trim();
+
     filteredRules = allRules.filter(r => {
         let disp = r.disparador ? r.disparador.toLowerCase() : '';
         let msg = r.mensaje ? r.mensaje.toLowerCase() : '';
         return disp.includes(query) || msg.includes(query);
     });
 
-    // Ordenar
     filteredRules.sort((a, b) => {
-        let valA, valB;
+        let valA = '', valB = '';
         if (currentSortCol === 'tipo') {
             valA = a.tipo || ''; valB = b.tipo || '';
         } else if (currentSortCol === 'disparador') {
@@ -161,13 +176,20 @@ function applyFiltersAndRender() {
     renderTablePage();
 }
 
+function escapeBotHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+    });
+}
+
 function renderTablePage() {
     let tbody = $('#botRulesTable');
     tbody.empty();
-    
+
     let totalItems = filteredRules.length;
     let totalPages = Math.ceil(totalItems / pageSize) || 1;
-    
+
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
@@ -175,7 +197,7 @@ function renderTablePage() {
     let endIndex = startIndex + pageSize;
     let paginatedItems = filteredRules.slice(startIndex, endIndex);
 
-    if(paginatedItems.length === 0) {
+    if (paginatedItems.length === 0) {
         tbody.append('<tr><td colspan="5" class="text-center text-muted p-5"><i class="fa-solid fa-robot fs-2 mb-3 d-block"></i>No se encontraron reglas.</td></tr>');
     } else {
         paginatedItems.forEach(rule => {
@@ -187,7 +209,7 @@ function renderTablePage() {
             } else {
                 tipoBadge = '<span class="badge bg-primary">Palabra Clave</span>';
             }
-                
+
             let estadoBadge = rule.estado === 'ACTIVO'
                 ? '<span class="badge bg-success">Activo</span>'
                 : '<span class="badge bg-light text-dark border">Inactivo</span>';
@@ -195,14 +217,14 @@ function renderTablePage() {
             let html = `
                 <tr>
                     <td style="padding-left: 24px;">${tipoBadge}</td>
-                    <td class="fw-bold">${rule.disparador}</td>
-                    <td><small class="text-muted text-wrap" style="max-width: 300px; display: block;">${rule.mensaje}</small></td>
+                    <td class="fw-bold">${escapeBotHtml(rule.disparador)}</td>
+                    <td><small class="text-muted text-wrap" style="max-width: 300px; display: block;">${escapeBotHtml(rule.mensaje)}</small></td>
                     <td>${estadoBadge}</td>
                     <td style="text-align: right; padding-right: 24px;">
-                        <button class="btn btn-sm btn-light text-primary me-1" onclick="editBotRule(${rule.id}, '${rule.tipo}', '${rule.disparador}', '${rule.mensaje.replace(/'/g, "\\'").replace(/\n/g, "\\n")}', '${rule.estado}')">
+                        <button class="btn btn-sm btn-light text-primary me-1" onclick="editBotRule(${Number(rule.id)})">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="btn btn-sm btn-light text-danger" onclick="deleteBotRule(${rule.id})">
+                        <button class="btn btn-sm btn-light text-danger" onclick="deleteBotRule(${Number(rule.id)})">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </td>
@@ -212,10 +234,9 @@ function renderTablePage() {
         });
     }
 
-    // Actualizar botones de paginación
     let displayEnd = Math.min(endIndex, totalItems);
     let displayStart = totalItems === 0 ? 0 : startIndex + 1;
-    
+
     $('#pageInfo').text(`Mostrando ${displayStart} - ${displayEnd} de ${totalItems} reglas`);
     $('#btnPrevPage').prop('disabled', currentPage === 1);
     $('#btnNextPage').prop('disabled', currentPage === totalPages || totalItems === 0);
@@ -229,21 +250,31 @@ function openBotModal() {
     }
     $('#botForm')[0].reset();
     $('#ruleId').val('0');
+    $('#parentId').val('');
     $('#botModalTitle').text('Nueva Respuesta Automática');
-    
-    if(!botModalObj) botModalObj = new bootstrap.Modal(document.getElementById('botModal'));
+    toggleFormatFields();
+
+    if (!botModalObj) botModalObj = new bootstrap.Modal(document.getElementById('botModal'));
     botModalObj.show();
 }
 
 function editBotRule(id, tipo, disparador, mensaje, estado) {
+    let rule = allRules.find(r => Number(r.id) === Number(id));
     $('#ruleId').val(id);
-    $('#ruleType').val(tipo);
-    $('#ruleTrigger').val(disparador);
-    $('#ruleMessage').val(mensaje);
-    $('#ruleState').val(estado);
+    $('#ruleType').val(tipo !== undefined ? tipo : (rule ? rule.tipo : 'PALABRA_CLAVE'));
+    $('#ruleFormat').val(rule && rule.formato_respuesta ? rule.formato_respuesta : 'TEXTO');
+    $('#ruleTrigger').val(disparador !== undefined ? disparador : (rule ? rule.disparador : ''));
+    $('#ruleMessage').val(mensaje !== undefined ? mensaje : (rule ? rule.mensaje : ''));
+    $('#ruleState').val(estado !== undefined ? estado : (rule ? rule.estado : 'ACTIVO'));
+    $('#parentId').val(rule && rule.id_padre ? rule.id_padre : '');
+    $('#ruleMediaUrl').val(rule && rule.media_url ? rule.media_url : '');
+    $('#ruleLat').val(rule && rule.latitud ? rule.latitud : '');
+    $('#ruleLng').val(rule && rule.longitud ? rule.longitud : '');
+    $('#enableWait').prop('checked', !!(rule && Number(rule.espera_respuesta) === 1));
     $('#botModalTitle').text('Editar Respuesta Automática');
-    
-    if(!botModalObj) botModalObj = new bootstrap.Modal(document.getElementById('botModal'));
+    toggleFormatFields();
+
+    if (!botModalObj) botModalObj = new bootstrap.Modal(document.getElementById('botModal'));
     botModalObj.show();
 }
 
@@ -252,9 +283,15 @@ function saveBotRule() {
         action: 'save_rule',
         id: $('#ruleId').val(),
         id_sede: $('#sedeFilter').val(),
+        id_padre: $('#parentId').val(),
         tipo: $('#ruleType').val(),
+        formato_respuesta: $('#ruleFormat').val(),
         disparador: $('#ruleTrigger').val(),
         mensaje: $('#ruleMessage').val(),
+        media_url: $('#ruleMediaUrl').val(),
+        latitud: $('#ruleLat').val(),
+        longitud: $('#ruleLng').val(),
+        espera_respuesta: $('#enableWait').is(':checked') ? '1' : '0',
         estado: $('#ruleState').val()
     };
 
@@ -280,7 +317,7 @@ function saveBotRule() {
                 });
                 loadBotRules();
             } else {
-                Swal.fire('Error', response.message, 'error');
+                Swal.fire('Error', response.message || 'No se pudo guardar la regla.', 'error');
             }
         }
     });
@@ -289,7 +326,7 @@ function saveBotRule() {
 function deleteBotRule(id) {
     Swal.fire({
         title: '¿Estás seguro?',
-        text: "¡No podrás revertir esto!",
+        text: '¡No podrás revertir esto!',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#d33',
@@ -308,7 +345,7 @@ function deleteBotRule(id) {
                         loadBotRules();
                         Swal.fire('Eliminada', 'La regla ha sido eliminada.', 'success');
                     } else {
-                        Swal.fire('Error', response.message, 'error');
+                        Swal.fire('Error', response.message || 'No se pudo eliminar.', 'error');
                     }
                 }
             });
@@ -316,21 +353,16 @@ function deleteBotRule(id) {
     });
 }
 
-
 function showToast(title, message, type) {
-    if (typeof Swal !== 'undefined') {
-        Swal.fire({
-            toast: true,
-            position: 'top-end',
-            icon: type === 'danger' ? 'error' : type,
-            title: title,
-            text: message,
-            showConfirmButton: false,
-            timer: 3000
-        });
-    } else {
-        alert(title + ": " + message);
-    }
+    Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: type === 'danger' ? 'error' : type,
+        title: title,
+        text: message,
+        showConfirmButton: false,
+        timer: 3000
+    });
 }
 
 // ==========================================
@@ -339,16 +371,24 @@ function showToast(title, message, type) {
 let modalContactos, modalContactoForm;
 
 document.addEventListener('DOMContentLoaded', () => {
+    const toggleBtn = document.getElementById('toggleSidebar');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) sidebar.classList.toggle('collapsed');
+        });
+    }
+
     if (document.getElementById('modalContactos')) {
         modalContactos = new bootstrap.Modal(document.getElementById('modalContactos'));
         modalContactoForm = new bootstrap.Modal(document.getElementById('modalContactoForm'));
-        
+
         document.getElementById('contactoForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
             formData.append('action', 'save_contacto');
             formData.append('id_sede', document.getElementById('sedeFilter').value);
-            
+
             fetch('back_gestor_bots.php', {
                 method: 'POST',
                 body: formData
@@ -363,7 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast('Error', res.message, 'danger');
                 }
             })
-            .catch(err => {
+            .catch(() => {
                 showToast('Error', 'Error de red', 'danger');
             });
         });
@@ -388,22 +428,23 @@ function loadContactos() {
     .then(r => r.json())
     .then(res => {
         if (res.status === 'success') {
+            allContactos = res.data || [];
             const tbody = document.getElementById('contactosTableBody');
             tbody.innerHTML = '';
-            if (res.data.length === 0) {
+            if (allContactos.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-4">No hay vendedores registrados.</td></tr>`;
                 return;
             }
-            res.data.forEach(c => {
+            allContactos.forEach(c => {
                 const badgeClass = c.estado === 'ACTIVO' ? 'bg-success' : 'bg-danger';
                 tbody.innerHTML += `
                     <tr>
-                        <td class="fw-bold text-dark">${c.nombre}</td>
-                        <td>${c.telefono}</td>
-                        <td><span class="badge ${badgeClass}">${c.estado}</span></td>
+                        <td class="fw-bold text-dark">${escapeBotHtml(c.nombre)}</td>
+                        <td>${escapeBotHtml(c.telefono)}</td>
+                        <td><span class="badge ${badgeClass}">${escapeBotHtml(c.estado)}</span></td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-light text-primary me-2" onclick='editContacto(${JSON.stringify(c)})'><i class="fa-solid fa-pen"></i></button>
-                            <button class="btn btn-sm btn-light text-danger" onclick="deleteContacto(${c.id})"><i class="fa-solid fa-trash"></i></button>
+                            <button class="btn btn-sm btn-light text-primary me-2" onclick="editContactoById(${Number(c.id)})"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn btn-sm btn-light text-danger" onclick="deleteContacto(${Number(c.id)})"><i class="fa-solid fa-trash"></i></button>
                         </td>
                     </tr>
                 `;
@@ -418,6 +459,11 @@ function newContacto() {
     modalContactoForm.show();
 }
 
+function editContactoById(id) {
+    const c = allContactos.find(x => Number(x.id) === Number(id));
+    if (c) editContacto(c);
+}
+
 function editContacto(c) {
     document.getElementById('contacto_id').value = c.id;
     document.getElementById('contacto_nombre').value = c.nombre;
@@ -427,22 +473,32 @@ function editContacto(c) {
 }
 
 function deleteContacto(id) {
-    if (!confirm('¿Estás seguro de eliminar este vendedor?')) return;
-    const fd = new FormData();
-    fd.append('action', 'delete_contacto');
-    fd.append('id', id);
+    Swal.fire({
+        title: '¿Eliminar vendedor?',
+        text: 'Se eliminará este contacto de la lista de asesores del bot.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonText: 'Cancelar',
+        confirmButtonText: 'Sí, eliminar'
+    }).then(result => {
+        if (!result.isConfirmed) return;
+        const fd = new FormData();
+        fd.append('action', 'delete_contacto');
+        fd.append('id', id);
 
-    fetch('back_gestor_bots.php', {
-        method: 'POST',
-        body: fd
-    })
-    .then(r => r.json())
-    .then(res => {
-        if (res.status === 'success') {
-            showToast('Eliminado', res.message, 'success');
-            loadContactos();
-        } else {
-            showToast('Error', res.message, 'danger');
-        }
+        fetch('back_gestor_bots.php', {
+            method: 'POST',
+            body: fd
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success') {
+                showToast('Eliminado', res.message, 'success');
+                loadContactos();
+            } else {
+                showToast('Error', res.message, 'danger');
+            }
+        });
     });
 }

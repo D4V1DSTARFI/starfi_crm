@@ -71,6 +71,21 @@ function actualizarRelojLocalBarra() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const bodyEl = document.body;
+    if (bodyEl && bodyEl.dataset) {
+        ECO_STATE.esGlobal = bodyEl.dataset.esGlobal === '1';
+        if (!ECO_STATE.esGlobal && parseInt(bodyEl.dataset.idSede || '0', 10) > 0) {
+            ECO_STATE.sedeSeleccionada = parseInt(bodyEl.dataset.idSede, 10);
+        }
+    }
+
+    ['formCampanaWizard', 'formFlujoSede'].forEach(fid => {
+        const frm = document.getElementById(fid);
+        if (frm) {
+            frm.addEventListener('submit', e => e.preventDefault());
+        }
+    });
+
     // Verificar si vienen contactos preseleccionados desde Directorio 360 via sessionStorage
     try {
         const pre = sessionStorage.getItem('starfi_campana_preseleccion');
@@ -111,7 +126,19 @@ function mostrarDialogoStarfi({
     return new Promise((resolve) => {
         const modalEl = document.getElementById('modalStarfiDialog');
         if (!modalEl) {
-            resolve(true);
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    title: title,
+                    html: bodyHtml,
+                    icon: 'info',
+                    showCancelButton: !!cancelText,
+                    confirmButtonText: confirmText,
+                    cancelButtonText: cancelText || 'Cancelar',
+                    confirmButtonColor: confirmColor
+                }).then(r => resolve(!!r.isConfirmed));
+            } else {
+                resolve(true);
+            }
             return;
         }
 
@@ -244,6 +271,10 @@ async function recargarEcosistema(forzarSedeId = null) {
     }
     try {
         const resp = await fetch(`back_campanas.php?action=get_ecosystem_data&id_sede=${sedeParam}`);
+        if (resp.status === 401) {
+            window.location.href = '../../login.php';
+            return;
+        }
         const rawText = await resp.text();
         let data = null;
         try {
@@ -1360,6 +1391,26 @@ function previsualizarImagenCabecera(inputEl) {
     const btnClear = document.getElementById('btnLimpiarImagenHeader');
     if (inputEl && inputEl.files && inputEl.files.length > 0) {
         const file = inputEl.files[0];
+        if (file.size > 5 * 1024 * 1024) {
+            inputEl.value = '';
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Archivo demasiado grande',
+                    text: 'La imagen de cabecera no debe superar los 5 MB.',
+                    confirmButtonColor: '#E85B14'
+                });
+            } else {
+                mostrarToastStarfi('La imagen de cabecera no debe superar los 5 MB.', 'warning');
+            }
+            if (badge) {
+                badge.className = 'badge bg-warning-subtle text-dark border border-warning-subtle';
+                badge.textContent = 'Logo Oficial Automático';
+            }
+            if (btnClear) btnClear.classList.add('d-none');
+            actualizarVistaPreviaCampana();
+            return;
+        }
         CAMP_HEADER_PREVIEW_URL = URL.createObjectURL(file);
         if (badge) {
             badge.className = 'badge bg-success-subtle text-success border border-success-subtle';
@@ -2740,6 +2791,8 @@ function renderizarTablaDestinatariosModalPaginada() {
             badge = `<span class="badge bg-light text-dark border">ENVIADO</span>`;
         } else if (d.estado_envio === 'FALLIDO') {
             badge = `<span class="badge bg-danger" title="${escapeHtml(d.error_detalle || '')}">FALLIDO</span>`;
+        } else if (d.estado_envio === 'OMITIDO_ANTIFATIGA') {
+            badge = `<span class="badge bg-warning text-dark" title="${escapeHtml(d.error_detalle || '')}"><i class="fa-solid fa-shield-heart me-1"></i>ANTI-FATIGA 24H</span>`;
         }
 
         const respTxt = d.respuesta_texto

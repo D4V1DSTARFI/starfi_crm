@@ -1,8 +1,5 @@
 <?php
-if (PHP_SAPI !== 'cli') {
-    require_once __DIR__ . '/../core/auth.php';
-    requireAuth();
-}
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit('CLI only'); }
 require_once __DIR__ . '/../config/database.php';
 
 function update_existing_costs() {

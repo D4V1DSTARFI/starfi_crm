@@ -18,6 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/audit.php';
 
 // Rate-limit por IP + sesión (máx. 5 intentos fallidos cada 15 minutos)
 $client_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
@@ -198,9 +199,29 @@ switch ($action) {
 
                 starfi_recovery_clear_fails($rl_path);
                 $_SESSION['recovery_verified_user_id'] = $id_usuario;
+                registrar_auditoria(
+                    'auth',
+                    'RECUPERACION_PREGUNTAS_OK',
+                    'Verificación exitosa de preguntas de seguridad',
+                    ['id_usuario' => $id_usuario, 'verificado' => false],
+                    ['id_usuario' => $id_usuario, 'verificado' => true],
+                    $con,
+                    $id_usuario,
+                    null
+                );
                 echo json_encode(['success' => true, 'message' => 'Respuestas de seguridad verificadas correctamente.']);
             } else {
                 starfi_recovery_add_fail($rl_path);
+                registrar_auditoria(
+                    'auth',
+                    'RECUPERACION_PREGUNTAS_FALLO',
+                    'Intento fallido en preguntas de seguridad',
+                    ['id_usuario' => $id_usuario],
+                    ['id_usuario' => $id_usuario, 'coincidencias' => $coincidencias],
+                    $con,
+                    $id_usuario,
+                    null
+                );
                 echo json_encode(['success' => false, 'message' => 'Una o más respuestas de seguridad son incorrectas.']);
             }
         }
@@ -269,6 +290,16 @@ switch ($action) {
                     . "</div>";
 
                 $send_res = $mailer->sendDirectEmail($correo_dest, $nombre_dest, 'Código de Verificación OTP - STARFI CRM', $html_otp);
+                registrar_auditoria(
+                    'auth',
+                    'RECUPERACION_OTP_ENVIADO',
+                    'Generación y despacho de código OTP de recuperación',
+                    ['id_usuario' => $id_usuario],
+                    ['id_usuario' => $id_usuario, 'expiracion' => $expiracion, 'smtp_status' => $send_res['status'] ?? 'error'],
+                    $con,
+                    $id_usuario,
+                    null
+                );
                 if (isset($send_res['status']) && $send_res['status'] === 'success') {
                     echo json_encode([
                         'success' => true,
@@ -328,6 +359,16 @@ switch ($action) {
                 if ($codigo_db === '' || $codigo === '' || !hash_equals($codigo_db, $codigo)) {
                     $_SESSION['recovery_otp_tries'] = $otp_tries + 1;
                     starfi_recovery_add_fail($rl_path);
+                    registrar_auditoria(
+                        'auth',
+                        'RECUPERACION_OTP_FALLIDO',
+                        'Código OTP incorrecto en recuperación de contraseña',
+                        ['id_usuario' => $id_usuario, 'intentos_otp' => $otp_tries],
+                        ['id_usuario' => $id_usuario, 'intentos_otp' => $otp_tries + 1],
+                        $con,
+                        $id_usuario,
+                        null
+                    );
                     echo json_encode(['success' => false, 'message' => 'El código de verificación es incorrecto.']);
                 } elseif (empty($expiracion_db) || strtotime($expiracion_db) < time()) {
                     echo json_encode(['success' => false, 'message' => 'El código de verificación ha expirado.']);
@@ -341,6 +382,16 @@ switch ($action) {
 
                     starfi_recovery_clear_fails($rl_path);
                     $_SESSION['recovery_verified_user_id'] = $id_usuario;
+                    registrar_auditoria(
+                        'auth',
+                        'RECUPERACION_OTP_VERIFICADO',
+                        'Código OTP verificado exitosamente',
+                        ['id_usuario' => $id_usuario, 'otp_activo' => true],
+                        ['id_usuario' => $id_usuario, 'otp_activo' => false],
+                        $con,
+                        $id_usuario,
+                        null
+                    );
                     echo json_encode(['success' => true, 'message' => 'Código verificado con éxito.']);
                 }
             } else {
@@ -376,8 +427,19 @@ switch ($action) {
             if ($stmt->execute()) {
                 unset($_SESSION['recovery_user_id'], $_SESSION['recovery_verified_user_id'], $_SESSION['recovery_otp_tries']);
                 starfi_recovery_clear_fails($rl_path);
+                registrar_auditoria(
+                    'auth',
+                    'PASSWORD_RESTABLECIDO',
+                    'Restablecimiento exitoso de contraseña mediante flujo de recuperación',
+                    ['id_usuario' => $id_usuario, 'contrasena' => '[REDACTED]'],
+                    ['id_usuario' => $id_usuario, 'contrasena' => '[REDACTED]', 'fecha_cambio' => date('Y-m-d H:i:s')],
+                    $con,
+                    $id_usuario,
+                    null
+                );
                 echo json_encode(['success' => true, 'message' => '¡Su contraseña ha sido restablecida correctamente!']);
             } else {
+                starfi_log_exception('auth', 'Error al actualizar contraseña en recover_password', ['id_usuario' => $id_usuario]);
                 echo json_encode(['success' => false, 'message' => 'Error al actualizar la contraseña.']);
             }
             $stmt->close();

@@ -1,7 +1,11 @@
 <?php
 // modules/dashboard/back_dashboard.php
+// Controlador de KPIs y Métricas del Dashboard — STARFI CRM (QA-STD-GLOBAL-2.1)
+// 100% mysqli_prepare() + cero fugas SQL + bitácora formal starfi_log_exception().
+
 @ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
+require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
 requirePermission('dashboard');
 $agente_dashboard = getAgenteInfo();
@@ -9,12 +13,19 @@ session_write_close();
 header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
-$action = $_POST['action'] ?? '';
+if (!$con) {
+    http_response_code(500);
+    echo json_encode(['status' => 'error', 'message' => 'Error de conexión a la base de datos.']);
+    exit;
+}
 
-// Asegurar una sola vez por BD índices compuestos para consultas instantáneas de costos WABA y cruce de wamids en Dashboard
+$action = trim((string)($_POST['action'] ?? ''));
+
+// Asegurar una sola vez por BD índices compuestos (solo fuera de transacciones activas)
 $dash_db_hash = starfi_db_schema_hash($con);
 $dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v3_' . $dash_db_hash . '.flag';
-if ($con && !file_exists($dash_idx_flag)) {
+$in_active_tx = function_exists('starfi_tx_is_active') && starfi_tx_is_active($con);
+if (!$in_active_tx && !file_exists($dash_idx_flag)) {
     $chkIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
     if ($chkIdx && $chkIdx->num_rows === 0) {
         @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_msg_pagado_ts (es_pagado, timestamp)");
@@ -26,10 +37,35 @@ if ($con && !file_exists($dash_idx_flag)) {
     @file_put_contents($dash_idx_flag, date('c'));
 }
 
+function dash_fetch_all_prepared(mysqli $con, string $sql, string $types = '', array $params = []): array {
+    $stmt = @$con->prepare($sql);
+    if (!$stmt) {
+        starfi_log_exception('dashboard', 'No se pudo preparar consulta de KPIs', ['errno' => $con->errno]);
+        return [];
+    }
+    if ($types !== '' && !empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    if (!$stmt->execute()) {
+        starfi_log_exception('dashboard', 'Fallo ejecutando consulta de KPIs', ['errno' => $stmt->errno]);
+        $stmt->close();
+        return [];
+    }
+    $res = $stmt->get_result();
+    $rows = [];
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+    $stmt->close();
+    return $rows;
+}
+
 switch ($action) {
     case 'load_kpis':
         $agente = $agente_dashboard;
-        $rol = strtoupper(trim($agente['rol'] ?? 'AGENTE'));
+        $rol = strtoupper(trim((string)($agente['rol'] ?? 'AGENTE')));
         $user_sede = isset($agente['id_sede']) ? intval($agente['id_sede']) : 0;
         $is_master = ($rol === 'MASTER' || $rol === 'MASTER CI' || intval($agente['id'] ?? 0) === 1);
 
@@ -39,52 +75,82 @@ switch ($action) {
             $id_sede = $_POST['id_sede'] ?? 'all';
         }
 
-        $fecha_desde = trim($_POST['fecha_desde'] ?? '');
-        $fecha_hasta = trim($_POST['fecha_hasta'] ?? '');
-        $desde_esc = !empty($fecha_desde) ? $con->real_escape_string($fecha_desde) . ' 00:00:00' : '';
-        $hasta_esc = !empty($fecha_hasta) ? $con->real_escape_string($fecha_hasta) . ' 23:59:59' : '';
+        $fecha_desde = trim((string)($_POST['fecha_desde'] ?? ''));
+        $fecha_hasta = trim((string)($_POST['fecha_hasta'] ?? ''));
+        $desde_dt = ($fecha_desde !== '' && strtotime($fecha_desde)) ? (date('Y-m-d', strtotime($fecha_desde)) . ' 00:00:00') : '';
+        $hasta_dt = ($fecha_hasta !== '' && strtotime($fecha_hasta)) ? (date('Y-m-d', strtotime($fecha_hasta)) . ' 23:59:59') : '';
         $sede_int = ($id_sede !== 'all' && $id_sede !== '') ? intval($id_sede) : 0;
 
         $where_clauses = [];
-        if ($desde_esc !== '') {
-            $where_clauses[] = "c.fecha_inicio >= '$desde_esc'";
+        $base_types    = '';
+        $base_params   = [];
+
+        if ($desde_dt !== '') {
+            $where_clauses[] = "c.fecha_inicio >= ?";
+            $base_types     .= "s";
+            $base_params[]   = $desde_dt;
         }
-        if ($hasta_esc !== '') {
-            $where_clauses[] = "c.fecha_inicio <= '$hasta_esc'";
+        if ($hasta_dt !== '') {
+            $where_clauses[] = "c.fecha_inicio <= ?";
+            $base_types     .= "s";
+            $base_params[]   = $hasta_dt;
         }
         if ($sede_int > 0) {
-            $where_clauses[] = "lw.id_sede = $sede_int";
+            $where_clauses[] = "lw.id_sede = ?";
+            $base_types     .= "i";
+            $base_params[]   = $sede_int;
         }
 
         $where_sql = count($where_clauses) > 0 ? (" WHERE " . implode(" AND ", $where_clauses)) : "";
-        $cerrados_where = empty($where_sql) ? " WHERE c.estado = 'CERRADO'" : $where_sql . " AND c.estado = 'CERRADO'";
+        $cerrados_where = ($where_sql === "") ? " WHERE c.estado = 'CERRADO'" : ($where_sql . " AND c.estado = 'CERRADO'");
 
-        // 1, 2, 3 y 5.5 consolidados en UNA sola lectura de conversaciones (sin valores Mock)
+        // Verificar columnas opcionales en conversaciones y clientes_contactos para compatibilidad entre esquemas
+        $colsConvRes = @$con->query("SHOW COLUMNS FROM `conversaciones`");
+        $convCols = [];
+        if ($colsConvRes) {
+            while ($rc = $colsConvRes->fetch_assoc()) {
+                $convCols[$rc['Field']] = true;
+            }
+        }
+        $csatCol = isset($convCols['csat_score']) ? 'c.csat_score' : (isset($convCols['calificacion_csat']) ? 'c.calificacion_csat' : 'NULL');
+        $hasResCom = isset($convCols['resultado_comercial']);
+        $hasCierre = isset($convCols['fecha_cierre_venta']);
+
+        $avgResExpr = ($hasResCom && $hasCierre)
+            ? "AVG(CASE WHEN c.resultado_comercial = 'VENTA_CERRADA' AND c.fecha_cierre_venta IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, c.fecha_inicio, c.fecha_cierre_venta) ELSE NULL END)"
+            : "NULL";
+        $ventasExpr = $hasResCom
+            ? "COALESCE(SUM(CASE WHEN c.estado = 'CERRADO' AND c.resultado_comercial = 'VENTA_CERRADA' THEN 1 ELSE 0 END), 0)"
+            : "0";
+        $csatExpr = ($csatCol !== 'NULL')
+            ? "AVG(CASE WHEN c.estado = 'CERRADO' AND $csatCol > 0 THEN $csatCol ELSE NULL END)"
+            : "NULL";
+
         $q_summary = "
             SELECT 
                 COUNT(c.id) AS total_chats,
-                AVG(CASE WHEN c.resultado_comercial = 'VENTA_CERRADA' AND c.fecha_cierre_venta IS NOT NULL 
-                    THEN TIMESTAMPDIFF(MINUTE, c.fecha_inicio, c.fecha_cierre_venta) ELSE NULL END) AS avg_res,
+                $avgResExpr AS avg_res,
                 COALESCE(SUM(CASE WHEN c.estado = 'CERRADO' THEN 1 ELSE 0 END), 0) AS total_cerrados,
-                COALESCE(SUM(CASE WHEN c.estado = 'CERRADO' AND c.resultado_comercial = 'VENTA_CERRADA' THEN 1 ELSE 0 END), 0) AS ventas_cerradas,
-                AVG(CASE WHEN c.estado = 'CERRADO' AND c.csat_score > 0 THEN c.csat_score ELSE NULL END) AS avg_csat
+                $ventasExpr AS ventas_cerradas,
+                $csatExpr AS avg_csat
             FROM conversaciones c
             LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id
             $where_sql
         ";
-        $res_sum = $con->query($q_summary);
-        $total_chats = 0;
-        $avg_res = 0;
-        $conversion = 0;
+        $sumRows = dash_fetch_all_prepared($con, $q_summary, $base_types, $base_params);
+        $total_chats     = 0;
+        $avg_res         = 0;
+        $conversion      = 0;
         $ventas_cerradas = 0;
-        $avg_csat = 0;
+        $avg_csat        = 0;
 
-        if ($res_sum && ($rsum = $res_sum->fetch_assoc())) {
+        if (!empty($sumRows)) {
+            $rsum = $sumRows[0];
             $total_chats = intval($rsum['total_chats'] ?? 0);
             if ($rsum['avg_res'] !== null) {
                 $avg_res = max(0, intval(round(floatval($rsum['avg_res']))));
             }
-            $total_cerrados = intval($rsum['total_cerrados'] ?? 0);
+            $total_cerrados  = intval($rsum['total_cerrados'] ?? 0);
             $ventas_cerradas = intval($rsum['ventas_cerradas'] ?? 0);
             if ($total_cerrados > 0) {
                 $conversion = round(($ventas_cerradas / $total_cerrados) * 100, 1);
@@ -94,55 +160,95 @@ switch ($action) {
             }
         }
 
-        // 4. CAC real basado 100% en consumo registrado en Base de Datos (Campañas + Mensajes facturables WABA)
+        // 4. CAC real basado 100% en consumo registrado en Base de Datos
         $gasto_real_total = 0.0;
         $camp_ids_periodo = [];
 
-        $camp_conds = ["d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')"];
-        if ($sede_int > 0) {
-            $camp_conds[] = "(d.id_sede = $sede_int OR (d.id_sede = 0 AND cd.id_sede = $sede_int))";
-        }
-        if ($desde_esc !== '') {
-            $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) >= '$desde_esc'";
-        }
-        if ($hasta_esc !== '') {
-            $camp_conds[] = "COALESCE(d.fecha_envio, cd.fecha_creacion) <= '$hasta_esc'";
-        }
+        $chkCampTbl = @$con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
+        if ($chkCampTbl && $chkCampTbl->num_rows > 0) {
+            $colsDestRes = @$con->query("SHOW COLUMNS FROM `campanas_difusion_destinatarios`");
+            $destCols = [];
+            if ($colsDestRes) {
+                while ($rd = $colsDestRes->fetch_assoc()) $destCols[$rd['Field']] = true;
+            }
+            $colsCdRes = @$con->query("SHOW COLUMNS FROM `campanas_difusion`");
+            $cdCols = [];
+            if ($colsCdRes) {
+                while ($rcd = $colsCdRes->fetch_assoc()) $cdCols[$rcd['Field']] = true;
+            }
 
-        $q_gasto_camp = "
-            SELECT 
-                COALESCE(SUM(CASE 
-                    WHEN d.costo_usd > 0 THEN d.costo_usd 
-                    WHEN cd.costo_unitario_usd > 0 THEN cd.costo_unitario_usd 
-                    ELSE 0 
-                END), 0) AS gasto_camp,
-                GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
-            FROM campanas_difusion_destinatarios d
-            LEFT JOIN campanas_difusion cd ON d.id_campana = cd.id
-            WHERE " . implode(" AND ", $camp_conds);
-        $res_gc = @$con->query($q_gasto_camp);
-        if ($res_gc && ($row_gc = $res_gc->fetch_assoc())) {
-            $gasto_real_total += floatval($row_gc['gasto_camp'] ?? 0);
-            if (!empty($row_gc['camp_ids'])) {
-                foreach (explode(',', $row_gc['camp_ids']) as $cid_raw) {
-                    $cid_i = intval($cid_raw);
-                    if ($cid_i > 0) {
-                        $camp_ids_periodo[$cid_i] = $cid_i;
+            $dateCampCol = isset($cdCols['fecha_creacion']) ? 'cd.fecha_creacion' : 'cd.created_at';
+            $costCampExpr = isset($destCols['costo_usd'])
+                ? "CASE WHEN d.costo_usd > 0 THEN d.costo_usd WHEN cd.costo_unitario_usd > 0 THEN cd.costo_unitario_usd ELSE 0 END"
+                : "CASE WHEN cd.costo_unitario_usd > 0 THEN cd.costo_unitario_usd ELSE 0 END";
+
+            $camp_conds  = ["d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO', 'RESPONDIDO')"];
+            $camp_types  = '';
+            $camp_params = [];
+
+            if ($sede_int > 0) {
+                if (isset($destCols['id_sede'])) {
+                    $camp_conds[]  = "(d.id_sede = ? OR (d.id_sede = 0 AND cd.id_sede = ?))";
+                    $camp_types   .= "ii";
+                    $camp_params[] = $sede_int;
+                    $camp_params[] = $sede_int;
+                } else {
+                    $camp_conds[]  = "cd.id_sede = ?";
+                    $camp_types   .= "i";
+                    $camp_params[] = $sede_int;
+                }
+            }
+            if ($desde_dt !== '') {
+                $camp_conds[]  = "COALESCE(d.fecha_envio, $dateCampCol) >= ?";
+                $camp_types   .= "s";
+                $camp_params[] = $desde_dt;
+            }
+            if ($hasta_dt !== '') {
+                $camp_conds[]  = "COALESCE(d.fecha_envio, $dateCampCol) <= ?";
+                $camp_types   .= "s";
+                $camp_params[] = $hasta_dt;
+            }
+
+            $q_gasto_camp = "
+                SELECT 
+                    COALESCE(SUM($costCampExpr), 0) AS gasto_camp,
+                    GROUP_CONCAT(DISTINCT d.id_campana) AS camp_ids
+                FROM campanas_difusion_destinatarios d
+                LEFT JOIN campanas_difusion cd ON d.id_campana = cd.id
+                WHERE " . implode(" AND ", $camp_conds);
+            $gcRows = dash_fetch_all_prepared($con, $q_gasto_camp, $camp_types, $camp_params);
+            if (!empty($gcRows)) {
+                $row_gc = $gcRows[0];
+                $gasto_real_total += floatval($row_gc['gasto_camp'] ?? 0);
+                if (!empty($row_gc['camp_ids'])) {
+                    foreach (explode(',', (string)$row_gc['camp_ids']) as $cid_raw) {
+                        $cid_i = intval($cid_raw);
+                        if ($cid_i > 0) {
+                            $camp_ids_periodo[$cid_i] = $cid_i;
+                        }
                     }
                 }
             }
         }
 
-        // Sumar mensajes facturables en mensajes_y_eventos (usando idx_msg_pagado_ts)
-        $msg_conds = ["m.es_pagado = 1", "m.origen != 'CLIENTE'"];
-        if ($desde_esc !== '') {
-            $msg_conds[] = "m.timestamp >= '$desde_esc'";
+        // Sumar mensajes facturables en mensajes_y_eventos
+        $msg_conds  = ["m.es_pagado = 1", "m.origen != 'CLIENTE'"];
+        $msg_types  = '';
+        $msg_params = [];
+        if ($desde_dt !== '') {
+            $msg_conds[]  = "m.timestamp >= ?";
+            $msg_types   .= "s";
+            $msg_params[] = $desde_dt;
         }
-        if ($hasta_esc !== '') {
-            $msg_conds[] = "m.timestamp <= '$hasta_esc'";
+        if ($hasta_dt !== '') {
+            $msg_conds[]  = "m.timestamp <= ?";
+            $msg_types   .= "s";
+            $msg_params[] = $hasta_dt;
         }
         if ($sede_int > 0) {
-            $msg_conds[] = "lw.id_sede = $sede_int";
+            $msg_conds[]  = "lw.id_sede = ?";
+            $msg_types   .= "i";
+            $msg_params[] = $sede_int;
         }
 
         $join_sede_msg = ($sede_int > 0)
@@ -153,53 +259,62 @@ switch ($action) {
             FROM mensajes_y_eventos m
             $join_sede_msg
             WHERE " . implode(" AND ", $msg_conds);
-        $res_gm = $con->query($q_gasto_msg);
-        $gasto_msg_bruto = 0.0;
-        if ($res_gm && ($row_gm = $res_gm->fetch_assoc())) {
-            $gasto_msg_bruto = floatval($row_gm['gasto_msg'] ?? 0);
-        }
+        $gmRows = dash_fetch_all_prepared($con, $q_gasto_msg, $msg_types, $msg_params);
+        $gasto_msg_bruto = !empty($gmRows) ? floatval($gmRows[0]['gasto_msg'] ?? 0) : 0.0;
 
-        // Descontar en O(K) por índice idx_meta_wamid cualquier wamid de campaña que también figure con es_pagado=1 en mensajes_y_eventos
         if ($gasto_msg_bruto > 0 && !empty($camp_ids_periodo)) {
-            $camp_csv = implode(',', $camp_ids_periodo);
-            $ov_conds = [
-                "d2.id_campana IN ($camp_csv)",
+            $placeholders = implode(',', array_fill(0, count($camp_ids_periodo), '?'));
+            $ov_conds  = [
+                "d2.id_campana IN ($placeholders)",
                 "d2.id_mensaje_meta IS NOT NULL",
                 "d2.id_mensaje_meta != ''",
-                "m.es_pagado = 1"
+                "m.es_pagado = 1",
             ];
-            if ($desde_esc !== '') {
-                $ov_conds[] = "m.timestamp >= '$desde_esc'";
+            $ov_types  = str_repeat('i', count($camp_ids_periodo));
+            $ov_params = array_values($camp_ids_periodo);
+
+            if ($desde_dt !== '') {
+                $ov_conds[]  = "m.timestamp >= ?";
+                $ov_types   .= "s";
+                $ov_params[] = $desde_dt;
             }
-            if ($hasta_esc !== '') {
-                $ov_conds[] = "m.timestamp <= '$hasta_esc'";
+            if ($hasta_dt !== '') {
+                $ov_conds[]  = "m.timestamp <= ?";
+                $ov_types   .= "s";
+                $ov_params[] = $hasta_dt;
             }
+
             $q_overlap = "
                 SELECT COALESCE(SUM(COALESCE(m.costo_meta_estimado, 0)), 0) AS gasto_duplicado
                 FROM campanas_difusion_destinatarios d2
-                JOIN mensajes_y_eventos m USE INDEX (idx_meta_wamid)
+                JOIN mensajes_y_eventos m
                   ON m.id_mensaje_meta = CONVERT(d2.id_mensaje_meta USING utf8mb4) COLLATE utf8mb4_unicode_ci
                 WHERE " . implode(" AND ", $ov_conds);
-            $res_ov = @$con->query($q_overlap);
-            if ($res_ov && ($row_ov = $res_ov->fetch_assoc())) {
-                $gasto_msg_bruto = max(0.0, $gasto_msg_bruto - floatval($row_ov['gasto_duplicado'] ?? 0));
+            $ovRows = dash_fetch_all_prepared($con, $q_overlap, $ov_types, $ov_params);
+            if (!empty($ovRows)) {
+                $gasto_msg_bruto = max(0.0, $gasto_msg_bruto - floatval($ovRows[0]['gasto_duplicado'] ?? 0));
             }
         }
         $gasto_real_total += $gasto_msg_bruto;
-
         $cac = ($ventas_cerradas > 0) ? round($gasto_real_total / $ventas_cerradas, 2) : 0;
 
         // 5. Lead Scoring Promedio
-        $lead_query = "SELECT AVG(cc.calificacion_calidad) as avg_score FROM clientes_contactos cc JOIN conversaciones c ON cc.id = c.id_cliente LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " AND cc.calificacion_calidad > 0";
-        $res_lead = $con->query($lead_query);
-        $avg_lead = ($res_lead && ($rl = $res_lead->fetch_assoc()) && $rl['avg_score'] !== null) ? round(floatval($rl['avg_score']), 1) : 0;
+        $avg_lead = 0;
+        $chkLeadCol = @$con->query("SHOW COLUMNS FROM `clientes_contactos` LIKE 'calificacion_calidad'");
+        if ($chkLeadCol && $chkLeadCol->num_rows > 0) {
+            $lead_query = "SELECT AVG(cc.calificacion_calidad) AS avg_score FROM clientes_contactos cc JOIN conversaciones c ON cc.id = c.id_cliente LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " AND cc.calificacion_calidad > 0";
+            $leadRows = dash_fetch_all_prepared($con, $lead_query, $base_types, $base_params);
+            if (!empty($leadRows) && $leadRows[0]['avg_score'] !== null) {
+                $avg_lead = round(floatval($leadRows[0]['avg_score']), 1);
+            }
+        }
 
         // 6. Desempeño por Operador
         $op_where_clauses = $where_clauses;
         $op_where_clauses[] = "c.id_agente IS NOT NULL AND c.id_agente > 0";
         $op_where_sql = " WHERE " . implode(" AND ", $op_where_clauses);
         $query4 = "
-            SELECT COALESCE(up.nombre, u.usuario) as nombre_completo, COUNT(c.id) as chats_atendidos 
+            SELECT COALESCE(up.nombre, u.usuario) AS nombre_completo, COUNT(c.id) AS chats_atendidos 
             FROM conversaciones c
             JOIN usuario u ON u.id = c.id_agente
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
@@ -208,54 +323,48 @@ switch ($action) {
             GROUP BY u.id 
             ORDER BY chats_atendidos DESC LIMIT 5
         ";
-        $res4 = $con->query($query4);
-        $operadores = [];
-        if ($res4) {
-            while ($row = $res4->fetch_assoc()) {
-                $operadores[] = $row;
-            }
-        }
+        $operadores = dash_fetch_all_prepared($con, $query4, $base_types, $base_params);
 
-        // 7. Volumen de Chats por Día (Gráfico)
-        $chart_where_sql = empty($where_sql) ? " WHERE c.fecha_inicio IS NOT NULL" : $where_sql . " AND c.fecha_inicio IS NOT NULL";
-        $query5 = "SELECT DATE(c.fecha_inicio) as fecha, COUNT(c.id) as volumen FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id $chart_where_sql GROUP BY DATE(c.fecha_inicio) ORDER BY fecha ASC";
-        $res5 = $con->query($query5);
-        $chart_data = [];
-        if ($res5) {
-            while ($row = $res5->fetch_assoc()) {
-                $chart_data[] = $row;
-            }
-        }
+        // 7. Volumen de Chats por Día
+        $chart_where_sql = ($where_sql === "") ? " WHERE c.fecha_inicio IS NOT NULL" : ($where_sql . " AND c.fecha_inicio IS NOT NULL");
+        $query5 = "SELECT DATE(c.fecha_inicio) AS fecha, COUNT(c.id) AS volumen FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id $chart_where_sql GROUP BY DATE(c.fecha_inicio) ORDER BY fecha ASC";
+        $chart_data = dash_fetch_all_prepared($con, $query5, $base_types, $base_params);
 
         // 8. Motivos de Cierre (Gráfico Embudo)
-        $motivos_query = "SELECT IFNULL(c.resultado_comercial, 'NO_ESPECIFICADO') as motivo, COUNT(c.id) as cantidad FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " GROUP BY c.resultado_comercial";
-        $res_motivos = $con->query($motivos_query);
         $motivos_data = [];
-        if ($res_motivos) {
-            while ($row = $res_motivos->fetch_assoc()) {
-                $motivos_data[] = $row;
-            }
+        if ($hasResCom) {
+            $motivos_query = "SELECT IFNULL(c.resultado_comercial, 'NO_ESPECIFICADO') AS motivo, COUNT(c.id) AS cantidad FROM conversaciones c LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " GROUP BY c.resultado_comercial";
+            $motivos_data = dash_fetch_all_prepared($con, $motivos_query, $base_types, $base_params);
         }
 
         echo json_encode([
             'status' => 'success',
-            'data' => [
-                'total_chats' => $total_chats,
-                'avg_res' => $avg_res . " min",
+            'data'   => [
+                'total_chats'     => $total_chats,
+                'avg_res'         => $avg_res . " min",
                 'conversion_rate' => $conversion . "%",
-                'cac' => "$" . number_format($cac, 2),
-                'gasto_real_usd' => round($gasto_real_total, 4),
-                'lead_score' => $avg_lead,
-                'csat_score' => $avg_csat,
-                'operadores' => $operadores,
-                'chart_data' => $chart_data,
-                'motivos_data' => $motivos_data
-            ]
+                'cac'             => "$" . number_format($cac, 2),
+                'gasto_real_usd'  => round($gasto_real_total, 4),
+                'lead_score'      => $avg_lead,
+                'csat_score'      => $avg_csat,
+                'operadores'      => $operadores,
+                'chart_data'      => $chart_data,
+                'motivos_data'    => $motivos_data,
+            ],
         ]);
         break;
 
     default:
+        registrar_auditoria(
+            'dashboard',
+            'ACCION_NO_VALIDA',
+            'Intento de acción no soportada en controlador de métricas',
+            null,
+            ['action' => $action],
+            $con,
+            intval($agente_dashboard['id'] ?? 0),
+            intval($agente_dashboard['id_sede'] ?? 0) ?: null
+        );
         echo json_encode(['status' => 'error', 'message' => 'Acción no válida']);
         break;
 }
-?>

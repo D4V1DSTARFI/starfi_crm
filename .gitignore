@@ -3,11 +3,23 @@
 .env.*
 !.env.example
 config/.env*
+config/.enable_installer
 assets/uploads/.env*
+
+# Bloqueo estricto de volcados SQL y artefactos residuales (solo se versiona database/database_schema.sql limpio)
+/*.sql
+/database/*.sql
+!/database/database_schema.sql
+/database/dummy_data.sql
+/database/install_dumps/
+*.resolved
 
 # Archivos multimedia y documentos confidenciales subidos (preservando .htaccess y .gitkeep)
 assets/uploads/*
 !assets/uploads/.htaccess
+!assets/uploads/comprobantes_waba/
+assets/uploads/comprobantes_waba/*
+!assets/uploads/comprobantes_waba/.htaccess
 uploads/*
 !uploads/.htaccess
 !uploads/expedientes/
@@ -20,16 +32,14 @@ assets/docs/expedientes/*
 !assets/docs/expedientes/.htaccess
 !assets/docs/expedientes/.gitkeep
 
-# Binarios pesados/externos y volcados SQL con datos reales
+# Binarios pesados/externos
 cloudflared.exe
 *.exe
-database/install_dumps/*.sql
-database/db_bot_data.sql
-db_bot_data.sql
 
-# Registros y diagnósticos
+# Registros locales por módulo y globales
 logs/*
 !logs/.htaccess
+modules/*/logs_*.log
 *.log
 
 # Directorios temporales

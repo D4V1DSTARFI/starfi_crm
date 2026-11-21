@@ -11,20 +11,27 @@ class IaConnector {
      */
     public static function recuperarHistorialMensajes(mysqli $con, int $idConversacion, int $limite = 12): array {
         if ($idConversacion <= 0) return [];
+        $lim = max(1, min(50, $limite));
 
-        $sql = "SELECT origen, contenido, tipo 
+        $stmt = $con->prepare("SELECT origen, contenido, tipo 
                 FROM mensajes_y_eventos 
-                WHERE id_conversacion = $idConversacion AND tipo IN ('TEXTO', 'IMAGEN', 'EVENTO_SISTEMA')
+                WHERE id_conversacion = ? AND tipo IN ('TEXTO', 'IMAGEN', 'EVENTO_SISTEMA')
                 ORDER BY id DESC 
-                LIMIT $limite";
-
-        $res = mysqli_query($con, $sql);
-        if (!$res) return [];
-
-        $filas = [];
-        while ($row = mysqli_fetch_assoc($res)) {
-            $filas[] = $row;
+                LIMIT ?");
+        if (!$stmt) return [];
+        $stmt->bind_param("ii", $idConversacion, $lim);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return [];
         }
+        $res = $stmt->get_result();
+        $filas = [];
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $filas[] = $row;
+            }
+        }
+        $stmt->close();
 
         // Revertir para mantener el orden cronológico
         $filas = array_reverse($filas);
@@ -249,8 +256,8 @@ class IaConnector {
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json'
         ]);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 

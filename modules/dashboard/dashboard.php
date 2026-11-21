@@ -7,12 +7,15 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
 // Cargar sedes activas para el filtro
 $con = getDbConnection();
-$res_sedes = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
 $sedes = [];
-if ($res_sedes) {
-    while ($row = $res_sedes->fetch_assoc()) {
+$stmt_sedes = $con ? $con->prepare("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC") : false;
+if ($stmt_sedes) {
+    $stmt_sedes->execute();
+    $res_sedes = $stmt_sedes->get_result();
+    while ($res_sedes && ($row = $res_sedes->fetch_assoc())) {
         $sedes[] = $row;
     }
+    $stmt_sedes->close();
 }
 ?>
 <!DOCTYPE html>
@@ -355,17 +358,14 @@ if ($res_sedes) {
         </div>
     </main>
 
+    <?php include __DIR__ . '/modals_dashboard.php'; ?>
+
     <!-- JavaScript -->
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script src="../../assets/js/chart.umd.min.js"></script>
     <script src="funciones_dashboard.js?v=<?= time() ?>"></script>
-    <script>
-        document.getElementById('toggleSidebar').addEventListener('click', function() {
-            document.getElementById('sidebar').classList.toggle('collapsed');
-        });
-    </script>
     </div>
 </body>
 </html>

@@ -10,22 +10,24 @@ set_time_limit(600);
 ini_set('memory_limit', '512M');
 
 $envPath = __DIR__ . '/.env';
+$sentinelPath = __DIR__ . '/config/.enable_installer';
 $envCandidates = [
     __DIR__ . '/.env',
     __DIR__ . '/config/.env.local',
     __DIR__ . '/assets/uploads/.env.local',
 ];
-$isInstalled = false;
+$hasSentinel = is_file($sentinelPath);
+$hasEnvFile = false;
 
 foreach ($envCandidates as $candEnv) {
     if (file_exists($candEnv)) {
-        $isInstalled = true;
+        $hasEnvFile = true;
         break;
     }
 }
 
-// Verificar adicionalmente si la base de datos ya contiene registros en la tabla activa `usuario`
-if (!$isInstalled && file_exists(__DIR__ . '/config/database.php')) {
+$hasUsersInDb = false;
+if ($hasSentinel && !$hasEnvFile && file_exists(__DIR__ . '/config/database.php')) {
     require_once __DIR__ . '/config/database.php';
     $conCheck = @getDbConnection('core');
     if ($conCheck) {
@@ -33,29 +35,34 @@ if (!$isInstalled && file_exists(__DIR__ . '/config/database.php')) {
         if ($chkUsr && mysqli_num_rows($chkUsr) > 0) {
             $cntRes = @mysqli_query($conCheck, "SELECT COUNT(*) AS c FROM usuario");
             if ($cntRes && ($cntRow = mysqli_fetch_assoc($cntRes)) && (int)$cntRow['c'] > 0) {
-                $isInstalled = true;
+                $hasUsersInDb = true;
             }
         }
         @mysqli_close($conCheck);
     }
 }
 
-// Bloqueo absoluto si el sistema ya posee archivo de entorno o usuarios instalados
+// Permitir únicamente las acciones internas de finalización mientras el centinela siga activo y aún no exista usuario master
+$allowedActiveFlow = ($hasSentinel && !$hasUsersInDb && isset($_GET['action']) && in_array($_GET['action'], ['import_db', 'create_master'], true));
+$isInstalled = (!$hasSentinel || $hasUsersInDb || ($hasEnvFile && !$allowedActiveFlow));
+
+// Bloqueo absoluto por defecto (HTTP 403 SIEMPRE por web salvo centinela local + sin .env + tabla usuario vacía)
 if ($isInstalled) {
     http_response_code(403);
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['action'])) {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' || isset($_GET['action'])) {
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode([
             'status' => 'error',
-            'message' => 'Instalador bloqueado: el sistema ya se encuentra configurado en este servidor.'
+            'message' => 'Instalador bloqueado por seguridad (CHK-SEC-01). Requiere habilitación local explícita del administrador.'
         ]);
     } else {
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Instalador Bloqueado | STARFI CRM</title></head>'
+        echo '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Instalador Bloqueado | STARFI CRM</title>'
+            . '<link rel="icon" href="docs/identidad_visual/logos/isologo.ico" type="image/x-icon"></head>'
             . '<body style="font-family:sans-serif;background:#37414A;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">'
             . '<div style="background:#fff;color:#1e293b;padding:36px;border-radius:12px;max-width:460px;text-align:center;">'
             . '<h3 style="margin-top:0;color:#37414A;">Instalador Deshabilitado</h3>'
-            . '<p>STARFI CRM ya se encuentra instalado y operativo. Por políticas de seguridad, este asistente está bloqueado.</p>'
+            . '<p>Por políticas de seguridad de STARFI CRM, el asistente web se encuentra bloqueado por defecto.</p>'
             . '<a href="login.php" style="display:inline-block;margin-top:12px;padding:10px 24px;background:#E85B14;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Ir al Inicio de Sesión</a>'
             . '</div></body></html>';
     }
@@ -174,6 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action'])) {
             if ($stmtM && $stmtM->bind_param("s", $passHash) && $stmtM->execute()) {
                 $stmtM->close();
                 mysqli_close($conn);
+                @unlink($sentinelPath);
                 echo json_encode(['status' => 'success', 'message' => 'Usuario master configurado exitosamente en la base de datos.']);
             } else {
                 if ($stmtM) {
@@ -254,19 +262,11 @@ $sessionOk = function_exists('session_start');
 $writableDir = is_writable(__DIR__);
 $envWritable = file_exists($envPath) ? is_writable($envPath) : is_writable(__DIR__);
 
-// Comprobar archivos SQL
+// Comprobar esquema base SQL limpio
 $databases = ['starfi_crm'];
-$sqlFilesCount = 0;
-$missingDumps = [];
-foreach ($databases as $db) {
-    $f = __DIR__ . '/database/install_dumps/' . $db . '.sql';
-    if (file_exists($f) && filesize($f) > 100) {
-        $sqlFilesCount++;
-    } else {
-        $missingDumps[] = $db . '.sql';
-    }
-}
-$dumpsOk = ($sqlFilesCount === count($databases));
+$schemaBaseFile = __DIR__ . '/database/database_schema.sql';
+$dumpsOk = (file_exists($schemaBaseFile) && filesize($schemaBaseFile) > 100);
+$missingDumps = $dumpsOk ? [] : ['database/database_schema.sql'];
 
 $allChecksOk = ($phpOk && $mysqliLoaded && $jsonLoaded && $sessionOk && $writableDir && $envWritable && $dumpsOk);
 ?>

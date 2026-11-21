@@ -17,7 +17,42 @@ let bcTemplates = [];
 let bcIsRunning = false;
 let bcShouldStop = false;
 
+function getDirectorioAvatarSvg(name, bg, fg) {
+    let clean = String(name || 'CL').trim();
+    let parts = clean.split(/\s+/);
+    let initials = (parts.length >= 2)
+        ? (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase()
+        : clean.substring(0, 2).toUpperCase();
+    initials = initials.replace(/[^A-Z0-9ÁÉÍÓÚÑ]/gi, '') || 'CL';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+        ctx.fillStyle = bg || '#F3F4F6';
+        ctx.beginPath();
+        ctx.arc(32, 32, 32, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = fg || '#37414A';
+        ctx.font = 'bold 24px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(initials, 32, 33);
+        return canvas.toDataURL('image/png');
+    }
+    return '../../docs/identidad_visual/logos/isologo.png';
+}
+
 $(document).ready(function () {
+    const toggleBtn = document.getElementById('toggleSidebar');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function () {
+            const sb = document.getElementById('sidebar');
+            if (sb) sb.classList.toggle('collapsed');
+        });
+    }
+
     loadSedes();
     loadClients();
 
@@ -94,17 +129,6 @@ $(document).ready(function () {
         bcShouldStop = true;
         $('#bcStatusLabel').removeClass('bg-primary bg-success').addClass('bg-warning text-dark').text('Deteniendo...');
     });
-
-    function getDirectorioAvatarSvg(name, bg, fg) {
-        let clean = String(name || 'CL').trim();
-        let parts = clean.split(/\s+/);
-        let initials = (parts.length >= 2)
-            ? (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase()
-            : clean.substring(0, 2).toUpperCase();
-        initials = initials.replace(/[^A-Z0-9ÁÉÍÓÚÑ]/gi, '') || 'CL';
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="${bg || '#F3F4F6'}"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="${fg || '#37414A'}" font-family="Gotham, Arial, sans-serif" font-size="24" font-weight="bold">${initials}</text></svg>`;
-        return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
-    }
 
     // Botón Nuevo Cliente
     $('#btnAddClient').on('click', function () {

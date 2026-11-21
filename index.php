@@ -406,7 +406,7 @@ if (!$db_online && $is_master_emergency) {
                         <?php if ($is_master_emergency):
                             $default_srv_host = trim((string)($_POST['db_host'] ?? ($_SERVER['SERVER_ADDR'] ?? '127.0.0.1')));
                             if ($default_srv_host === '::1') $default_srv_host = '127.0.0.1';
-                            $default_media_url = trim((string)($_POST['central_media_base_url'] ?? ('http://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/starfi_crm/assets/uploads')));
+                            $default_media_url = trim((string)($_POST['central_media_base_url'] ?? ''));
                         ?>
                         <form method="POST" action="index.php" autocomplete="off">
                             <input type="hidden" name="setup_env_action" value="save_env">
@@ -656,7 +656,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 7. Gestión de Usuarios -->
             <?php if (hasPermission('gestion_usuarios')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/gestion_usuarios/index.php" class="module-card">
+                <a href="modules/gestion_usuarios/gestion_usuarios.php" class="module-card">
                     <div>
                         <div class="icon-container" style="background-color: rgba(79, 70, 229, 0.1); color: #4F46E5;">
                             <i class="bi bi-people-fill"></i>
@@ -675,7 +675,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 8. Perfil de Empresa -->
             <?php if (hasPermission('perfil_empresa')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/perfil_empresa/index.php" class="module-card">
+                <a href="modules/perfil_empresa/perfil_empresa.php" class="module-card">
                     <div>
                         <div class="icon-container" style="background-color: rgba(234, 88, 12, 0.1); color: #EA580C;">
                             <i class="bi bi-building"></i>
@@ -693,7 +693,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 9. Roles y Permisos (Solo MASTER) -->
             <?php if (hasPermission('gestion_roles')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/gestion_roles/index.php" class="module-card">
+                <a href="modules/gestion_roles/gestion_roles.php" class="module-card">
                     <div>
                         <div class="icon-container" style="background-color: rgba(245, 158, 11, 0.1); color: #F59E0B;">
                             <i class="bi bi-shield-lock-fill"></i>

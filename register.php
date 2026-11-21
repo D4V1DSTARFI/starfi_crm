@@ -31,6 +31,7 @@ if ((int)$rl_data['count'] >= 5) {
 }
 
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/audit.php';
 
 $nombre = isset($_POST['nombre']) ? trim((string)$_POST['nombre']) : '';
 $cedula = isset($_POST['cedula']) ? trim((string)$_POST['cedula']) : '';
@@ -171,13 +172,25 @@ try {
 
     mysqli_commit($con);
 
+    registrar_auditoria(
+        'auth',
+        'REGISTRO_NUEVO_OPERADOR',
+        'Solicitud de registro de operador pendiente de activación',
+        null,
+        ['id_usuario' => $id_usuario, 'usuario' => $usuario, 'nombre' => $nombre, 'cedula' => $cedula, 'correo' => $correo, 'estado' => 'INACTIVO'],
+        $con,
+        $id_usuario,
+        null
+    );
+
     $rl_data['count'] = (int)$rl_data['count'] + 1;
     @file_put_contents($rl_file, json_encode($rl_data));
 
     echo json_encode(['success' => true, 'message' => '¡Usuario registrado correctamente! Su cuenta quedará pendiente de activación por el administrador.']);
 } catch (Exception $e) {
     mysqli_rollback($con);
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    starfi_log_exception('auth', 'Error en register.php: ' . $e->getMessage(), ['usuario' => $usuario]);
+    echo json_encode(['success' => false, 'message' => 'No se pudo completar el registro del operador. Verifique los datos ingresados.']);
 }
 
 mysqli_close($con);

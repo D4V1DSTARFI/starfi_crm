@@ -1,5 +1,27 @@
 // modules/bandeja/funciones_bandeja.js
 
+(function initBandejaBootVars() {
+    const bootEl = document.getElementById('bandejaBootConfig');
+    if (bootEl) {
+        if (typeof window.userRole === 'undefined') {
+            window.userRole = bootEl.getAttribute('data-user-role') || 'AGENTE';
+        }
+        if (typeof window.isUserAdmin === 'undefined') {
+            window.isUserAdmin = bootEl.getAttribute('data-is-admin') === '1';
+        }
+        if (typeof window.initialDisponibleChat === 'undefined') {
+            window.initialDisponibleChat = parseInt(bootEl.getAttribute('data-disponible-chat') || '1', 10);
+        }
+        if (typeof window.initialSlaConfig === 'undefined') {
+            try {
+                window.initialSlaConfig = JSON.parse(bootEl.getAttribute('data-sla-config') || '{}');
+            } catch (e) {
+                window.initialSlaConfig = null;
+            }
+        }
+    }
+})();
+
 let activeChatId = null;
 let activeClientId = null;
 let currentFilter = 'todos';
@@ -39,12 +61,7 @@ $(document).ready(function () {
     // Interceptar errores de AJAX globales
     $(document).ajaxError(function (event, jqxhr, settings, thrownError) {
         if (jqxhr.status === 401) {
-            try {
-                let res = JSON.parse(jqxhr.responseText);
-                window.location.href = res.redirect || '/starfi_crm/login.php';
-            } catch (e) {
-                window.location.href = '/starfi_crm/login.php';
-            }
+            window.location.href = '../../login.php';
         }
     });
 
@@ -590,6 +607,7 @@ function escapeHtmlBandeja(val) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
     });
 }
+const localAvatarCache = {};
 function getLocalAvatarSvg(name) {
     let clean = String(name || 'C').trim();
     let parts = clean.split(/\s+/);
@@ -600,8 +618,44 @@ function getLocalAvatarSvg(name) {
         initials = clean.substring(0, 2).toUpperCase();
     }
     initials = initials.replace(/[^A-Z0-9ÁÉÍÓÚÑ+]/gi, '') || 'CL';
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="#F1F5F9"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#37414A" font-family="Arial, sans-serif" font-size="24" font-weight="bold">${initials}</text></svg>`;
-    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    if (localAvatarCache[initials]) {
+        return localAvatarCache[initials];
+    }
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#F1F5F9';
+        ctx.beginPath();
+        ctx.arc(32, 32, 32, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#37414A';
+        ctx.font = 'bold 24px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(initials, 32, 34);
+        const dataUri = canvas.toDataURL('image/png');
+        localAvatarCache[initials] = dataUri;
+        return dataUri;
+    } catch (e) {
+        return 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+    }
+}
+
+function resolveBandejaMediaUrl(rawPath, chatId) {
+    let p = String(rawPath || '').replace(/\\\\/g, '/').replace(/\\/g, '/').trim();
+    if (!p) return '';
+    if (p.indexOf('/') === -1) {
+        return `../../get_media.php?id=${encodeURIComponent(p)}&chat_id=${encodeURIComponent(chatId || 0)}`;
+    }
+    if (p.indexOf('/assets/uploads/') !== -1) {
+        return p.replace(/^.*\/assets\/uploads\//, '../../assets/uploads/');
+    }
+    if (p.indexOf('assets/uploads/') === 0) {
+        return '../../' + p;
+    }
+    return p;
 }
 
 let pendingDeepLinkChat = (function () {
@@ -1284,8 +1338,7 @@ function renderMessages(messages, scrollToBottom) {
 
         let mediaHtml = '';
         if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
-            msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
             let isSticker = realUrl.endsWith('.webp');
             let imgStyle = isSticker 
                 ? 'max-width: 120px; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1)); cursor: pointer; transition: transform 0.2s;' 
@@ -1296,12 +1349,10 @@ function renderMessages(messages, scrollToBottom) {
             
             mediaHtml = `<div style="${containerStyle}"><img src="${realUrl}" style="${imgStyle}" alt="Archivo adjunto" loading="lazy" class="zoomable-media" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" onclick="Swal.fire({imageUrl: '${realUrl}', imageAlt: 'Archivo adjunto', width: 'auto', padding: 0, showConfirmButton: false, customClass: { popup: 'bg-transparent' }, backdrop: 'rgba(0,0,0,0.8)'})"></div>`;
         } else if (msg.tipo === 'DOCUMENTO' && msg.url_archivo) {
-            msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
-            let realUrl = msg.url_archivo.indexOf('/') === -1 ? `../../get_media.php?id=${msg.url_archivo}&chat_id=${activeChatId}` : msg.url_archivo;
+            let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
             mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${realUrl}" target="_blank" style="text-decoration:none; font-weight:bold; color:#111827;">Documento Adjunto</a></div>`;
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
-            msg.url_archivo = msg.url_archivo.replace(/\\\\/g, '/');
-            let realUrl = `../../get_media.php?id=${encodeURIComponent(msg.url_archivo)}&chat_id=${activeChatId}`;
+            let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
             mediaHtml = `<div style="margin-bottom:8px;"><audio controls data-src="${realUrl}" class="async-audio" style="max-width: 250px;">Cargando audio...</audio></div>`;
         }
         let replyBtn = '';

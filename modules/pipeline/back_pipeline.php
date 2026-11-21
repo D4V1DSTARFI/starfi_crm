@@ -1,7 +1,7 @@
 <?php
 // modules/pipeline/back_pipeline.php
 // Backend AJAX para Tablero Kanban de Embudo de Ventas (USD) | STARFI CRM [COM-02]
-// Blindado con display_errors=0, mysqli_prepare(), registrar_auditoria() y .flag por BD.
+// Blindado con display_errors=0, 100% mysqli_prepare(), firma canónica registrar_auditoria() y starfi_log_exception().
 
 @ini_set('display_errors', '0');
 date_default_timezone_set('America/Caracas');
@@ -308,7 +308,7 @@ switch ($action) {
             }
             $stmtBoard->close();
         } else {
-            starfi_log_modulo('pipeline', 'Error preparando get_board: ' . $con->error, 'ERROR');
+            starfi_log_exception('pipeline', 'Error preparando get_board', ['errno' => $con->errno]);
         }
 
         if ($kpis['total_oportunidades'] > 0) {
@@ -434,7 +434,7 @@ switch ($action) {
                 $stmtUp->bind_param("iissdisssi", $target_sede, $target_agente, $tit_clean, $etapa, $monto, $prob, $notas, $mot_clean, $fecha_cierre_val, $deal_id);
                 $ok = $stmtUp->execute();
                 if (!$ok) {
-                    starfi_log_modulo('pipeline', 'Error UPDATE save_deal: ' . $stmtUp->error, 'ERROR');
+                    starfi_log_exception('pipeline', 'Error UPDATE save_deal', ['deal_id' => $deal_id, 'errno' => $stmtUp->errno]);
                 }
                 $stmtUp->close();
             }
@@ -448,22 +448,50 @@ switch ($action) {
                 sync_pipeline_conv_event($con, intval($existing['id_conversacion'] ?? 0), $etapa, $monto, $motivo_perdida);
             }
 
-            registrar_auditoria($con, 'pipeline', 'ACTUALIZAR_OPORTUNIDAD', 'pipeline_oportunidades', $deal_id, [
-                'etapa_anterior' => $existing['etapa'],
-                'etapa_nueva'    => $etapa,
-                'monto_anterior' => (float)$existing['monto_estimado_usd'],
-                'monto_nuevo'    => $monto,
-                'titulo'         => $tit_clean
-            ], $agente_id, $target_sede);
+            registrar_auditoria(
+                'pipeline',
+                'ACTUALIZAR_OPORTUNIDAD',
+                "Oportunidad #$deal_id actualizada ($tit_clean)",
+                [
+                    'id'                 => $deal_id,
+                    'id_sede'            => intval($existing['id_sede']),
+                    'id_agente'          => isset($existing['id_agente']) ? intval($existing['id_agente']) : null,
+                    'titulo'             => $existing['titulo'] ?? '',
+                    'etapa'              => $existing['etapa'] ?? '',
+                    'monto_estimado_usd' => (float)($existing['monto_estimado_usd'] ?? 0),
+                    'probabilidad'       => intval($existing['probabilidad'] ?? 0),
+                    'notas'              => $existing['notas'] ?? null,
+                    'motivo_perdida'     => $existing['motivo_perdida'] ?? null,
+                ],
+                [
+                    'id'                 => $deal_id,
+                    'id_sede'            => $target_sede,
+                    'id_agente'          => $target_agente,
+                    'titulo'             => $tit_clean,
+                    'etapa'              => $etapa,
+                    'monto_estimado_usd' => $monto,
+                    'probabilidad'       => $prob,
+                    'notas'              => $notas,
+                    'motivo_perdida'     => $mot_clean,
+                ],
+                $con,
+                $agente_id,
+                $target_sede
+            );
 
             echo json_encode(['status' => 'success', 'deal_id' => $deal_id, 'message' => 'Oportunidad actualizada correctamente.']);
             break;
         }
 
         if ($id_sede_in <= 0) {
-            $rS1 = $con->query("SELECT id FROM sedes WHERE estado = 'ACTIVO' ORDER BY id ASC LIMIT 1");
-            if ($rS1 && ($rs1 = $rS1->fetch_assoc())) {
-                $id_sede_in = intval($rs1['id']);
+            $stmtS1 = $con->prepare("SELECT id FROM sedes WHERE estado = 'ACTIVO' ORDER BY id ASC LIMIT 1");
+            if ($stmtS1) {
+                $stmtS1->execute();
+                $rS1 = $stmtS1->get_result();
+                if ($rS1 && ($rs1 = $rS1->fetch_assoc())) {
+                    $id_sede_in = intval($rs1['id']);
+                }
+                $stmtS1->close();
             }
         }
         if ($id_sede_in <= 0) {
@@ -490,9 +518,29 @@ switch ($action) {
                 $stmtInsCli = $con->prepare("INSERT INTO clientes_contactos (numero_whatsapp, nombre, id_sede) VALUES (?, ?, ?)");
                 if ($stmtInsCli) {
                     $stmtInsCli->bind_param("ssi", $nuevo_telefono, $nom_cli, $id_sede_in);
-                    $stmtInsCli->execute();
-                    $id_cliente = intval($stmtInsCli->insert_id);
+                    if ($stmtInsCli->execute()) {
+                        $id_cliente = intval($stmtInsCli->insert_id);
+                    } else {
+                        starfi_log_exception('pipeline', 'Error creando cliente en save_deal', ['errno' => $stmtInsCli->errno]);
+                    }
                     $stmtInsCli->close();
+                }
+                if ($id_cliente > 0) {
+                    registrar_auditoria(
+                        'pipeline',
+                        'CREAR_PROSPECTO_EMBUDO',
+                        "Prospecto #$id_cliente registrado desde Embudo Kanban ($nom_cli)",
+                        null,
+                        [
+                            'id'              => $id_cliente,
+                            'id_sede'         => $id_sede_in,
+                            'numero_whatsapp' => $nuevo_telefono,
+                            'nombre'          => $nom_cli,
+                        ],
+                        $con,
+                        $agente_id,
+                        $id_sede_in
+                    );
                 }
             }
         } else {
@@ -559,7 +607,7 @@ switch ($action) {
             if ($stmtIns->execute()) {
                 $new_id = intval($stmtIns->insert_id);
             } else {
-                starfi_log_modulo('pipeline', 'Error INSERT save_deal: ' . $stmtIns->error, 'ERROR');
+                starfi_log_exception('pipeline', 'Error INSERT save_deal', ['errno' => $stmtIns->errno]);
             }
             $stmtIns->close();
         }
@@ -573,12 +621,28 @@ switch ($action) {
             sync_pipeline_conv_event($con, $id_conv_num, $etapa, $monto, $motivo_perdida);
         }
 
-        registrar_auditoria($con, 'pipeline', 'CREAR_OPORTUNIDAD', 'pipeline_oportunidades', $new_id, [
-            'id_cliente' => $id_cliente,
-            'etapa'      => $etapa,
-            'monto_usd'  => $monto,
-            'titulo'     => $tit_clean
-        ], $agente_id, $id_sede_in);
+        registrar_auditoria(
+            'pipeline',
+            'CREAR_OPORTUNIDAD',
+            "Oportunidad #$new_id creada en Embudo Kanban ($tit_clean)",
+            null,
+            [
+                'id'                 => $new_id,
+                'id_sede'            => $id_sede_in,
+                'id_cliente'         => $id_cliente,
+                'id_conversacion'    => $id_conv_num,
+                'id_agente'          => $ag_param,
+                'titulo'             => $tit_clean,
+                'etapa'              => $etapa,
+                'monto_estimado_usd' => $monto,
+                'probabilidad'       => $prob,
+                'notas'              => $notas,
+                'motivo_perdida'     => $mot_clean,
+            ],
+            $con,
+            $agente_id,
+            $id_sede_in
+        );
 
         echo json_encode(['status' => 'success', 'deal_id' => $new_id, 'message' => 'Oportunidad creada en el Embudo Kanban.']);
         break;
@@ -616,7 +680,9 @@ switch ($action) {
         $stmtMv = $con->prepare("UPDATE pipeline_oportunidades SET etapa = ?, probabilidad = ?, motivo_perdida = ?, fecha_cierre = ? WHERE id = ?");
         if ($stmtMv) {
             $stmtMv->bind_param("sissi", $nueva_etapa, $prob, $mot_mv, $fecha_cierre_mv, $deal_id);
-            $stmtMv->execute();
+            if (!$stmtMv->execute()) {
+                starfi_log_exception('pipeline', 'Error UPDATE move_stage', ['deal_id' => $deal_id, 'errno' => $stmtMv->errno]);
+            }
             $stmtMv->close();
         }
 
@@ -645,15 +711,36 @@ switch ($action) {
             }
         }
 
-        if ($existing['etapa'] !== $nueva_etapa) {
+        $etapaChanged = ($existing['etapa'] !== $nueva_etapa);
+        if ($etapaChanged) {
             sync_pipeline_conv_event($con, intval($existing['id_conversacion'] ?? 0), $nueva_etapa, floatval($existing['monto_estimado_usd']), $motivo_perdida);
-            registrar_auditoria($con, 'pipeline', 'MOVER_ETAPA_KANBAN', 'pipeline_oportunidades', $deal_id, [
-                'desde' => $existing['etapa'],
-                'hacia' => $nueva_etapa,
-                'monto_usd' => (float)$existing['monto_estimado_usd'],
-                'motivo_perdida' => $motivo_perdida
-            ], $agente_id, intval($existing['id_sede']));
         }
+
+        registrar_auditoria(
+            'pipeline',
+            $etapaChanged ? 'MOVER_ETAPA_KANBAN' : 'REORDENAR_KANBAN',
+            $etapaChanged
+                ? "Oportunidad #$deal_id movida de {$existing['etapa']} a $nueva_etapa"
+                : "Oportunidad #$deal_id reordenada en etapa $nueva_etapa",
+            [
+                'id'                 => $deal_id,
+                'etapa'              => $existing['etapa'] ?? '',
+                'probabilidad'       => intval($existing['probabilidad'] ?? 0),
+                'monto_estimado_usd' => (float)($existing['monto_estimado_usd'] ?? 0),
+                'motivo_perdida'     => $existing['motivo_perdida'] ?? null,
+                'orden_kanban'       => intval($existing['orden_kanban'] ?? 0),
+            ],
+            [
+                'id'                 => $deal_id,
+                'etapa'              => $nueva_etapa,
+                'probabilidad'       => $prob,
+                'monto_estimado_usd' => (float)($existing['monto_estimado_usd'] ?? 0),
+                'motivo_perdida'     => $mot_mv,
+            ],
+            $con,
+            $agente_id,
+            intval($existing['id_sede'])
+        );
 
         echo json_encode([
             'status'       => 'success',
@@ -684,15 +771,31 @@ switch ($action) {
         $stmtDel = $con->prepare("DELETE FROM pipeline_oportunidades WHERE id = ?");
         if ($stmtDel) {
             $stmtDel->bind_param("i", $deal_id);
-            $stmtDel->execute();
+            if (!$stmtDel->execute()) {
+                starfi_log_exception('pipeline', 'Error DELETE delete_deal', ['deal_id' => $deal_id, 'errno' => $stmtDel->errno]);
+            }
             $stmtDel->close();
         }
 
-        registrar_auditoria($con, 'pipeline', 'ELIMINAR_OPORTUNIDAD', 'pipeline_oportunidades', $deal_id, [
-            'titulo'    => $existing['titulo'] ?? '',
-            'etapa'     => $existing['etapa'] ?? '',
-            'monto_usd' => (float)($existing['monto_estimado_usd'] ?? 0)
-        ], $agente_id, intval($existing['id_sede']));
+        registrar_auditoria(
+            'pipeline',
+            'ELIMINAR_OPORTUNIDAD',
+            "Oportunidad #$deal_id eliminada (" . ($existing['titulo'] ?? '') . ")",
+            [
+                'id'                 => $deal_id,
+                'id_sede'            => intval($existing['id_sede']),
+                'id_cliente'         => intval($existing['id_cliente'] ?? 0),
+                'id_agente'          => isset($existing['id_agente']) ? intval($existing['id_agente']) : null,
+                'titulo'             => $existing['titulo'] ?? '',
+                'etapa'              => $existing['etapa'] ?? '',
+                'monto_estimado_usd' => (float)($existing['monto_estimado_usd'] ?? 0),
+                'notas'              => $existing['notas'] ?? null,
+            ],
+            ['eliminado' => true, 'id' => $deal_id],
+            $con,
+            $agente_id,
+            intval($existing['id_sede'])
+        );
 
         echo json_encode(['status' => 'success', 'message' => 'Oportunidad eliminada.']);
         break;
@@ -803,11 +906,20 @@ switch ($action) {
         $updated_zeros = starfi_backfill_zero_deals($con, $sede_bf, 250);
 
         if ($imported > 0 || $updated_zeros > 0) {
-            registrar_auditoria($con, 'pipeline', 'SINCRONIZAR_CHATS_KANBAN', 'pipeline_oportunidades', null, [
-                'imported'      => $imported,
-                'updated_zeros' => $updated_zeros,
-                'id_sede'       => $sede_bf
-            ], $agente_id, $sede_bf);
+            registrar_auditoria(
+                'pipeline',
+                'SINCRONIZAR_CHATS_KANBAN',
+                "Sincronización Kanban ejecutada ($imported nuevas, $updated_zeros montos USD actualizados)",
+                ['id_sede' => $sede_bf],
+                [
+                    'imported'      => $imported,
+                    'updated_zeros' => $updated_zeros,
+                    'id_sede'       => $sede_bf,
+                ],
+                $con,
+                $agente_id,
+                $sede_bf
+            );
         }
 
         $msg_parts = [];

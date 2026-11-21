@@ -6,24 +6,28 @@ $agente = getAgenteInfo();
 
 $con = getDbConnection();
 
-// Pagination or simple list
-$q = "SELECT * FROM cola_correos ORDER BY created_at DESC LIMIT 100";
-$res = $con->query($q);
 $correos = [];
-if ($res) {
-    while($row = $res->fetch_assoc()) {
+$limit = 100;
+$stmt = $con ? $con->prepare("SELECT * FROM cola_correos ORDER BY created_at DESC LIMIT ?") : false;
+if ($stmt) {
+    $stmt->bind_param("i", $limit);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($res && ($row = $res->fetch_assoc())) {
         $correos[] = $row;
     }
+    $stmt->close();
 }
 
-// Stats
-$stats_q = "SELECT estado, COUNT(*) as qty FROM cola_correos GROUP BY estado";
-$res_stats = $con->query($stats_q);
 $stats = ['Pendiente' => 0, 'Enviado' => 0, 'Error' => 0];
-if ($res_stats) {
-    while($row = $res_stats->fetch_assoc()) {
-        $stats[$row['estado']] = $row['qty'];
+$stmtStats = $con ? $con->prepare("SELECT estado, COUNT(*) AS qty FROM cola_correos GROUP BY estado") : false;
+if ($stmtStats) {
+    $stmtStats->execute();
+    $res_stats = $stmtStats->get_result();
+    while ($res_stats && ($row = $res_stats->fetch_assoc())) {
+        $stats[$row['estado']] = intval($row['qty']);
     }
+    $stmtStats->close();
 }
 ?>
 <!DOCTYPE html>
@@ -32,7 +36,8 @@ if ($res_stats) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Buzón de Correos | STARFI CRM</title>
-    <!-- Bootstrap CSS -->
+    <link rel="icon" href="../../docs/identidad_visual/logos/isologo.ico" type="image/x-icon">
+    <!-- Bootstrap CSS Local -->
     <link href="../../assets/css/bootstrap.min.css" rel="stylesheet">
     <link href="../../assets/css/starfi_theme.css" rel="stylesheet">
     <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
@@ -63,7 +68,7 @@ if ($res_stats) {
                     <div class="card bg-success text-white">
                         <div class="card-body">
                             <h5 class="card-title">Enviados</h5>
-                            <h2><?= $stats['Enviado'] ?? 0 ?></h2>
+                            <h2><?= intval($stats['Enviado'] ?? 0) ?></h2>
                         </div>
                     </div>
                 </div>
@@ -71,7 +76,7 @@ if ($res_stats) {
                     <div class="card bg-danger text-white">
                         <div class="card-body">
                             <h5 class="card-title">Errores</h5>
-                            <h2><?= $stats['Error'] ?? 0 ?></h2>
+                            <h2><?= intval($stats['Error'] ?? 0) ?></h2>
                         </div>
                     </div>
                 </div>
@@ -79,7 +84,7 @@ if ($res_stats) {
                     <div class="card bg-warning text-dark">
                         <div class="card-body">
                             <h5 class="card-title">Pendientes en Cola</h5>
-                            <h2><?= $stats['Pendiente'] ?? 0 ?></h2>
+                            <h2><?= intval($stats['Pendiente'] ?? 0) ?></h2>
                         </div>
                     </div>
                 </div>
@@ -104,29 +109,29 @@ if ($res_stats) {
                                 <?php if (count($correos) === 0): ?>
                                 <tr><td colspan="7" class="text-center py-4">No hay correos registrados en el sistema.</td></tr>
                                 <?php endif; ?>
-                                <?php foreach($correos as $c): ?>
+                                <?php foreach ($correos as $c): ?>
                                 <tr>
-                                    <td>#<?= $c['id'] ?></td>
+                                    <td>#<?= intval($c['id']) ?></td>
                                     <td>
-                                        <strong><?= htmlspecialchars($c['destinatario_nombre']) ?></strong><br>
-                                        <small class="text-muted"><?= htmlspecialchars($c['destinatario_email']) ?></small>
+                                        <strong><?= htmlspecialchars((string)($c['destinatario_nombre'] ?? '')) ?></strong><br>
+                                        <small class="text-muted"><?= htmlspecialchars((string)($c['destinatario_email'] ?? '')) ?></small>
                                     </td>
-                                    <td><?= htmlspecialchars($c['asunto']) ?></td>
+                                    <td><?= htmlspecialchars((string)($c['asunto'] ?? '')) ?></td>
                                     <td>
-                                        <?php if($c['estado'] === 'Enviado'): ?>
+                                        <?php if (($c['estado'] ?? '') === 'Enviado'): ?>
                                             <span class="badge bg-success">Enviado</span>
-                                        <?php elseif($c['estado'] === 'Error'): ?>
+                                        <?php elseif (($c['estado'] ?? '') === 'Error'): ?>
                                             <span class="badge bg-danger">Error</span>
                                         <?php else: ?>
                                             <span class="badge bg-warning text-dark">Pendiente</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td><small><?= $c['created_at'] ?></small></td>
-                                    <td><small><?= $c['sent_at'] ?? '---' ?></small></td>
+                                    <td><small><?= htmlspecialchars((string)($c['created_at'] ?? '')) ?></small></td>
+                                    <td><small><?= htmlspecialchars((string)($c['sent_at'] ?? '---')) ?></small></td>
                                     <td>
-                                        <?php if($c['error_mensaje']): ?>
-                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick='verError(<?= json_encode($c['error_mensaje']) ?>)'>
-                                            Ver Error (<?= $c['intentos'] ?>)
+                                        <?php if (!empty($c['error_mensaje'])): ?>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick='verError(<?= json_encode((string)$c['error_mensaje'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)'>
+                                            Ver Error (<?= intval($c['intentos'] ?? 0) ?>)
                                         </button>
                                         <?php else: ?>
                                             <span class="text-muted">-</span>

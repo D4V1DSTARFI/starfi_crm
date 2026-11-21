@@ -10,6 +10,7 @@ date_default_timezone_set('America/Caracas');
 header('Content-Type: application/json; charset=utf-8');
 
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/audit.php';
 
 // Política CORS restringida (solo orígenes explícitos en ALLOWED_CORS_ORIGINS o mismo host)
 $req_origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
@@ -32,15 +33,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 }
 
 function starfi_api_log_error($msg) {
-    $log_dir = __DIR__ . '/logs';
-    if (!is_dir($log_dir)) {
-        @mkdir($log_dir, 0755, true);
-    }
-    @file_put_contents(
-        $log_dir . '/logs_api_notificaciones.log',
-        '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL,
-        FILE_APPEND
-    );
+    starfi_log_exception('api_notificaciones', $msg);
 }
 
 function starfi_extract_bearer_or_token(array $json_body = []) {
@@ -153,7 +146,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
         $valid_meta_token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
     }
 
-    $stmt_chk = $con->prepare("SELECT id, id_negocio, meta_app_id FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1");
+    $stmt_chk = $con->prepare("SELECT id, id_negocio, meta_app_id, numero_telefono, estado FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1");
     $stmt_chk->bind_param("i", $crm_sede_id);
     $stmt_chk->execute();
     $existing = $stmt_chk->get_result()->fetch_assoc();
@@ -181,6 +174,19 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
             starfi_api_log_error('sync_linea INSERT error sede=' . $crm_sede_id . ': ' . $stmt_in->error);
         }
         $stmt_in->close();
+    }
+
+    if ($ok_sync) {
+        registrar_auditoria(
+            'configuracion',
+            'SYNC_LINEA_WABA',
+            "Sincronización remota de línea WhatsApp para sede #{$crm_sede_id}",
+            $existing ?: null,
+            ['id_sede' => $crm_sede_id, 'meta_app_id' => $instance_id, 'numero_telefono' => $phone_number, 'estado' => $crm_estado],
+            $con,
+            null,
+            $crm_sede_id
+        );
     }
 
     $con->close();
@@ -470,6 +476,8 @@ if ($media_id === '' && $document_url === '' && $doc_b64 !== '') {
             $cfile = new CURLFile($tmp_b64_file, $upload_mime, $base_stem . '.' . $safe_ext);
             curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch_media, CURLOPT_POST, true);
+            curl_setopt($ch_media, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($ch_media, CURLOPT_TIMEOUT, 8);
             curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
             curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
                 'messaging_product' => 'whatsapp',
@@ -516,6 +524,8 @@ if ($media_id === '' && $document_url === '' && $file_key && ($_FILES[$file_key]
             $cfile = new CURLFile($upload_path, $upload_mime, $safe_display);
             curl_setopt($ch_media, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch_media, CURLOPT_POST, true);
+            curl_setopt($ch_media, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($ch_media, CURLOPT_TIMEOUT, 8);
             curl_setopt($ch_media, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . $token]);
             curl_setopt($ch_media, CURLOPT_POSTFIELDS, [
                 'messaging_product' => 'whatsapp',
@@ -580,6 +590,8 @@ curl_setopt($curl, CURLOPT_URL, $url);
 curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje);
 curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
 curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
+curl_setopt($curl, CURLOPT_TIMEOUT, 8);
 $raw_exec = curl_exec($curl);
 $estado = json_decode((string)$raw_exec, true);
 $status_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
@@ -608,6 +620,8 @@ if ($status_code != 200 && isset($estado['error']['code']) && $estado['error']['
             curl_setopt($curl, CURLOPT_POSTFIELDS, $mensaje);
             curl_setopt($curl, CURLOPT_HTTPHEADER, $header);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($curl, CURLOPT_TIMEOUT, 8);
             $raw_exec = curl_exec($curl);
             $estado = json_decode((string)$raw_exec, true);
             $status_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);

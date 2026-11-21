@@ -36,8 +36,71 @@ function sync_ultimo_msg_conversacion($con, $id_conversacion, $msg_id) {
     $cid = intval($id_conversacion);
     $mid = intval($msg_id);
     if ($cid > 0 && $mid > 0) {
-        $con->query("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $mid) WHERE id = $cid AND ultimo_msg_id < $mid");
+        $stmtSync = $con->prepare("UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ? AND ultimo_msg_id < ?");
+        if ($stmtSync) {
+            $stmtSync->bind_param("iii", $mid, $cid, $mid);
+            $stmtSync->execute();
+            $stmtSync->close();
+        }
     }
+}
+
+function bandeja_fetch_one($con, $sql, $types = '', $params = []) {
+    if (!$con) return null;
+    $stmt = $con->prepare($sql);
+    if (!$stmt) {
+        starfi_log_exception('bandeja', 'Error preparando consulta SELECT', ['sql_error' => $con->error]);
+        return null;
+    }
+    if ($types !== '' && !empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+    if (!$stmt->execute()) {
+        starfi_log_exception('bandeja', 'Error ejecutando consulta SELECT', ['sql_error' => $stmt->error]);
+        $stmt->close();
+        return null;
+    }
+    $res = $stmt->get_result();
+    $row = $res ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $row ?: null;
+}
+
+function bandeja_fetch_in_ints($con, $sql_with_in_tokens, $int_groups) {
+    if (!$con || empty($int_groups)) return [];
+    $all_params = [];
+    $sql = $sql_with_in_tokens;
+    foreach ($int_groups as $grp) {
+        $clean_ids = array_values(array_unique(array_map('intval', $grp)));
+        if (empty($clean_ids)) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($clean_ids), '?'));
+        $pos = strpos($sql, '{{IN_IDS}}');
+        if ($pos !== false) {
+            $sql = substr_replace($sql, $ph, $pos, 10);
+        }
+        foreach ($clean_ids as $idv) {
+            $all_params[] = $idv;
+        }
+    }
+    $stmt = @$con->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $types = str_repeat('i', count($all_params));
+    $stmt->bind_param($types, ...$all_params);
+    $rows = [];
+    if ($stmt->execute()) {
+        $res = $stmt->get_result();
+        if ($res) {
+            while ($r = $res->fetch_assoc()) {
+                $rows[] = $r;
+            }
+        }
+    }
+    $stmt->close();
+    return $rows;
 }
 
 /**
@@ -335,18 +398,32 @@ switch ($action) {
         $mensaje = trim($_POST['mensaje'] ?? '');
         if (!empty($titulo) && !empty($mensaje)) {
             $agente = $agente_info_global;
-            $id_sede = $agente['id_sede'] ?? 1; // Fallback to 1 if no sede is found
+            $id_sede = intval($agente['id_sede'] ?? 1);
 
             $stmt = $con->prepare("INSERT INTO respuestas_rapidas (id_sede, titulo, mensaje, estado) VALUES (?, ?, ?, 'ACTIVO')");
             if ($stmt) {
                 $stmt->bind_param("iss", $id_sede, $titulo, $mensaje);
                 if ($stmt->execute()) {
+                    $new_qr_id = intval($stmt->insert_id);
+                    $stmt->close();
+                    registrar_auditoria(
+                        'bandeja',
+                        'CREAR_RESPUESTA_RAPIDA',
+                        "Respuesta rápida '$titulo' creada desde bandeja (#$new_qr_id)",
+                        null,
+                        ['id' => $new_qr_id, 'id_sede' => $id_sede, 'titulo' => $titulo, 'mensaje' => $mensaje],
+                        $con,
+                        $agente_id,
+                        $id_sede
+                    );
                     echo json_encode(['status' => 'success']);
                 } else {
+                    starfi_log_exception('bandeja', 'Error ejecutando create_quick_reply', ['sql_error' => $stmt->error]);
+                    $stmt->close();
                     echo json_encode(['status' => 'error', 'message' => 'Error al guardar la respuesta']);
                 }
-                $stmt->close();
             } else {
+                starfi_log_exception('bandeja', 'Error preparando create_quick_reply', ['sql_error' => $con->error]);
                 echo json_encode(['status' => 'error', 'message' => 'Error de base de datos']);
             }
         } else {
@@ -380,8 +457,13 @@ switch ($action) {
         $sla_cfg_active = starfi_get_sla_config($con, $sede_sla_eff);
         $sla_crit_min = max(2, intval($sla_cfg_active['amarillo_max_min'] ?? 15));
 
+        $bind_types = '';
+        $bind_params = [];
+
         if ($filter === 'mis-chats') {
-            $where_clauses .= " AND c.id_agente = $agente_id";
+            $where_clauses .= " AND c.id_agente = ?";
+            $bind_types .= 'i';
+            $bind_params[] = $agente_id;
         } elseif ($filter === 'clientes') {
             $where_clauses .= " AND EXISTS (SELECT 1 FROM mensajes_y_eventos me WHERE me.id_conversacion = c.id AND me.origen = 'CLIENTE')";
         } elseif ($filter === 'campanas') {
@@ -400,7 +482,7 @@ switch ($action) {
                 SELECT 1 FROM mensajes_y_eventos mc
                 WHERE mc.id_conversacion = c.id
                   AND mc.origen = 'CLIENTE'
-                  AND mc.timestamp <= (NOW() - INTERVAL $sla_crit_min MINUTE)
+                  AND mc.timestamp <= (NOW() - INTERVAL ? MINUTE)
                   AND NOT EXISTS (
                       SELECT 1 FROM mensajes_y_eventos ma
                       WHERE ma.id_conversacion = c.id
@@ -408,6 +490,8 @@ switch ($action) {
                         AND ma.timestamp >= mc.timestamp
                   )
             )";
+            $bind_types .= 'i';
+            $bind_params[] = $sla_crit_min;
         } elseif ($filter === 'cerrados') {
             $where_clauses .= " AND c.estado = 'CERRADO'";
         }
@@ -418,20 +502,28 @@ switch ($action) {
                 echo json_encode(['status' => 'success', 'data' => [], 'page' => 1, 'limit' => 20, 'has_more' => false]);
                 break;
             }
-            $where_clauses .= " AND c.id_agente = $agente_id_actual";
+            $where_clauses .= " AND c.id_agente = ?";
+            $bind_types .= 'i';
+            $bind_params[] = $agente_id_actual;
         } else {
             $selected_agente = intval($_POST['id_agente'] ?? 0);
             if ($selected_agente > 0) {
-                $where_clauses .= " AND c.id_agente = $selected_agente";
+                $where_clauses .= " AND c.id_agente = ?";
+                $bind_types .= 'i';
+                $bind_params[] = $selected_agente;
             }
         }
 
         if (!$is_master && $user_sede > 0) {
-            $where_clauses .= " AND l.id_sede = $user_sede";
+            $where_clauses .= " AND l.id_sede = ?";
+            $bind_types .= 'i';
+            $bind_params[] = $user_sede;
         } else {
             $id_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : 0;
             if ($id_sede > 0) {
-                $where_clauses .= " AND l.id_sede = $id_sede";
+                $where_clauses .= " AND l.id_sede = ?";
+                $bind_types .= 'i';
+                $bind_params[] = $id_sede;
             }
         }
 
@@ -440,19 +532,20 @@ switch ($action) {
         $target_conv_id = intval($_POST['target_conv_id'] ?? 0);
 
         if ($target_conv_id > 0) {
-            $where_clauses .= " AND c.id = $target_conv_id";
+            $where_clauses .= " AND c.id = ?";
+            $bind_types .= 'i';
+            $bind_params[] = $target_conv_id;
         } elseif ($search_query !== '') {
-            $sq_esc = $con->real_escape_string($search_query);
+            $sq_like = '%' . $search_query . '%';
             $sq_digits = preg_replace('/[^0-9]/', '', $search_query);
-            if ($sq_digits !== '') {
-                $sq_digits_esc = $con->real_escape_string($sq_digits);
-                $where_clauses .= " AND (cl.nombre LIKE '%$sq_esc%' OR cl.numero_whatsapp LIKE '%$sq_digits_esc%')";
-            } else {
-                $where_clauses .= " AND (cl.nombre LIKE '%$sq_esc%' OR cl.numero_whatsapp LIKE '%$sq_esc%')";
-            }
+            $where_clauses .= " AND (cl.nombre LIKE ? OR cl.numero_whatsapp LIKE ?)";
+            $bind_types .= 'ss';
+            $bind_params[] = $sq_like;
+            $bind_params[] = ($sq_digits !== '') ? ('%' . $sq_digits . '%') : $sq_like;
         } elseif ($search_phone !== '') {
-            $search_esc = $con->real_escape_string($search_phone);
-            $where_clauses .= " AND cl.numero_whatsapp LIKE '%$search_esc%'";
+            $where_clauses .= " AND cl.numero_whatsapp LIKE ?";
+            $bind_types .= 's';
+            $bind_params[] = '%' . $search_phone . '%';
         }
 
         $page = max(1, intval($_POST['page'] ?? 1));
@@ -483,16 +576,27 @@ switch ($action) {
             LEFT JOIN usuario_perfil up ON c.id_agente = up.id_usuario
             $where_clauses
             ORDER BY c.ultimo_msg_id DESC, c.id DESC
-            LIMIT $fetch_limit OFFSET $offset
+            LIMIT ? OFFSET ?
         ";
+        $bind_types .= 'ii';
+        $bind_params[] = $fetch_limit;
+        $bind_params[] = $offset;
 
-        $res = $con->query($query);
-        
         $chats = [];
-        if ($res) {
-            while ($row = $res->fetch_assoc()) {
-                $chats[] = $row;
+        $stmtChats = $con->prepare($query);
+        if ($stmtChats) {
+            $stmtChats->bind_param($bind_types, ...$bind_params);
+            if ($stmtChats->execute()) {
+                $res = $stmtChats->get_result();
+                while ($res && ($row = $res->fetch_assoc())) {
+                    $chats[] = $row;
+                }
+            } else {
+                starfi_log_exception('bandeja', 'Error ejecutando load_chats', ['sql_error' => $stmtChats->error]);
             }
+            $stmtChats->close();
+        } else {
+            starfi_log_exception('bandeja', 'Error preparando load_chats', ['sql_error' => $con->error]);
         }
 
         $has_more = false;
@@ -525,115 +629,114 @@ switch ($action) {
             // 2A. Obtener texto, timestamp y origen del último mensaje por PRIMARY KEY (instantáneo)
             $last_msgs_map = [];
             if (!empty($last_msg_ids)) {
-                $mids_csv = implode(',', array_unique($last_msg_ids));
-                $resLast = $con->query("SELECT id, id_conversacion, timestamp, contenido, origen FROM mensajes_y_eventos WHERE id IN ($mids_csv)");
-                if ($resLast) {
-                    while ($rm = $resLast->fetch_assoc()) {
-                        $last_msgs_map[intval($rm['id'])] = $rm;
-                    }
+                $rows_last = bandeja_fetch_in_ints(
+                    $con,
+                    "SELECT id, id_conversacion, timestamp, contenido, origen FROM mensajes_y_eventos WHERE id IN ({{IN_IDS}})",
+                    [$last_msg_ids]
+                );
+                foreach ($rows_last as $rm) {
+                    $last_msgs_map[intval($rm['id'])] = $rm;
                 }
             }
 
             // 2B. Detectar banderas es_campana y es_venta solo para las 20 conversaciones visibles
             $flags_map = [];
-            // 2C. [COM-01] Ventana Meta 24h y [COM-04] Semáforo SLA sin respuesta humana (usando idx_conv_origen_ts)
+            // 2C. [COM-01] Ventana Meta 24h y [COM-04] Semáforo SLA sin respuesta humana
             $win_sla_map = [];
             $sla_wait_map = [];
             // 2D. [COM-02] Etapa y Monto USD del Embudo de Ventas
             $deals_map = [];
+            $deals_by_client_map = [];
 
             if (!empty($conv_ids)) {
-                $cids_csv = implode(',', array_unique($conv_ids));
-                $resFlags = $con->query("
-                    SELECT 
+                $rows_flags = bandeja_fetch_in_ints(
+                    $con,
+                    "SELECT 
                         id_conversacion,
                         MAX(CASE WHEN contenido NOT LIKE '%send_confirmacion_compra%' AND (contenido LIKE '%starfi_difusion_directa%' OR contenido LIKE '%[DIFUSIÓN:%' OR contenido LIKE '%| Texto:%' OR IFNULL(categoria_meta, '') = 'MARKETING') THEN 1 ELSE 0 END) AS flag_campana,
                         MAX(CASE WHEN contenido LIKE '%send_confirmacion_compra%' OR (contenido NOT LIKE '%starfi_difusion_directa%' AND contenido NOT LIKE '%[DIFUSIÓN:%' AND contenido NOT LIKE '%| Texto:%' AND IFNULL(categoria_meta, '') != 'MARKETING') THEN 1 ELSE 0 END) AS flag_venta
                     FROM mensajes_y_eventos
-                    WHERE id_conversacion IN ($cids_csv)
+                    WHERE id_conversacion IN ({{IN_IDS}})
                       AND origen = 'API_TRANSACCIONAL'
-                    GROUP BY id_conversacion
-                ");
-                if ($resFlags) {
-                    while ($rf = $resFlags->fetch_assoc()) {
-                        $flags_map[intval($rf['id_conversacion'])] = $rf;
-                    }
+                    GROUP BY id_conversacion",
+                    [$conv_ids]
+                );
+                foreach ($rows_flags as $rf) {
+                    $flags_map[intval($rf['id_conversacion'])] = $rf;
                 }
 
-                $resWinSla = $con->query("
-                    SELECT 
+                $rows_win_sla = bandeja_fetch_in_ints(
+                    $con,
+                    "SELECT 
                         id_conversacion,
                         MAX(CASE WHEN origen = 'CLIENTE' THEN UNIX_TIMESTAMP(timestamp) ELSE NULL END) AS last_cli_ep,
                         MAX(CASE WHEN origen = 'AGENTE' THEN UNIX_TIMESTAMP(timestamp) ELSE NULL END) AS last_ag_ep
                     FROM mensajes_y_eventos
-                    WHERE id_conversacion IN ($cids_csv)
+                    WHERE id_conversacion IN ({{IN_IDS}})
                       AND origen IN ('CLIENTE', 'AGENTE')
-                    GROUP BY id_conversacion
-                ");
-                if ($resWinSla) {
-                    while ($rw = $resWinSla->fetch_assoc()) {
-                        $win_sla_map[intval($rw['id_conversacion'])] = $rw;
-                    }
+                    GROUP BY id_conversacion",
+                    [$conv_ids]
+                );
+                foreach ($rows_win_sla as $rw) {
+                    $win_sla_map[intval($rw['id_conversacion'])] = $rw;
                 }
 
-                $resSlaWait = $con->query("
-                    SELECT m.id_conversacion,
+                $rows_sla_wait = bandeja_fetch_in_ints(
+                    $con,
+                    "SELECT m.id_conversacion,
                            MIN(UNIX_TIMESTAMP(m.timestamp)) AS wait_since_ep
                     FROM mensajes_y_eventos m
                     LEFT JOIN (
                         SELECT id_conversacion, MAX(timestamp) AS max_ag_ts
                         FROM mensajes_y_eventos
-                        WHERE id_conversacion IN ($cids_csv)
+                        WHERE id_conversacion IN ({{IN_IDS}})
                           AND origen = 'AGENTE'
                         GROUP BY id_conversacion
                     ) ag ON ag.id_conversacion = m.id_conversacion
-                    WHERE m.id_conversacion IN ($cids_csv)
+                    WHERE m.id_conversacion IN ({{IN_IDS}})
                       AND m.origen = 'CLIENTE'
                       AND (ag.max_ag_ts IS NULL OR m.timestamp > ag.max_ag_ts)
-                    GROUP BY m.id_conversacion
-                ");
-                if ($resSlaWait) {
-                    while ($rsw = $resSlaWait->fetch_assoc()) {
-                        $sla_wait_map[intval($rsw['id_conversacion'])] = intval($rsw['wait_since_ep']);
-                    }
+                    GROUP BY m.id_conversacion",
+                    [$conv_ids, $conv_ids]
+                );
+                foreach ($rows_sla_wait as $rsw) {
+                    $sla_wait_map[intval($rsw['id_conversacion'])] = intval($rsw['wait_since_ep']);
                 }
 
-                $deals_by_client_map = [];
-                $resDeals = @$con->query("
-                    SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
+                $rows_deals = bandeja_fetch_in_ints(
+                    $con,
+                    "SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
                     FROM pipeline_oportunidades p
                     INNER JOIN (
                         SELECT id_conversacion, MAX(id) AS max_pid
                         FROM pipeline_oportunidades
-                        WHERE id_conversacion IN ($cids_csv)
+                        WHERE id_conversacion IN ({{IN_IDS}})
                         GROUP BY id_conversacion
-                    ) pm ON pm.max_pid = p.id
-                ");
-                if ($resDeals) {
-                    while ($rd = $resDeals->fetch_assoc()) {
-                        $deals_map[intval($rd['id_conversacion'])] = $rd;
-                    }
+                    ) pm ON pm.max_pid = p.id",
+                    [$conv_ids]
+                );
+                foreach ($rows_deals as $rd) {
+                    $deals_map[intval($rd['id_conversacion'])] = $rd;
                 }
+
                 if (!empty($cli_ids_page)) {
-                    $clids_csv = implode(',', array_unique($cli_ids_page));
-                    // Aislar estrictamente por id_sede y excluir oportunidades cerradas (GANADO/PERDIDO) en hilos nuevos
-                    $resDealsCli = @$con->query("
-                        SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
+                    $rows_deals_cli = bandeja_fetch_in_ints(
+                        $con,
+                        "SELECT p.id, p.id_sede, p.id_conversacion, p.id_cliente, p.etapa, p.monto_estimado_usd
                         FROM pipeline_oportunidades p
                         INNER JOIN (
                             SELECT id_sede, id_cliente, MAX(id) AS max_pid
                             FROM pipeline_oportunidades
-                            WHERE id_cliente IN ($clids_csv)
+                            WHERE id_cliente IN ({{IN_IDS}})
                               AND id_sede > 0
                               AND etapa NOT IN ('GANADO', 'PERDIDO')
                             GROUP BY id_sede, id_cliente
-                        ) pmc ON pmc.max_pid = p.id
-                    ");
-                    if ($resDealsCli) {
-                        while ($rdc = $resDealsCli->fetch_assoc()) {
-                            $key_sc = intval($rdc['id_sede']) . '_' . intval($rdc['id_cliente']);
-                            $deals_by_client_map[$key_sc] = $rdc;
-                        }
+                        ) pmc ON pmc.max_pid = p.id",
+                        [$cli_ids_page]
+                    );
+                    foreach ($rows_deals_cli as $rdc) {
+                        $key_sc = intval($rdc['id_sede']) . '_' . intval($rdc['id_cliente']);
+                        $deals_by_client_map[$key_sc] = $rdc;
                     }
                 }
             }
@@ -727,7 +830,12 @@ switch ($action) {
             // Marcar mensajes como leídos solo si es OPERADOR al abrir.
             // Para Administrador/Master se mantiene sin leer a menos que respondan.
             if ($is_operador) {
-                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = $conversacion_id");
+                $stmtReadOp = $con->prepare("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = ? AND mensajes_no_leidos > 0");
+                if ($stmtReadOp) {
+                    $stmtReadOp->bind_param("i", $conversacion_id);
+                    $stmtReadOp->execute();
+                    $stmtReadOp->close();
+                }
             }
             
             $messages = [];
@@ -790,6 +898,8 @@ switch ($action) {
         }
 
         $is_new_chat = false;
+        $conv_antes = null;
+        $sede_conv = 0;
         // Si no hay conversación activa, la creamos respetando la sede del agente / cliente
         if ($conversacion_id <= 0 && $cliente_id > 0) {
             if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
@@ -805,18 +915,20 @@ switch ($action) {
             
             $id_linea = null;
             if ($user_sede > 0) {
-                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                if ($resLinea && $resLinea->num_rows > 0) {
-                    $id_linea = intval($resLinea->fetch_assoc()['id']);
+                $rowLin = bandeja_fetch_one($con, "SELECT id, id_sede FROM lineas_whatsapp WHERE id_sede = ? AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1", "i", [$user_sede]);
+                if ($rowLin) {
+                    $id_linea = intval($rowLin['id']);
+                    $sede_conv = intval($rowLin['id_sede']);
                 }
             }
             if (!$id_linea && $is_master_chk) {
-                $resCliSede = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
-                $cli_sede = ($resCliSede && $resCliSede->num_rows > 0) ? intval($resCliSede->fetch_assoc()['id_sede'] ?? 0) : 0;
+                $rowCliSede = bandeja_fetch_one($con, "SELECT id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
+                $cli_sede = $rowCliSede ? intval($rowCliSede['id_sede'] ?? 0) : 0;
                 if ($cli_sede > 0) {
-                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $cli_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                    if ($resLinea && $resLinea->num_rows > 0) {
-                        $id_linea = intval($resLinea->fetch_assoc()['id']);
+                    $rowLin = bandeja_fetch_one($con, "SELECT id, id_sede FROM lineas_whatsapp WHERE id_sede = ? AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1", "i", [$cli_sede]);
+                    if ($rowLin) {
+                        $id_linea = intval($rowLin['id']);
+                        $sede_conv = intval($rowLin['id_sede']);
                     }
                 }
             }
@@ -828,7 +940,8 @@ switch ($action) {
             $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
             $stmt->bind_param("iii", $id_linea, $cliente_id, $agente_id);
             $stmt->execute();
-            $conversacion_id = $stmt->insert_id;
+            $conversacion_id = intval($stmt->insert_id);
+            $stmt->close();
             $is_new_chat = true;
         } else {
             if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
@@ -836,31 +949,40 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para responder en esta conversación o sede.']);
                 exit;
             }
+            $conv_antes = bandeja_fetch_one($con, "SELECT c.id, c.id_agente, c.estado, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+            $sede_conv = intval($conv_antes['id_sede'] ?? 0);
             // Auto-assign to agent if replying to a waiting chat
-            $con->query("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = $agente_id, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = $conversacion_id AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
+            $stmtTake = $con->prepare("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = ?, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = ? AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
+            if ($stmtTake) {
+                $stmtTake->bind_param("ii", $agente_id, $conversacion_id);
+                $stmtTake->execute();
+                $stmtTake->close();
+            }
         }
         
         $is_internal = intval($_POST['is_internal'] ?? 0);
         $id_mensaje_meta = null;
         $origen = 'AGENTE';
         $tipo = 'TEXTO';
+        $estado_envio = ($is_internal === 1) ? 'ENVIADO' : 'PENDIENTE';
+        $error_detalle = null;
         
         if ($is_internal === 1) {
             $origen = 'NOTA_INTERNA';
-            // Saltamos todo el envío a la API de WhatsApp, solo se guarda local
         } else {
-            // -------------------------------------------------------------
-            // INICIO BLOQUE ENVÍO A WHATSAPP CLOUD API
-            // -------------------------------------------------------------
-            $queryChat = "
-                SELECT c.id_cliente, cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id
-                FROM conversaciones c
-                JOIN clientes_contactos cl ON c.id_cliente = cl.id
-                JOIN lineas_whatsapp l ON c.id_linea = l.id
-                WHERE c.id = $conversacion_id
-            ";
-            $resChat = $con->query($queryChat);
-            $chat_data = $resChat ? $resChat->fetch_assoc() : null;
+            $chat_data = bandeja_fetch_one(
+                $con,
+                "SELECT c.id_cliente, cl.numero_whatsapp, l.id_sede, l.meta_token, l.meta_app_id AS phone_number_id
+                 FROM conversaciones c
+                 JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                 JOIN lineas_whatsapp l ON c.id_linea = l.id
+                 WHERE c.id = ? LIMIT 1",
+                "i",
+                [$conversacion_id]
+            );
+            if ($chat_data && $sede_conv <= 0) {
+                $sede_conv = intval($chat_data['id_sede'] ?? 0);
+            }
 
             if ($chat_data && !empty($chat_data['meta_token']) && $chat_data['meta_token'] !== 'temp_token') {
                 $numero_destino = preg_replace('/[^0-9]/', '', $chat_data['numero_whatsapp']);
@@ -895,12 +1017,13 @@ switch ($action) {
                     'Content-Type: application/json'
                 ]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 5); // Timeout rápido para no bloquear
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 5);
                 $response = curl_exec($ch);
                 $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_close($ch);
                 
-                $res_meta = json_decode($response, true);
+                $res_meta = json_decode((string)$response, true);
                 if (isset($res_meta['messages'][0]['id'])) {
                     $id_mensaje_meta = $res_meta['messages'][0]['id'];
                     $estado_envio = 'ENVIADO';
@@ -909,9 +1032,6 @@ switch ($action) {
                     $error_detalle = parse_meta_error_detail($res_meta, $status_code);
                 }
             }
-            // -------------------------------------------------------------
-            // FIN BLOQUE ENVÍO
-            // -------------------------------------------------------------
         }
         
         $reply_to_meta_id = $_POST['reply_to_meta_id'] ?? null;
@@ -925,12 +1045,32 @@ switch ($action) {
             $stmt->bind_param("ississssss", $conversacion_id, $tipo, $origen, $agente_id, $contenido, $id_mensaje_meta, $reply_to_meta_id, $reply_to_text, $estado_envio, $error_detalle);
             if ($stmt->execute()) {
                 $new_msg_id = intval($stmt->insert_id);
-                // Al responder (ya sea Operador, Administrador o Master), la conversación se marca como leída y sincroniza ultimo_msg_id
-                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_msg_id) WHERE id = $conversacion_id");
+                $stmt->close();
+                $stmtUpC = $con->prepare("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ?");
+                if ($stmtUpC) {
+                    $stmtUpC->bind_param("ii", $new_msg_id, $conversacion_id);
+                    $stmtUpC->execute();
+                    $stmtUpC->close();
+                }
+                registrar_auditoria(
+                    'bandeja',
+                    $is_internal === 1 ? 'CREAR_NOTA_INTERNA' : 'ENVIAR_MENSAJE',
+                    ($is_internal === 1 ? 'Nota interna registrada' : 'Mensaje enviado') . " en conversación #$conversacion_id",
+                    $conv_antes,
+                    ['conversacion_id' => $conversacion_id, 'message_id' => $new_msg_id, 'origen' => $origen, 'estado_envio' => $estado_envio],
+                    $con,
+                    $agente_id,
+                    $sede_conv ?: null
+                );
                 echo json_encode(['status' => 'success', 'message_id' => $new_msg_id, 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
             } else {
+                starfi_log_exception('bandeja', 'Error ejecutando INSERT mensajes_y_eventos en send_message', ['conversacion_id' => $conversacion_id, 'sql_error' => $stmt->error]);
+                $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar mensaje en BD.']);
             }
+        } else {
+            starfi_log_exception('bandeja', 'Error preparando INSERT mensajes_y_eventos en send_message', ['sql_error' => $con->error]);
+            echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar mensaje en BD.']);
         }
         break;
 
@@ -970,18 +1110,18 @@ switch ($action) {
             $user_sede = isset($agente_info['id_sede']) ? intval($agente_info['id_sede']) : 0;
 
             if ($user_sede > 0) {
-                $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                if ($resLinea && $resLinea->num_rows > 0) {
-                    $id_linea_upload = intval($resLinea->fetch_assoc()['id']);
+                $rowLin = bandeja_fetch_one($con, "SELECT id FROM lineas_whatsapp WHERE id_sede = ? AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1", "i", [$user_sede]);
+                if ($rowLin) {
+                    $id_linea_upload = intval($rowLin['id']);
                 }
             }
             if (!$id_linea_upload && $is_master_chk) {
-                $resCliSede = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
-                $cli_sede = ($resCliSede && $resCliSede->num_rows > 0) ? intval($resCliSede->fetch_assoc()['id_sede'] ?? 0) : 0;
+                $rowCliSede = bandeja_fetch_one($con, "SELECT id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
+                $cli_sede = $rowCliSede ? intval($rowCliSede['id_sede'] ?? 0) : 0;
                 if ($cli_sede > 0) {
-                    $resLinea = $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $cli_sede AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1");
-                    if ($resLinea && $resLinea->num_rows > 0) {
-                        $id_linea_upload = intval($resLinea->fetch_assoc()['id']);
+                    $rowLin = bandeja_fetch_one($con, "SELECT id FROM lineas_whatsapp WHERE id_sede = ? AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO' OR estado = 'CONECTADO') LIMIT 1", "i", [$cli_sede]);
+                    if ($rowLin) {
+                        $id_linea_upload = intval($rowLin['id']);
                     }
                 }
             }
@@ -1025,41 +1165,46 @@ switch ($action) {
         $dest_path = __DIR__ . '/../../assets/uploads/' . $filename;
         
         if (@move_uploaded_file($file['tmp_name'], $dest_path)) {
-            $url_archivo = '/starfi_crm/assets/uploads/' . $filename;
+            $url_archivo = '../../assets/uploads/' . $filename;
             $tipo_bd = (strpos($mime, 'image') !== false) ? 'IMAGEN' : 'DOCUMENTO';
             $contenido = $file['name'];
+            $id_mensaje_meta = null;
+            $conv_antes = null;
             
             $is_new_chat = false;
-            // Si no hay conversación activa, la creamos con la línea validada de su sede
             if ($conversacion_id <= 0 && $cliente_id > 0) {
                 $stmt = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
                 $stmt->bind_param("iii", $id_linea_upload, $cliente_id, $agente_id);
                 $stmt->execute();
-                $conversacion_id = $stmt->insert_id;
+                $conversacion_id = intval($stmt->insert_id);
+                $stmt->close();
                 $is_new_chat = true;
             } else {
-                $con->query("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = $agente_id, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = $conversacion_id AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
+                $conv_antes = bandeja_fetch_one($con, "SELECT c.id, c.id_agente, c.estado, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+                $stmtTake = $con->prepare("UPDATE conversaciones SET estado = 'ATENDIENDO', id_agente = ?, fecha_primera_respuesta = IFNULL(fecha_primera_respuesta, NOW()) WHERE id = ? AND (id_agente IS NULL OR estado = 'ESPERA_ASIGNACION')");
+                if ($stmtTake) {
+                    $stmtTake->bind_param("ii", $agente_id, $conversacion_id);
+                    $stmtTake->execute();
+                    $stmtTake->close();
+                }
             }
             
-            // -------------------------------------------------------------
-            // INICIO BLOQUE ENVÍO A WHATSAPP CLOUD API (MULTIMEDIA)
-            // -------------------------------------------------------------
-            $queryChat = "
-                SELECT c.id_cliente, cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id
-                FROM conversaciones c
-                JOIN clientes_contactos cl ON c.id_cliente = cl.id
-                JOIN lineas_whatsapp l ON c.id_linea = l.id
-                WHERE c.id = $conversacion_id
-            ";
-            $resChat = $con->query($queryChat);
-            $chat_data = $resChat ? $resChat->fetch_assoc() : null;
+            $chat_data = bandeja_fetch_one(
+                $con,
+                "SELECT c.id_cliente, cl.numero_whatsapp, l.id_sede, l.meta_token, l.meta_app_id AS phone_number_id
+                 FROM conversaciones c
+                 JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                 JOIN lineas_whatsapp l ON c.id_linea = l.id
+                 WHERE c.id = ? LIMIT 1",
+                "i",
+                [$conversacion_id]
+            );
 
             if ($chat_data && !empty($chat_data['meta_token']) && $chat_data['meta_token'] !== 'temp_token') {
                 $numero_destino = preg_replace('/[^0-9]/', '', $chat_data['numero_whatsapp']);
                 $meta_token = $chat_data['meta_token'];
                 $phone_number_id = $chat_data['phone_number_id'];
 
-                // 1. Subir archivo a los servidores de Meta para obtener un Media ID
                 $media_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/media";
                 $cfile = new CURLFile($dest_path, $mime, $filename);
                 $post_media = [
@@ -1074,12 +1219,13 @@ switch ($action) {
                     'Authorization: Bearer ' . $meta_token
                 ]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 8);
                 $media_response = curl_exec($ch);
                 curl_close($ch);
                 
-                $media_data = json_decode($media_response, true);
+                $media_data = json_decode((string)$media_response, true);
                 
-                // 2. Si la subida fue exitosa, enviar el mensaje con el Media ID
                 if (isset($media_data['id'])) {
                     $media_id = $media_data['id'];
                     $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
@@ -1110,19 +1256,18 @@ switch ($action) {
                         'Content-Type: application/json'
                     ]);
                     curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 4);
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
                     $response2 = curl_exec($ch2);
                     curl_close($ch2);
                     
-                    $res_meta2 = json_decode($response2, true);
+                    $res_meta2 = json_decode((string)$response2, true);
                     if (isset($res_meta2['messages'][0]['id'])) {
                         $id_mensaje_meta = $res_meta2['messages'][0]['id'];
                     }
                 }
             }
-            // -------------------------------------------------------------
-            // FIN BLOQUE ENVÍO A WHATSAPP
-            // -------------------------------------------------------------
-            // Guardar en BD
+
             $reply_to_meta_id = $_POST['reply_to_meta_id'] ?? null;
             $reply_to_text = $_POST['reply_to_text'] ?? null;
             
@@ -1132,13 +1277,35 @@ switch ($action) {
                     contenido, url_archivo, mime_type, estado_envio, reply_to_meta_id, reply_to_text
                 ) VALUES (?, ?, ?, 'AGENTE', ?, ?, ?, 'ENVIADO', ?, ?)
             ");
-            $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
-            if ($stmt_msg->execute()) {
-                $new_media_msg_id = intval($stmt_msg->insert_id);
-                // Al enviar un archivo/multimedia, la conversación se marca como leída y sincroniza ultimo_msg_id
-                $con->query("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_media_msg_id) WHERE id = $conversacion_id");
-                echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
+            if ($stmt_msg) {
+                $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
+                if ($stmt_msg->execute()) {
+                    $new_media_msg_id = intval($stmt_msg->insert_id);
+                    $stmt_msg->close();
+                    $stmtUpM = $con->prepare("UPDATE conversaciones SET mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ?");
+                    if ($stmtUpM) {
+                        $stmtUpM->bind_param("ii", $new_media_msg_id, $conversacion_id);
+                        $stmtUpM->execute();
+                        $stmtUpM->close();
+                    }
+                    registrar_auditoria(
+                        'bandeja',
+                        'ENVIAR_MULTIMEDIA',
+                        "Archivo multimedia ($tipo_bd) enviado en conversación #$conversacion_id",
+                        $conv_antes,
+                        ['conversacion_id' => $conversacion_id, 'message_id' => $new_media_msg_id, 'tipo' => $tipo_bd, 'archivo' => $filename],
+                        $con,
+                        $agente_id,
+                        intval($chat_data['id_sede'] ?? 0) ?: null
+                    );
+                    echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
+                } else {
+                    starfi_log_exception('bandeja', 'Error ejecutando upload_media INSERT', ['conversacion_id' => $conversacion_id, 'sql_error' => $stmt_msg->error]);
+                    $stmt_msg->close();
+                    echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar en BD.']);
+                }
             } else {
+                starfi_log_exception('bandeja', 'Error preparando upload_media INSERT', ['sql_error' => $con->error]);
                 echo json_encode(['status' => 'error', 'message' => 'Fallo al guardar en BD.']);
             }
         } else {
@@ -1215,16 +1382,18 @@ switch ($action) {
                 'Content-Type: application/json'
             ]);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 8);
             $response = curl_exec($ch);
             curl_close($ch);
             
-            $res_meta = json_decode($response, true);
+            $res_meta = json_decode((string)$response, true);
             if (isset($res_meta['messages'][0]['id'])) {
                 $id_mensaje_meta = $res_meta['messages'][0]['id'];
             }
         } else if (($msg['tipo'] === 'IMAGEN' || $msg['tipo'] === 'DOCUMENTO') && !empty($msg['url_archivo'])) {
-            // Es multimedia
-            $dest_path = __DIR__ . '/../..' . str_replace('/starfi_crm', '', $msg['url_archivo']);
+            $rel_upload = preg_replace('#^.*?(/assets/uploads/)#', '$1', str_replace('\\', '/', (string)$msg['url_archivo']));
+            $dest_path = __DIR__ . '/../..' . (strpos($rel_upload, '/') === 0 ? $rel_upload : ('/' . $rel_upload));
             
             if (file_exists($dest_path)) {
                 $mime = $msg['mime_type'];
@@ -1239,10 +1408,12 @@ switch ($action) {
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $post_media);
                 curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 8);
                 $media_response = curl_exec($ch);
                 curl_close($ch);
                 
-                $media_data = json_decode($media_response, true);
+                $media_data = json_decode((string)$media_response, true);
                 if (isset($media_data['id'])) {
                     $media_id = $media_data['id'];
                     $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
@@ -1266,10 +1437,12 @@ switch ($action) {
                     curl_setopt($ch2, CURLOPT_POSTFIELDS, json_encode($post_msg));
                     curl_setopt($ch2, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
                     curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 4);
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
                     $response2 = curl_exec($ch2);
                     curl_close($ch2);
                     
-                    $res_meta2 = json_decode($response2, true);
+                    $res_meta2 = json_decode((string)$response2, true);
                     if (isset($res_meta2['messages'][0]['id'])) {
                         $id_mensaje_meta = $res_meta2['messages'][0]['id'];
                     }
@@ -1279,30 +1452,58 @@ switch ($action) {
         
         if ($id_mensaje_meta) {
             $stmt = $con->prepare("UPDATE mensajes_y_eventos SET estado_envio = 'ENVIADO', error_detalle = NULL, id_mensaje_meta = ? WHERE id = ?");
-            $stmt->bind_param("si", $id_mensaje_meta, $msg_id);
-            $stmt->execute();
+            if ($stmt) {
+                $stmt->bind_param("si", $id_mensaje_meta, $msg_id);
+                $stmt->execute();
+                $stmt->close();
+            }
+            registrar_auditoria(
+                'bandeja',
+                'REINTENTAR_MENSAJE',
+                "Reintento exitoso de mensaje #$msg_id",
+                ['id' => $msg_id, 'estado_envio' => $msg['estado_envio'] ?? null],
+                ['id' => $msg_id, 'estado_envio' => 'ENVIADO', 'id_mensaje_meta' => $id_mensaje_meta],
+                $con,
+                $agente_id
+            );
             echo json_encode(['status' => 'success']);
         } else {
             $err_reason = parse_meta_error_detail($res_meta ?? ($res_meta2 ?? []), 0);
-            $err_esc = $con->real_escape_string($err_reason);
-            $con->query("UPDATE mensajes_y_eventos SET estado_envio = 'FALLIDO', error_detalle = '$err_esc' WHERE id = $msg_id");
+            $stmtFail = $con->prepare("UPDATE mensajes_y_eventos SET estado_envio = 'FALLIDO', error_detalle = ? WHERE id = ?");
+            if ($stmtFail) {
+                $stmtFail->bind_param("si", $err_reason, $msg_id);
+                $stmtFail->execute();
+                $stmtFail->close();
+            }
+            registrar_auditoria(
+                'bandeja',
+                'REINTENTAR_MENSAJE',
+                "Reintento fallido de mensaje #$msg_id",
+                ['id' => $msg_id, 'estado_envio' => $msg['estado_envio'] ?? null],
+                ['id' => $msg_id, 'estado_envio' => 'FALLIDO'],
+                $con,
+                $agente_id
+            );
             echo json_encode(['status' => 'error', 'message' => $err_reason]);
         }
         break;
 
     case 'close_chat':
         $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
-        $motivo = $_POST['motivo_cierre'] ?? 'NO_ESPECIFICADO';
+        $motivo = trim((string)($_POST['motivo_cierre'] ?? 'NO_ESPECIFICADO'));
         $calidad = intval($_POST['calificacion_calidad'] ?? 0);
         $observacion = trim($_POST['observacion'] ?? '');
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
         
-        if($conversacion_id > 0) {
+        if ($conversacion_id > 0) {
             if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, false)) {
                 http_response_code(403);
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para cerrar conversaciones de otra sede o agente.']);
                 exit;
             }
+            $datos_anteriores = bandeja_fetch_one($con, "SELECT c.id, c.id_agente, c.estado, c.resultado_comercial, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+            $sede_close = intval($datos_anteriores['id_sede'] ?? 0);
+
             $update_conv = "UPDATE conversaciones SET estado = 'CERRADO', fecha_resolucion = NOW(), resultado_comercial = ?";
             if ($motivo === 'VENTA_CERRADA') {
                 $update_conv .= ", fecha_cierre_venta = NOW()";
@@ -1310,47 +1511,70 @@ switch ($action) {
             $update_conv .= " WHERE id = ?";
             
             $stmt = $con->prepare($update_conv);
-            $stmt->bind_param("si", $motivo, $conversacion_id);
-            $stmt->execute();
+            if ($stmt) {
+                $stmt->bind_param("si", $motivo, $conversacion_id);
+                $stmt->execute();
+                $stmt->close();
+            }
 
-            // [COM-02] Sincronizar cierre comercial con el Tablero Kanban de Embudo de Ventas
             if ($motivo === 'VENTA_CERRADA') {
-                @$con->query("UPDATE pipeline_oportunidades SET etapa = 'GANADO', probabilidad = 100, fecha_cierre = NOW() WHERE (id_conversacion = $conversacion_id OR (id_cliente = $cliente_id AND $cliente_id > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+                $stmtPipe = @$con->prepare("UPDATE pipeline_oportunidades SET etapa = 'GANADO', probabilidad = 100, fecha_cierre = NOW() WHERE (id_conversacion = ? OR (id_cliente = ? AND ? > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+                if ($stmtPipe) {
+                    $stmtPipe->bind_param("iii", $conversacion_id, $cliente_id, $cliente_id);
+                    $stmtPipe->execute();
+                    $stmtPipe->close();
+                }
             } elseif ($motivo === 'NO_INTERESADO') {
-                @$con->query("UPDATE pipeline_oportunidades SET etapa = 'PERDIDO', probabilidad = 0, motivo_perdida = 'Cerrado como No Interesado en Bandeja', fecha_cierre = NOW() WHERE (id_conversacion = $conversacion_id OR (id_cliente = $cliente_id AND $cliente_id > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+                $stmtPipe = @$con->prepare("UPDATE pipeline_oportunidades SET etapa = 'PERDIDO', probabilidad = 0, motivo_perdida = 'Cerrado como No Interesado en Bandeja', fecha_cierre = NOW() WHERE (id_conversacion = ? OR (id_cliente = ? AND ? > 0)) AND etapa NOT IN ('GANADO','PERDIDO')");
+                if ($stmtPipe) {
+                    $stmtPipe->bind_param("iii", $conversacion_id, $cliente_id, $cliente_id);
+                    $stmtPipe->execute();
+                    $stmtPipe->close();
+                }
             }
             
             if ($calidad > 0) {
                 $stmt_cli = $con->prepare("UPDATE clientes_contactos cl JOIN conversaciones c ON c.id_cliente = cl.id SET cl.calificacion_calidad = ? WHERE c.id = ?");
-                $stmt_cli->bind_param("ii", $calidad, $conversacion_id);
-                $stmt_cli->execute();
+                if ($stmt_cli) {
+                    $stmt_cli->bind_param("ii", $calidad, $conversacion_id);
+                    $stmt_cli->execute();
+                    $stmt_cli->close();
+                }
             }
 
-            $motivo_esc = $con->real_escape_string($motivo);
-            $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo_esc | Lead Scoring: $calidad estrellas";
-            $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', '$evento_texto')");
-            sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
+            $evento_texto = "Conversación cerrada por el operador. Motivo: $motivo | Lead Scoring: $calidad estrellas";
+            $stmtEvClose = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (?, 'EVENTO_SISTEMA', ?)");
+            if ($stmtEvClose) {
+                $stmtEvClose->bind_param("is", $conversacion_id, $evento_texto);
+                $stmtEvClose->execute();
+                sync_ultimo_msg_conversacion($con, $conversacion_id, $stmtEvClose->insert_id);
+                $stmtEvClose->close();
+            }
             
             if (!empty($observacion)) {
                 $agente_id_actual = $agente_id;
                 $stmt_obs = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, id_agente, tipo, contenido) VALUES (?, 'NOTA_INTERNA', ?, 'TEXTO', ?)");
-                $stmt_obs->bind_param("iis", $conversacion_id, $agente_id_actual, $observacion);
-                $stmt_obs->execute();
-                sync_ultimo_msg_conversacion($con, $conversacion_id, $stmt_obs->insert_id);
+                if ($stmt_obs) {
+                    $stmt_obs->bind_param("iis", $conversacion_id, $agente_id_actual, $observacion);
+                    $stmt_obs->execute();
+                    sync_ultimo_msg_conversacion($con, $conversacion_id, $stmt_obs->insert_id);
+                    $stmt_obs->close();
+                }
             }
             
-            // AUTOMATIZACIÓN CSAT: Enviar la plantilla starfi_csat_survey al cliente
             $enviar_csat = intval($_POST['enviar_csat'] ?? 1);
             if ($enviar_csat === 1) {
-                $queryChat = "
-                    SELECT cl.numero_whatsapp, l.meta_token, l.meta_app_id as phone_number_id
-                    FROM conversaciones c
-                    JOIN clientes_contactos cl ON c.id_cliente = cl.id
-                    JOIN lineas_whatsapp l ON c.id_linea = l.id
-                    WHERE c.id = $conversacion_id
-                ";
-                $resChat = $con->query($queryChat);
-                if ($resChat && $rowChat = $resChat->fetch_assoc()) {
+                $rowChat = bandeja_fetch_one(
+                    $con,
+                    "SELECT cl.numero_whatsapp, l.meta_token, l.meta_app_id AS phone_number_id
+                     FROM conversaciones c
+                     JOIN clientes_contactos cl ON c.id_cliente = cl.id
+                     JOIN lineas_whatsapp l ON c.id_linea = l.id
+                     WHERE c.id = ? LIMIT 1",
+                    "i",
+                    [$conversacion_id]
+                );
+                if ($rowChat) {
                     $numero_destino = $rowChat['numero_whatsapp'];
                     $meta_token = $rowChat['meta_token'];
                     $phone_number_id = $rowChat['phone_number_id'];
@@ -1373,13 +1597,32 @@ switch ($action) {
                     curl_setopt($ch_csat, CURLOPT_POSTFIELDS, json_encode($post_csat));
                     curl_setopt($ch_csat, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
                     curl_setopt($ch_csat, CURLOPT_RETURNTRANSFER, true);
-                    $res_csat_json = curl_exec($ch_csat);
+                    curl_setopt($ch_csat, CURLOPT_CONNECTTIMEOUT, 4);
+                    curl_setopt($ch_csat, CURLOPT_TIMEOUT, 8);
+                    curl_exec($ch_csat);
                     curl_close($ch_csat);
                     
-                    $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES ($conversacion_id, 'EVENTO_SISTEMA', 'Encuesta CSAT (starfi_csat_survey) enviada al cliente automáticamente.')");
-                    sync_ultimo_msg_conversacion($con, $conversacion_id, $con->insert_id);
+                    $csat_ev = 'Encuesta CSAT (starfi_csat_survey) enviada al cliente automáticamente.';
+                    $stmtEvCsat = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, contenido) VALUES (?, 'EVENTO_SISTEMA', ?)");
+                    if ($stmtEvCsat) {
+                        $stmtEvCsat->bind_param("is", $conversacion_id, $csat_ev);
+                        $stmtEvCsat->execute();
+                        sync_ultimo_msg_conversacion($con, $conversacion_id, $stmtEvCsat->insert_id);
+                        $stmtEvCsat->close();
+                    }
                 }
             }
+
+            registrar_auditoria(
+                'bandeja',
+                'CERRAR_CONVERSACION',
+                "Conversación #$conversacion_id cerrada ($motivo)",
+                $datos_anteriores,
+                ['id' => $conversacion_id, 'estado' => 'CERRADO', 'motivo_cierre' => $motivo, 'calificacion_calidad' => $calidad, 'enviar_csat' => $enviar_csat],
+                $con,
+                $agente_id,
+                $sede_close ?: null
+            );
             
             echo json_encode(['status' => 'success']);
         }
@@ -1393,10 +1636,23 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre esta conversación o sede.']);
                 exit;
             }
+            $datos_anteriores = bandeja_fetch_one($con, "SELECT c.id, c.mensajes_no_leidos, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
             $stmtRead = $con->prepare("UPDATE conversaciones SET mensajes_no_leidos = 0 WHERE id = ?");
-            $stmtRead->bind_param("i", $conversacion_id);
-            $stmtRead->execute();
-            $stmtRead->close();
+            if ($stmtRead) {
+                $stmtRead->bind_param("i", $conversacion_id);
+                $stmtRead->execute();
+                $stmtRead->close();
+            }
+            registrar_auditoria(
+                'bandeja',
+                'MARCAR_COMO_LEIDO',
+                "Conversación #$conversacion_id marcada como leída",
+                $datos_anteriores,
+                ['id' => $conversacion_id, 'mensajes_no_leidos' => 0],
+                $con,
+                $agente_id,
+                intval($datos_anteriores['id_sede'] ?? 0) ?: null
+            );
             echo json_encode(['status' => 'success']);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'ID inválido']);
@@ -1413,18 +1669,12 @@ switch ($action) {
                 exit;
             }
 
+            $datos_anteriores = bandeja_fetch_one($con, "SELECT c.id, c.id_agente, c.estado, l.id_sede FROM conversaciones c LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+
             $rol_reass = strtoupper(trim($agente_info_global['rol'] ?? ''));
             $is_master_reass = (intval($agente_info_global['id'] ?? 0) === 1 || $rol_reass === 'MASTER' || $rol_reass === 'MASTER CI');
 
-            $stmtAg = $con->prepare("SELECT u.id_sede, COALESCE(up.nombre, u.usuario) AS nombre_completo, up.telefono FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = ? LIMIT 1");
-            $rowAgente = null;
-            if ($stmtAg) {
-                $stmtAg->bind_param("i", $nuevo_agente_id);
-                $stmtAg->execute();
-                $resAg = $stmtAg->get_result();
-                $rowAgente = $resAg ? $resAg->fetch_assoc() : null;
-                $stmtAg->close();
-            }
+            $rowAgente = bandeja_fetch_one($con, "SELECT u.id_sede, COALESCE(up.nombre, u.usuario) AS nombre_completo, up.telefono FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = ? LIMIT 1", "i", [$nuevo_agente_id]);
             if (!$rowAgente) {
                 echo json_encode(['status' => 'error', 'message' => 'El agente seleccionado no existe.']);
                 exit;
@@ -1459,24 +1709,20 @@ switch ($action) {
                 sync_ultimo_msg_conversacion($con, $conversacion_id, $ev_id);
             }
 
-            // Enviar notificación por WhatsApp al operador y a los administradores
-            // Se elimina el fallback a cualquier línea global para evitar usar el número de otra sede
-            $qLinea = $con->query("SELECT l.meta_token, l.meta_app_id, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = $conversacion_id LIMIT 1");
-            if ($qLinea && $rowLinea = $qLinea->fetch_assoc()) {
+            $rowLinea = bandeja_fetch_one($con, "SELECT l.meta_token, l.meta_app_id, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+            $id_sede_notif = intval($rowLinea['id_sede'] ?? ($datos_anteriores['id_sede'] ?? 0));
+            if ($rowLinea) {
                 $meta_token = $rowLinea['meta_token'];
                 $phone_number_id = $rowLinea['meta_app_id'];
-                $id_sede_notif = intval($rowLinea['id_sede'] ?? 1);
                 
-                // Obtener nombre del asignador y datos del cliente
-                $resAsignador = $con->query("SELECT COALESCE(up.nombre, u.usuario) AS nombre_asignador FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = $agente_id");
-                $nombre_asignador = ($resAsignador && $rowAsig = $resAsignador->fetch_assoc()) ? $rowAsig['nombre_asignador'] : 'Administrador';
+                $rowAsig = bandeja_fetch_one($con, "SELECT COALESCE(up.nombre, u.usuario) AS nombre_asignador FROM usuario u LEFT JOIN usuario_perfil up ON u.id = up.id_usuario WHERE u.id = ? LIMIT 1", "i", [$agente_id]);
+                $nombre_asignador = $rowAsig ? $rowAsig['nombre_asignador'] : 'Administrador';
                 
-                $resCliente = $con->query("SELECT cl.nombre, cl.numero_whatsapp FROM conversaciones c JOIN clientes_contactos cl ON c.id_cliente = cl.id WHERE c.id = $conversacion_id LIMIT 1");
-                $infoCliente = ($resCliente && $rowCli = $resCliente->fetch_assoc()) ? ($rowCli['nombre'] ? $rowCli['nombre'] . ' (' . $rowCli['numero_whatsapp'] . ')' : $rowCli['numero_whatsapp']) : 'Cliente';
+                $rowCli = bandeja_fetch_one($con, "SELECT cl.nombre, cl.numero_whatsapp FROM conversaciones c JOIN clientes_contactos cl ON c.id_cliente = cl.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+                $infoCliente = $rowCli ? ($rowCli['nombre'] ? $rowCli['nombre'] . ' (' . $rowCli['numero_whatsapp'] . ')' : $rowCli['numero_whatsapp']) : 'Cliente';
                 
                 $texto_notif = "Hola $nombre_agente, tienes una conversación asignada por $nombre_asignador de $infoCliente. ¡Ingresa para atenderla!";
 
-                // Coleccionar teléfono de destino ÚNICAMENTE del vendedor/operador asignado (NO notificar al Administrador)
                 $telefonos_destinatarios = [];
                 if (!empty($telefono_agente) && $telefono_agente !== '-') {
                     $tel_clean = preg_replace('/[^0-9]/', '', $telefono_agente);
@@ -1485,7 +1731,6 @@ switch ($action) {
                     }
                 }
 
-                // Enviar la plantilla starfi_notificacion_interna a cada destinatario
                 $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                 foreach ($telefonos_destinatarios as $tel_dest) {
                     $post_payload = [
@@ -1511,10 +1756,23 @@ switch ($action) {
                     curl_setopt($ch_notif, CURLOPT_POSTFIELDS, json_encode($post_payload));
                     curl_setopt($ch_notif, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
                     curl_setopt($ch_notif, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch_notif, CURLOPT_CONNECTTIMEOUT, 4);
+                    curl_setopt($ch_notif, CURLOPT_TIMEOUT, 8);
                     curl_exec($ch_notif);
                     curl_close($ch_notif);
                 }
             }
+
+            registrar_auditoria(
+                'bandeja',
+                'REASIGNAR_CONVERSACION',
+                "Conversación #$conversacion_id reasignada al agente #$nuevo_agente_id ($nombre_agente)",
+                $datos_anteriores,
+                ['id' => $conversacion_id, 'id_agente' => $nuevo_agente_id, 'nombre_agente' => $nombre_agente, 'estado' => 'ESPERA_ASIGNACION'],
+                $con,
+                $agente_id,
+                $id_sede_notif ?: null
+            );
 
             echo json_encode(['status' => 'success']);
         } else {
@@ -1591,25 +1849,39 @@ switch ($action) {
 
     case 'save_profile':
         $cliente_id = intval($_POST['cliente_id'] ?? 0);
-        $nombre = $_POST['nombre'] ?? '';
-        $email = $_POST['email'] ?? '';
+        $nombre = trim((string)($_POST['nombre'] ?? ''));
+        $email = trim((string)($_POST['email'] ?? ''));
         if ($cliente_id > 0) {
             if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
                 http_response_code(403);
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
                 exit;
             }
+            $datos_anteriores = bandeja_fetch_one($con, "SELECT id, nombre, email, id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
             $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, email = ? WHERE id = ?");
             if ($stmt) {
                 $stmt->bind_param("ssi", $nombre, $email, $cliente_id);
                 if ($stmt->execute()) {
+                    $stmt->close();
+                    registrar_auditoria(
+                        'bandeja',
+                        'ACTUALIZAR_PERFIL_CLIENTE',
+                        "Perfil del cliente #$cliente_id actualizado",
+                        $datos_anteriores,
+                        ['id' => $cliente_id, 'nombre' => $nombre, 'email' => $email],
+                        $con,
+                        $agente_id,
+                        intval($datos_anteriores['id_sede'] ?? 0) ?: null
+                    );
                     echo json_encode(['status' => 'success', 'message' => 'Perfil actualizado']);
                 } else {
-                    echo json_encode(['status' => 'error', 'message' => 'Error al guardar el perfil: ' . $stmt->error]);
+                    starfi_log_exception('bandeja', 'Error ejecutando save_profile', ['cliente_id' => $cliente_id, 'sql_error' => $stmt->error]);
+                    $stmt->close();
+                    echo json_encode(['status' => 'error', 'message' => 'Error al guardar el perfil del cliente.']);
                 }
-                $stmt->close();
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'Error de preparación: ' . $con->error]);
+                starfi_log_exception('bandeja', 'Error preparando save_profile', ['cliente_id' => $cliente_id, 'sql_error' => $con->error]);
+                echo json_encode(['status' => 'error', 'message' => 'Error interno al procesar la solicitud.']);
             }
         } else {
             echo json_encode(['status' => 'error', 'message' => 'ID de cliente inválido.']);
@@ -1625,30 +1897,35 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
                 exit;
             }
-            $stmtGet = $con->prepare("SELECT etiquetas FROM clientes_contactos WHERE id = ? LIMIT 1");
-            $row = null;
-            if ($stmtGet) {
-                $stmtGet->bind_param("i", $cliente_id);
-                $stmtGet->execute();
-                $resGet = $stmtGet->get_result();
-                $row = $resGet ? $resGet->fetch_assoc() : null;
-                $stmtGet->close();
-            }
+            $row = bandeja_fetch_one($con, "SELECT etiquetas, id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
             if ($row) {
                 $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
                 if (!is_array($tags)) $tags = [];
+                $tags_antes = array_values($tags);
                 
                 if (!in_array($new_tag, $tags)) {
                     $tags[] = $new_tag;
-                    $tags_json = json_encode(array_values($tags));
+                    $tags_nuevas = array_values($tags);
+                    $tags_json = json_encode($tags_nuevas, JSON_UNESCAPED_UNICODE);
                     $stmt = $con->prepare("UPDATE clientes_contactos SET etiquetas = ? WHERE id = ?");
                     if ($stmt) {
                         $stmt->bind_param("si", $tags_json, $cliente_id);
                         if ($stmt->execute()) {
                             $stmt->close();
+                            registrar_auditoria(
+                                'bandeja',
+                                'AGREGAR_ETIQUETA_CLIENTE',
+                                "Etiqueta '$new_tag' añadida al cliente #$cliente_id",
+                                ['id_cliente' => $cliente_id, 'etiquetas' => $tags_antes],
+                                ['id_cliente' => $cliente_id, 'etiquetas' => $tags_nuevas],
+                                $con,
+                                $agente_id,
+                                intval($row['id_sede'] ?? 0) ?: null
+                            );
                             echo json_encode(['status' => 'success']);
                             exit;
                         }
+                        starfi_log_exception('bandeja', 'Error ejecutando add_tag', ['cliente_id' => $cliente_id, 'sql_error' => $stmt->error]);
                         $stmt->close();
                     }
                 } else {
@@ -1669,31 +1946,35 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización sobre este cliente o sede.']);
                 exit;
             }
-            $stmtGet = $con->prepare("SELECT etiquetas FROM clientes_contactos WHERE id = ? LIMIT 1");
-            $row = null;
-            if ($stmtGet) {
-                $stmtGet->bind_param("i", $cliente_id);
-                $stmtGet->execute();
-                $resGet = $stmtGet->get_result();
-                $row = $resGet ? $resGet->fetch_assoc() : null;
-                $stmtGet->close();
-            }
+            $row = bandeja_fetch_one($con, "SELECT etiquetas, id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
             if ($row) {
                 $tags = !empty($row['etiquetas']) ? json_decode($row['etiquetas'], true) : [];
                 if (!is_array($tags)) $tags = [];
+                $tags_antes = array_values($tags);
                 
-                $new_tags = array_filter($tags, function($t) use ($tag_to_remove) {
+                $new_tags = array_values(array_filter($tags, function($t) use ($tag_to_remove) {
                     return $t !== $tag_to_remove;
-                });
-                $tags_json = json_encode(array_values($new_tags));
+                }));
+                $tags_json = json_encode($new_tags, JSON_UNESCAPED_UNICODE);
                 $stmt = $con->prepare("UPDATE clientes_contactos SET etiquetas = ? WHERE id = ?");
                 if ($stmt) {
                     $stmt->bind_param("si", $tags_json, $cliente_id);
                     if ($stmt->execute()) {
                         $stmt->close();
+                        registrar_auditoria(
+                            'bandeja',
+                            'ELIMINAR_ETIQUETA_CLIENTE',
+                            "Etiqueta '$tag_to_remove' eliminada del cliente #$cliente_id",
+                            ['id_cliente' => $cliente_id, 'etiquetas' => $tags_antes],
+                            ['id_cliente' => $cliente_id, 'etiquetas' => $new_tags],
+                            $con,
+                            $agente_id,
+                            intval($row['id_sede'] ?? 0) ?: null
+                        );
                         echo json_encode(['status' => 'success']);
                         exit;
                     }
+                    starfi_log_exception('bandeja', 'Error ejecutando remove_tag', ['cliente_id' => $cliente_id, 'sql_error' => $stmt->error]);
                     $stmt->close();
                 }
             }
@@ -1748,7 +2029,7 @@ switch ($action) {
             SELECT u.id,
                    u.usuario,
                    up.nombre AS up_nombre,
-                   (CASE WHEN IFNULL(u.disponible_chat, 1) = 1 AND u.ultima_actividad IS NOT NULL AND u.ultima_actividad >= (NOW() - INTERVAL $rr_win_ag MINUTE) THEN 1 ELSE 0 END) AS en_linea
+                   (CASE WHEN IFNULL(u.disponible_chat, 1) = 1 AND u.ultima_actividad IS NOT NULL AND u.ultima_actividad >= (NOW() - INTERVAL ? MINUTE) THEN 1 ELSE 0 END) AS en_linea
             FROM usuario u 
             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
             LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
@@ -1759,22 +2040,30 @@ switch ($action) {
         ";
 
         if ($target_sede > 0) {
-            $query .= " AND u.id_sede = " . intval($target_sede);
+            $query .= " AND u.id_sede = ?";
         }
-
         $query .= " ORDER BY en_linea DESC, up.nombre ASC, u.usuario ASC";
 
-        $res = $con->query($query);
         $agents = [];
-        if ($res) {
-            while ($row = $res->fetch_assoc()) {
-                $nom = trim((string)($row['up_nombre'] ?? ''));
-                $agents[] = [
-                    'id' => $row['id'],
-                    'nombre_completo' => ($nom !== '') ? $nom : $row['usuario'],
-                    'en_linea' => intval($row['en_linea'] ?? 0),
-                ];
+        $stmtAgList = $con->prepare($query);
+        if ($stmtAgList) {
+            if ($target_sede > 0) {
+                $stmtAgList->bind_param("ii", $rr_win_ag, $target_sede);
+            } else {
+                $stmtAgList->bind_param("i", $rr_win_ag);
             }
+            if ($stmtAgList->execute()) {
+                $res = $stmtAgList->get_result();
+                while ($res && ($row = $res->fetch_assoc())) {
+                    $nom = trim((string)($row['up_nombre'] ?? ''));
+                    $agents[] = [
+                        'id' => $row['id'],
+                        'nombre_completo' => ($nom !== '') ? $nom : $row['usuario'],
+                        'en_linea' => intval($row['en_linea'] ?? 0),
+                    ];
+                }
+            }
+            $stmtAgList->close();
         }
         echo json_encode(['status' => 'success', 'data' => $agents]);
         break;
@@ -1785,8 +2074,8 @@ switch ($action) {
         }
         $disp = 1;
         if ($agente_id > 1) {
-            $rDisp = $con->query("SELECT IFNULL(disponible_chat, 1) AS disp FROM usuario WHERE id = $agente_id LIMIT 1");
-            if ($rDisp && ($rd = $rDisp->fetch_assoc())) {
+            $rd = bandeja_fetch_one($con, "SELECT IFNULL(disponible_chat, 1) AS disp FROM usuario WHERE id = ? LIMIT 1", "i", [$agente_id]);
+            if ($rd) {
                 $disp = intval($rd['disp']);
             }
         }
@@ -1798,8 +2087,24 @@ switch ($action) {
             echo json_encode(['status' => 'success', 'disponible_chat' => 1]);
             break;
         }
+        $datos_anteriores = bandeja_fetch_one($con, "SELECT id, disponible_chat, id_sede FROM usuario WHERE id = ? LIMIT 1", "i", [$agente_id]);
         $nuevo_disp = isset($_POST['disponible']) ? (intval($_POST['disponible']) === 1 ? 1 : 0) : 1;
-        $con->query("UPDATE usuario SET disponible_chat = $nuevo_disp, ultima_actividad = NOW() WHERE id = $agente_id");
+        $stmtAv = $con->prepare("UPDATE usuario SET disponible_chat = ?, ultima_actividad = NOW() WHERE id = ?");
+        if ($stmtAv) {
+            $stmtAv->bind_param("ii", $nuevo_disp, $agente_id);
+            $stmtAv->execute();
+            $stmtAv->close();
+        }
+        registrar_auditoria(
+            'bandeja',
+            'CAMBIAR_DISPONIBILIDAD_CHAT',
+            "Disponibilidad Round-Robin cambiada a " . ($nuevo_disp === 1 ? 'EN_LINEA' : 'PAUSADO'),
+            $datos_anteriores,
+            ['id' => $agente_id, 'disponible_chat' => $nuevo_disp],
+            $con,
+            $agente_id,
+            intval($datos_anteriores['id_sede'] ?? 0) ?: null
+        );
         echo json_encode(['status' => 'success', 'disponible_chat' => $nuevo_disp]);
         break;
 
@@ -1819,20 +2124,17 @@ switch ($action) {
             exit;
         }
 
-        // Resolver sede y línea activa
         $sede_tpl = intval($agente_info_global['id_sede'] ?? 0);
         if ($conversacion_id > 0) {
-            $rL = $con->query("SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id LEFT JOIN sedes s ON l.id_sede = s.id WHERE c.id = $conversacion_id LIMIT 1");
-            $lin = ($rL && $rL->num_rows > 0) ? $rL->fetch_assoc() : null;
+            $lin = bandeja_fetch_one($con, "SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id LEFT JOIN sedes s ON l.id_sede = s.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
         } else {
             if ($sede_tpl <= 0 && $cliente_id > 0) {
-                $rCs = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
-                if ($rCs && ($rcs = $rCs->fetch_assoc())) {
+                $rcs = bandeja_fetch_one($con, "SELECT id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
+                if ($rcs) {
                     $sede_tpl = intval($rcs['id_sede'] ?? 0);
                 }
             }
-            $rL = ($sede_tpl > 0) ? $con->query("SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id_sede = $sede_tpl AND l.estado = 'ACTIVO' LIMIT 1") : false;
-            $lin = ($rL && $rL->num_rows > 0) ? $rL->fetch_assoc() : null;
+            $lin = ($sede_tpl > 0) ? bandeja_fetch_one($con, "SELECT l.id_sede, l.id_negocio, l.meta_token, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE l.id_sede = ? AND l.estado = 'ACTIVO' LIMIT 1", "i", [$sede_tpl]) : null;
         }
 
         $sede_id_eff = intval($lin['id_sede'] ?? $sede_tpl);
@@ -1857,13 +2159,14 @@ switch ($action) {
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($ch, CURLOPT_TIMEOUT, 8);
             $resp = curl_exec($ch);
             $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
             if ($code >= 200 && $code < 300 && $resp) {
-                $json = json_decode($resp, true);
+                $json = json_decode((string)$resp, true);
                 foreach (($json['data'] ?? []) as $tpl) {
                     $st = strtoupper($tpl['status'] ?? '');
                     if ($st !== 'APPROVED' && $st !== 'ACTIVE') {
@@ -1907,31 +2210,38 @@ switch ($action) {
             }
         }
 
-        // Fallback local desde tabla plantillas_whatsapp + plantillas oficiales aprobadas de STARFI
         if (empty($templates)) {
             if ($sede_id_eff > 0) {
-                $rDbTpl = @$con->query("SELECT name, category, language, status FROM plantillas_whatsapp WHERE id_sede = $sede_id_eff AND UPPER(status) IN ('APPROVED','ACTIVE') ORDER BY name ASC LIMIT 40");
-                if ($rDbTpl) {
-                    while ($rt = $rDbTpl->fetch_assoc()) {
-                        $tName = $rt['name'];
-                        $defBody = "Hola {{1}}, nos comunicamos desde {$nombre_sede_eff} respecto a {{2}}.";
-                        if ($tName === 'starfi_difusion_directa') {
-                            $defBody = "👋¡Hola {{1}}!\nHoy queremos {{2}}.\nRecuerda que en {{3}}.\n📲 Responde a este mensaje para obtener más información👇";
-                        } elseif ($tName === 'starfi_csat_survey') {
-                            $defBody = "¡Hola! Califícanos del 1 al 5 para mejorar nuestra atención en {$nombre_sede_eff}.";
-                        } elseif ($tName === 'starfi_notificacion_interna') {
-                            $defBody = "{{1}}";
+                $chk_pt = $con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
+                if ($chk_pt && $chk_pt->num_rows > 0) {
+                    $stmtDbTpl = @$con->prepare("SELECT name, category, language, status FROM plantillas_whatsapp WHERE id_sede = ? AND UPPER(status) IN ('APPROVED','ACTIVE') ORDER BY name ASC LIMIT 40");
+                    if ($stmtDbTpl) {
+                        $stmtDbTpl->bind_param("i", $sede_id_eff);
+                        if ($stmtDbTpl->execute()) {
+                            $rDbTpl = $stmtDbTpl->get_result();
+                            while ($rDbTpl && ($rt = $rDbTpl->fetch_assoc())) {
+                                $tName = $rt['name'];
+                                $defBody = "Hola {{1}}, nos comunicamos desde {$nombre_sede_eff} respecto a {{2}}.";
+                                if ($tName === 'starfi_difusion_directa') {
+                                    $defBody = "👋¡Hola {{1}}!\nHoy queremos {{2}}.\nRecuerda que en {{3}}.\n📲 Responde a este mensaje para obtener más información👇";
+                                } elseif ($tName === 'starfi_csat_survey') {
+                                    $defBody = "¡Hola! Califícanos del 1 al 5 para mejorar nuestra atención en {$nombre_sede_eff}.";
+                                } elseif ($tName === 'starfi_notificacion_interna') {
+                                    $defBody = "{{1}}";
+                                }
+                                $templates[] = [
+                                    'name' => $tName,
+                                    'language' => $rt['language'] ?: 'es',
+                                    'category' => strtoupper($rt['category'] ?: 'MARKETING'),
+                                    'header_format' => 'NONE',
+                                    'header_text' => '',
+                                    'body' => $defBody,
+                                    'body_examples' => [],
+                                    'footer' => ''
+                                ];
+                            }
                         }
-                        $templates[] = [
-                            'name' => $tName,
-                            'language' => $rt['language'] ?: 'es',
-                            'category' => strtoupper($rt['category'] ?: 'MARKETING'),
-                            'header_format' => 'NONE',
-                            'header_text' => '',
-                            'body' => $defBody,
-                            'body_examples' => [],
-                            'footer' => ''
-                        ];
+                        $stmtDbTpl->close();
                     }
                 }
             }
@@ -1979,6 +2289,7 @@ switch ($action) {
         $clean_params = array_values(array_map('sanitize_bandeja_tpl_param', $body_params));
 
         $is_new_chat = false;
+        $conv_antes = null;
         if ($conversacion_id <= 0 && $cliente_id > 0) {
             if (!authorize_cliente_access($con, $cliente_id, $agente_info_global)) {
                 http_response_code(403);
@@ -1987,17 +2298,17 @@ switch ($action) {
             }
             $user_sede_r = intval($agente_info_global['id_sede'] ?? 0);
             if ($user_sede_r <= 0) {
-                $rCs = $con->query("SELECT id_sede FROM clientes_contactos WHERE id = $cliente_id LIMIT 1");
-                if ($rCs && ($rcs = $rCs->fetch_assoc())) {
+                $rcs = bandeja_fetch_one($con, "SELECT id_sede FROM clientes_contactos WHERE id = ? LIMIT 1", "i", [$cliente_id]);
+                if ($rcs) {
                     $user_sede_r = intval($rcs['id_sede'] ?? 0);
                 }
             }
-            $resL = ($user_sede_r > 0) ? $con->query("SELECT id FROM lineas_whatsapp WHERE id_sede = $user_sede_r AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO') LIMIT 1") : false;
-            if (!$resL || $resL->num_rows === 0) {
+            $rowLinNew = ($user_sede_r > 0) ? bandeja_fetch_one($con, "SELECT id FROM lineas_whatsapp WHERE id_sede = ? AND (estado = 'ACTIVO' OR estado_conexion = 'CONECTADO') LIMIT 1", "i", [$user_sede_r]) : null;
+            if (!$rowLinNew) {
                 echo json_encode(['status' => 'error', 'message' => 'No hay línea activa configurada para esta sede.']);
                 exit;
             }
-            $id_linea_new = intval($resL->fetch_assoc()['id']);
+            $id_linea_new = intval($rowLinNew['id']);
             $stmtIns = $con->prepare("INSERT INTO conversaciones (id_linea, id_cliente, id_agente, estado) VALUES (?, ?, ?, 'ATENDIENDO')");
             $stmtIns->bind_param("iii", $id_linea_new, $cliente_id, $agente_id);
             $stmtIns->execute();
@@ -2010,17 +2321,19 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'No tienes autorización para reactivar esta conversación o sede.']);
                 exit;
             }
+            $conv_antes = bandeja_fetch_one($con, "SELECT id, id_agente, estado FROM conversaciones WHERE id = ? LIMIT 1", "i", [$conversacion_id]);
         }
 
-        $resChat = $con->query("
-            SELECT c.id_cliente, cl.numero_whatsapp, l.id_sede, l.meta_token, l.meta_app_id AS phone_number_id
-            FROM conversaciones c
-            JOIN clientes_contactos cl ON c.id_cliente = cl.id
-            JOIN lineas_whatsapp l ON c.id_linea = l.id
-            WHERE c.id = $conversacion_id
-            LIMIT 1
-        ");
-        $chat_data = ($resChat && $resChat->num_rows > 0) ? $resChat->fetch_assoc() : null;
+        $chat_data = bandeja_fetch_one(
+            $con,
+            "SELECT c.id_cliente, cl.numero_whatsapp, l.id_sede, l.meta_token, l.meta_app_id AS phone_number_id
+             FROM conversaciones c
+             JOIN clientes_contactos cl ON c.id_cliente = cl.id
+             JOIN lineas_whatsapp l ON c.id_linea = l.id
+             WHERE c.id = ? LIMIT 1",
+            "i",
+            [$conversacion_id]
+        );
         if (!$chat_data) {
             echo json_encode(['status' => 'error', 'message' => 'Datos de línea o conversación no encontrados.']);
             exit;
@@ -2039,7 +2352,6 @@ switch ($action) {
                 ]
             ];
         } elseif ($header_fmt === 'IMAGE' && !empty($meta_token) && $meta_token !== 'temp_token' && !empty($phone_number_id)) {
-            // Si la plantilla requiere HEADER IMAGE, subir el logo corporativo de respaldo si no se adjuntó imagen
             $logo_candidates = [
                 realpath(__DIR__ . '/../../docs/identidad_visual/logos/logo_starfi.png'),
                 realpath(__DIR__ . '/../../docs/identidad_visual/logos/isologo.png')
@@ -2063,7 +2375,8 @@ switch ($action) {
                 curl_setopt($ch_m, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
                 curl_setopt($ch_m, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch_m, CURLOPT_SSL_VERIFYPEER, true);
-                curl_setopt($ch_m, CURLOPT_TIMEOUT, 12);
+                curl_setopt($ch_m, CURLOPT_CONNECTTIMEOUT, 4);
+                curl_setopt($ch_m, CURLOPT_TIMEOUT, 8);
                 $m_resp = json_decode((string)curl_exec($ch_m), true);
                 curl_close($ch_m);
                 if (!empty($m_resp['id'])) {
@@ -2120,7 +2433,8 @@ switch ($action) {
             ]);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 8);
             $response = curl_exec($ch);
             $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
@@ -2152,9 +2466,26 @@ switch ($action) {
             $stmt_log->close();
         }
 
-        $con->query("UPDATE conversaciones SET estado = CASE WHEN estado IN ('CERRADO','RESUELTO','ESPERA_ASIGNACION') THEN 'ATENDIENDO' ELSE estado END, id_agente = IFNULL(id_agente, $agente_id), mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_msg_id) WHERE id = $conversacion_id");
+        $stmtUpR = $con->prepare("UPDATE conversaciones SET estado = CASE WHEN estado IN ('CERRADO','RESUELTO','ESPERA_ASIGNACION') THEN 'ATENDIENDO' ELSE estado END, id_agente = IFNULL(id_agente, ?), mensajes_no_leidos = 0, ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ?");
+        if ($stmtUpR) {
+            $stmtUpR->bind_param("iii", $agente_id, $new_msg_id, $conversacion_id);
+            $stmtUpR->execute();
+            $stmtUpR->close();
+        }
 
-        starfi_ensure_pipeline_lead($con, intval($chat_data['id_sede'] ?? 0), intval($chat_data['id_cliente'] ?? 0), $conversacion_id, $agente_id);
+        $sede_react = intval($chat_data['id_sede'] ?? 0);
+        starfi_ensure_pipeline_lead($con, $sede_react, intval($chat_data['id_cliente'] ?? 0), $conversacion_id, $agente_id);
+
+        registrar_auditoria(
+            'bandeja',
+            'REACTIVAR_PLANTILLA_META',
+            "Plantilla oficial '$tpl_name' enviada en conversación #$conversacion_id ($estado_envio)",
+            $conv_antes,
+            ['conversacion_id' => $conversacion_id, 'template_name' => $tpl_name, 'estado_envio' => $estado_envio, 'wamid' => $id_mensaje_meta],
+            $con,
+            $agente_id,
+            $sede_react ?: null
+        );
 
         if ($estado_envio === 'FALLIDO') {
             echo json_encode([
@@ -2198,15 +2529,10 @@ switch ($action) {
 
         $sede_deal = intval($agente_info_global['id_sede'] ?? 0);
         if ($conversacion_id > 0) {
-            $stmtCD = $con->prepare("SELECT c.id_cliente, c.id_agente, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1");
-            if ($stmtCD) {
-                $stmtCD->bind_param("i", $conversacion_id);
-                $stmtCD->execute();
-                if ($rc = $stmtCD->get_result()->fetch_assoc()) {
-                    $sede_deal = intval($rc['id_sede'] ?? $sede_deal);
-                    if ($cliente_id <= 0) $cliente_id = intval($rc['id_cliente']);
-                }
-                $stmtCD->close();
+            $rc = bandeja_fetch_one($con, "SELECT c.id_cliente, c.id_agente, l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1", "i", [$conversacion_id]);
+            if ($rc) {
+                $sede_deal = intval($rc['id_sede'] ?? $sede_deal);
+                if ($cliente_id <= 0) $cliente_id = intval($rc['id_cliente']);
             }
         }
 
@@ -2219,6 +2545,8 @@ switch ($action) {
             'PERDIDO' => 0
         ];
         $prob = $prob_map[$etapa] ?? 20;
+
+        $datos_anteriores_deal = get_conversacion_deal_info($con, $conversacion_id, $cliente_id, $sede_deal);
 
         $deal_id = starfi_ensure_pipeline_lead($con, $sede_deal, $cliente_id, $conversacion_id, $agente_id, $titulo);
         if ($deal_id <= 0) {
@@ -2265,15 +2593,21 @@ switch ($action) {
             }
         }
 
-        registrar_auditoria($con, 'bandeja', 'QUICK_SAVE_DEAL', 'pipeline_oportunidades', $deal_id, [
-            'etapa' => $etapa,
-            'monto_usd' => $monto,
-            'conversacion_id' => $conversacion_id
-        ], $agente_id, $sede_deal);
+        $nuevo_deal = get_conversacion_deal_info($con, $conversacion_id, $cliente_id, $sede_deal);
+        registrar_auditoria(
+            'bandeja',
+            'QUICK_SAVE_DEAL',
+            "Oportunidad #$deal_id actualizada desde bandeja ($etapa · \$$monto USD)",
+            $datos_anteriores_deal,
+            $nuevo_deal,
+            $con,
+            $agente_id,
+            $sede_deal ?: null
+        );
 
         echo json_encode([
             'status' => 'success',
-            'deal' => get_conversacion_deal_info($con, $conversacion_id, $cliente_id, $sede_deal)
+            'deal' => $nuevo_deal
         ]);
         break;
 
@@ -2302,10 +2636,16 @@ switch ($action) {
             echo json_encode(['status' => 'error', 'message' => $saved_sla['message']]);
             exit;
         }
-        registrar_auditoria($con, 'bandeja', 'GUARDAR_SLA_RAPIDO', 'config_sla', $target_sede_sla, [
-            'verde_max_min'    => $v_in,
-            'amarillo_max_min' => $a_in
-        ], $ag_id_c, $target_sede_sla);
+        registrar_auditoria(
+            'bandeja',
+            'GUARDAR_SLA_RAPIDO',
+            "Tiempos SLA actualizados desde bandeja para ámbito sede #$target_sede_sla",
+            $cur_sla,
+            $saved_sla['config'],
+            $con,
+            $ag_id_c,
+            $target_sede_sla
+        );
         echo json_encode([
             'status' => 'success',
             'message' => 'Tiempos del Semáforo SLA actualizados correctamente.',

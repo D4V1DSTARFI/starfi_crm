@@ -6,6 +6,20 @@ function escapeHtml(str) {
 }
 
 $(document).ready(function() {
+    const toggleSidebarBtn = document.getElementById('toggleSidebar');
+    if (toggleSidebarBtn) {
+        toggleSidebarBtn.addEventListener('click', function() {
+            const sb = document.getElementById('sidebar');
+            if (sb) sb.classList.toggle('collapsed');
+        });
+    }
+
+    $(document).ajaxError(function(event, jqxhr) {
+        if (jqxhr && jqxhr.status === 401) {
+            window.location.href = '../../login.php';
+        }
+    });
+
     // Cargar datos iniciales desde BD
     loadSedes();
     loadAPIs();
@@ -332,7 +346,7 @@ $(document).on('input change', '#gema_nombre, #gema_link_gps, #gema_id_sede, #ge
 
 function updateGemaLivePreview() {
     const nombre = $('#gema_nombre').val().trim() || 'Gema';
-    const linkGps = $('#gema_link_gps').val().trim() || 'https://www.google.com/maps?q=10.48060,-66.90360';
+    const linkGps = $('#gema_link_gps').val().trim() || 'geo:10.48060,-66.90360';
     const sedeNombre = $('#gema_id_sede option:selected').text() || 'Sede STARFI';
     const isActivo = $('#gema_estado').is(':checked');
 
@@ -344,7 +358,7 @@ function updateGemaLivePreview() {
     if (displayGps.length > 55) {
         displayGps = displayGps.substring(0, 52) + '...';
     }
-    $('#prev_bot_gps').html(`<a href="${linkGps}" target="_blank" class="text-primary text-decoration-underline fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">${displayGps}</a>`);
+    $('#prev_bot_gps').html(`<span class="text-primary text-decoration-underline fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">${escapeHtml(displayGps)}</span>`);
     
     $('#prev_sede_name').text(sedeNombre);
     $('#preview_sede_name_display').text(sedeNombre + ' • En línea');
@@ -368,48 +382,232 @@ function togglePasswordVisibility(fieldId) {
     }
 }
 
-// Variables y lógica para el Selector Interactivo de Mapa GPS
+// ============================================================================
+// Selector Interactivo 100% Offline LAN de Coordenadas GPS (Venezuela)
+// Cero dominios externos (CHK-LAN-01)
+// ============================================================================
 let mapPicker = null;
 let mapMarker = null;
-let selectedLat = 10.4806;
-let selectedLng = -66.9036;
+let selectedLat = 10.48060;
+let selectedLng = -66.90360;
+let mapCatalogPopulated = false;
+
+const CATALOGO_CIUDADES_VE = [
+    { nombre: 'Caracas (Centro)', estado: 'Distrito Capital', lat: 10.48060, lng: -66.90360 },
+    { nombre: 'Altamira / Chacao', estado: 'Miranda', lat: 10.49605, lng: -66.85292 },
+    { nombre: 'Las Mercedes', estado: 'Miranda', lat: 10.48012, lng: -66.86084 },
+    { nombre: 'Sabana Grande', estado: 'Distrito Capital', lat: 10.49450, lng: -66.87780 },
+    { nombre: 'Los Teques', estado: 'Miranda', lat: 10.34447, lng: -67.04325 },
+    { nombre: 'Guarenas', estado: 'Miranda', lat: 10.47027, lng: -66.61667 },
+    { nombre: 'Guatire', estado: 'Miranda', lat: 10.47620, lng: -66.54270 },
+    { nombre: 'Charallave', estado: 'Miranda', lat: 10.24240, lng: -66.85720 },
+    { nombre: 'La Guaira / Maiquetía', estado: 'La Guaira', lat: 10.60156, lng: -66.93293 },
+    { nombre: 'Valencia', estado: 'Carabobo', lat: 10.16202, lng: -68.00765 },
+    { nombre: 'Naguanagua', estado: 'Carabobo', lat: 10.26080, lng: -68.01080 },
+    { nombre: 'San Diego', estado: 'Carabobo', lat: 10.25690, lng: -67.95360 },
+    { nombre: 'Puerto Cabello', estado: 'Carabobo', lat: 10.47306, lng: -68.01250 },
+    { nombre: 'Maracay', estado: 'Aragua', lat: 10.24694, lng: -67.59583 },
+    { nombre: 'Turmero', estado: 'Aragua', lat: 10.22850, lng: -67.47420 },
+    { nombre: 'Cagua', estado: 'Aragua', lat: 10.18630, lng: -67.45930 },
+    { nombre: 'La Victoria', estado: 'Aragua', lat: 10.22780, lng: -67.33360 },
+    { nombre: 'Barquisimeto', estado: 'Lara', lat: 10.06470, lng: -69.35703 },
+    { nombre: 'Cabudare', estado: 'Lara', lat: 10.03310, lng: -69.26330 },
+    { nombre: 'Maracaibo', estado: 'Zulia', lat: 10.66663, lng: -71.61245 },
+    { nombre: 'San Francisco', estado: 'Zulia', lat: 10.55390, lng: -71.64440 },
+    { nombre: 'Cabimas', estado: 'Zulia', lat: 10.38830, lng: -71.43990 },
+    { nombre: 'Ciudad Ojeda', estado: 'Zulia', lat: 10.19630, lng: -71.30820 },
+    { nombre: 'Puerto La Cruz', estado: 'Anzoátegui', lat: 10.21382, lng: -64.63279 },
+    { nombre: 'Barcelona', estado: 'Anzoátegui', lat: 10.13625, lng: -64.68618 },
+    { nombre: 'Lechería', estado: 'Anzoátegui', lat: 10.19160, lng: -64.68970 },
+    { nombre: 'El Tigre', estado: 'Anzoátegui', lat: 8.88750, lng: -64.24540 },
+    { nombre: 'Anaco', estado: 'Anzoátegui', lat: 9.42950, lng: -64.46940 },
+    { nombre: 'Maturín', estado: 'Monagas', lat: 9.74569, lng: -63.18323 },
+    { nombre: 'Ciudad Guayana (Puerto Ordaz)', estado: 'Bolívar', lat: 8.29690, lng: -62.73580 },
+    { nombre: 'Ciudad Bolívar', estado: 'Bolívar', lat: 8.12923, lng: -63.54086 },
+    { nombre: 'San Cristóbal', estado: 'Táchira', lat: 7.76694, lng: -72.22500 },
+    { nombre: 'Mérida', estado: 'Mérida', lat: 8.58972, lng: -71.15611 },
+    { nombre: 'Barinas', estado: 'Barinas', lat: 8.62261, lng: -70.20749 },
+    { nombre: 'Punto Fijo', estado: 'Falcón', lat: 11.69152, lng: -70.19957 },
+    { nombre: 'Coro', estado: 'Falcón', lat: 11.40450, lng: -69.67340 },
+    { nombre: 'Porlamar (Isla de Margarita)', estado: 'Nueva Esparta', lat: 10.95796, lng: -63.84906 },
+    { nombre: 'Cumaná', estado: 'Sucre', lat: 10.45397, lng: -64.18256 },
+    { nombre: 'Carúpano', estado: 'Sucre', lat: 10.66780, lng: -63.25850 },
+    { nombre: 'Acarigua / Araure', estado: 'Portuguesa', lat: 9.55451, lng: -69.19564 },
+    { nombre: 'Guanare', estado: 'Portuguesa', lat: 9.04180, lng: -69.74210 },
+    { nombre: 'Valera', estado: 'Trujillo', lat: 9.31778, lng: -70.60361 },
+    { nombre: 'San Felipe', estado: 'Yaracuy', lat: 10.33990, lng: -68.74250 },
+    { nombre: 'San Juan de los Morros', estado: 'Guárico', lat: 9.91150, lng: -67.35380 },
+    { nombre: 'San Carlos', estado: 'Cojedes', lat: 9.66120, lng: -68.58270 },
+    { nombre: 'San Fernando de Apure', estado: 'Apure', lat: 7.88780, lng: -67.47240 },
+    { nombre: 'Tucupita', estado: 'Delta Amacuro', lat: 9.05806, lng: -62.05000 },
+    { nombre: 'Puerto Ayacucho', estado: 'Amazonas', lat: 5.66049, lng: -67.58343 }
+];
+
+const CONTORNO_VENEZUELA = [
+    [12.19, -71.32], [11.75, -70.22], [11.45, -69.65], [10.52, -68.02],
+    [10.62, -66.93], [10.63, -66.15], [10.15, -64.68], [10.68, -63.25],
+    [10.72, -61.88], [9.95, -61.85], [8.55, -60.02], [6.10, -61.35],
+    [4.55, -61.10], [3.90, -62.80], [3.85, -64.60], [1.95, -66.50],
+    [1.20, -66.88], [2.20, -67.15], [3.95, -67.72], [6.18, -67.48],
+    [7.02, -70.72], [7.38, -72.05], [7.88, -72.48], [9.12, -72.78],
+    [10.95, -72.42], [11.85, -71.35], [12.19, -71.32]
+];
+
+function normalizarTextoMapa(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+function poblarCatalogoMapaOffline() {
+    if (mapCatalogPopulated) return;
+    const $dl = $('#venezuelaCitiesDatalist');
+    const $sel = $('#mapCityQuickSelect');
+    $dl.empty();
+    $sel.html('<option value="">Catálogo rápido de ciudades...</option>');
+    CATALOGO_CIUDADES_VE.forEach((c, idx) => {
+        const label = `${c.nombre}, ${c.estado}`;
+        $dl.append(`<option value="${escapeHtml(label)}"></option>`);
+        $sel.append(`<option value="${idx}">${escapeHtml(label)}</option>`);
+    });
+    mapCatalogPopulated = true;
+}
+
+function resolverReferenciaLocal(lat, lng) {
+    let best = null;
+    let bestDistKm = Infinity;
+    const toRad = Math.PI / 180;
+    CATALOGO_CIUDADES_VE.forEach(c => {
+        const dLat = (c.lat - lat) * toRad;
+        const dLng = (c.lng - lng) * toRad;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat * toRad) * Math.cos(c.lat * toRad) *
+                  Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        if (dist < bestDistKm) {
+            bestDistKm = dist;
+            best = c;
+        }
+    });
+    if (!best) return 'Posición personalizada';
+    if (bestDistKm <= 3.5) {
+        return `${best.nombre}, ${best.estado}`;
+    }
+    return `Ref. cercana: ${best.nombre}, ${best.estado} (~${bestDistKm.toFixed(1)} km)`;
+}
+
+function extraerCoordenadasDeTexto(texto) {
+    if (!texto) return null;
+    const m = String(texto).match(/(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+    if (m && m[1] && m[2]) {
+        const lat = parseFloat(m[1]);
+        const lng = parseFloat(m[2]);
+        if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+            return { lat, lng };
+        }
+    }
+    return null;
+}
 
 function abrirModalMapaGPS() {
-    const existingUrl = $('#gema_link_gps').val().trim();
-    if (existingUrl) {
-        const match = existingUrl.match(/q=(-?\d+\.\d+),(-?\d+\.\d+)/);
-        if (match && match[1] && match[2]) {
-            selectedLat = parseFloat(match[1]);
-            selectedLng = parseFloat(match[2]);
-        }
+    poblarCatalogoMapaOffline();
+    const existingVal = $('#gema_link_gps').val().trim();
+    const parsed = extraerCoordenadasDeTexto(existingVal);
+    if (parsed) {
+        selectedLat = parsed.lat;
+        selectedLng = parsed.lng;
     }
 
     const modalEl = document.getElementById('modalMapPicker');
     if (!modalEl) return;
 
-    const modal = new bootstrap.Modal(modalEl);
-    modal.show();
-
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
     $('#modalMapPicker').off('shown.bs.modal').on('shown.bs.modal', function () {
         initLeafletMapPicker();
     });
+    modal.show();
 }
 
 function initLeafletMapPicker() {
     if (typeof L === 'undefined') {
-        Swal.fire('Error', 'No se pudo cargar la librería de mapas.', 'error');
+        updateSelectedCoords(selectedLat, selectedLng);
         return;
     }
 
     if (!mapPicker) {
-        mapPicker = L.map('leafletMapContainer').setView([selectedLat, selectedLng], 14);
+        mapPicker = L.map('leafletMapContainer', {
+            attributionControl: false,
+            zoomControl: true
+        }).setView([selectedLat, selectedLng], 10);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
+        const OfflineLanGridLayer = L.GridLayer.extend({
+            createTile: function (coords) {
+                const tile = document.createElement('canvas');
+                const size = this.getTileSize();
+                tile.width = size.x;
+                tile.height = size.y;
+                const ctx = tile.getContext('2d');
+
+                ctx.fillStyle = '#E2E8F0';
+                ctx.fillRect(0, 0, size.x, size.y);
+
+                ctx.strokeStyle = '#CBD5E1';
+                ctx.lineWidth = 1;
+                for (let step = 64; step < size.x; step += 64) {
+                    ctx.beginPath();
+                    ctx.moveTo(step, 0);
+                    ctx.lineTo(step, size.y);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(0, step);
+                    ctx.lineTo(size.x, step);
+                    ctx.stroke();
+                }
+
+                ctx.strokeStyle = '#94A3B8';
+                ctx.strokeRect(0, 0, size.x, size.y);
+
+                if (this._map) {
+                    const nw = this._map.unproject([coords.x * size.x, coords.y * size.y], coords.z);
+                    ctx.fillStyle = '#64748B';
+                    ctx.font = '10px monospace';
+                    ctx.fillText(`${nw.lat.toFixed(2)}°, ${nw.lng.toFixed(2)}°`, 6, 14);
+                }
+                return tile;
+            }
+        });
+        (new OfflineLanGridLayer()).addTo(mapPicker);
+
+        L.polygon(CONTORNO_VENEZUELA, {
+            color: '#0F172A',
+            weight: 2,
+            fillColor: '#F8FAFC',
+            fillOpacity: 0.85,
+            interactive: false
         }).addTo(mapPicker);
 
-        mapMarker = L.marker([selectedLat, selectedLng], { draggable: true }).addTo(mapPicker);
+        CATALOGO_CIUDADES_VE.forEach(c => {
+            const cm = L.circleMarker([c.lat, c.lng], {
+                radius: 5,
+                color: '#E85B14',
+                weight: 1.5,
+                fillColor: '#FF7A33',
+                fillOpacity: 0.85
+            }).addTo(mapPicker);
+            cm.bindTooltip(`${c.nombre} (${c.estado})`, { direction: 'top' });
+            cm.on('click', function (ev) {
+                L.DomEvent.stopPropagation(ev);
+                mapMarker.setLatLng([c.lat, c.lng]);
+                updateSelectedCoords(c.lat, c.lng, `${c.nombre}, ${c.estado}`);
+            });
+        });
+
+        const pinIcon = L.divIcon({
+            className: 'starfi-offline-pin',
+            html: '<div style="transform: translate(-12px, -30px);"><i class="fa-solid fa-location-dot text-danger" style="font-size: 32px; filter: drop-shadow(0 3px 5px rgba(0,0,0,0.35));"></i></div>',
+            iconSize: [24, 32],
+            iconAnchor: [0, 0]
+        });
+
+        mapMarker = L.marker([selectedLat, selectedLng], { draggable: true, icon: pinIcon }).addTo(mapPicker);
 
         mapMarker.on('dragend', function () {
             const position = mapMarker.getLatLng();
@@ -421,7 +619,7 @@ function initLeafletMapPicker() {
             updateSelectedCoords(e.latlng.lat, e.latlng.lng);
         });
     } else {
-        mapPicker.setView([selectedLat, selectedLng], 14);
+        mapPicker.setView([selectedLat, selectedLng], Math.max(mapPicker.getZoom(), 10));
         mapMarker.setLatLng([selectedLat, selectedLng]);
         setTimeout(() => mapPicker.invalidateSize(), 200);
     }
@@ -429,34 +627,78 @@ function initLeafletMapPicker() {
     updateSelectedCoords(selectedLat, selectedLng);
 }
 
-function updateSelectedCoords(lat, lng) {
+function updateSelectedCoords(lat, lng, customLabel) {
+    selectedLat = Math.max(-90, Math.min(90, parseFloat(lat) || 0));
+    selectedLng = Math.max(-180, Math.min(180, parseFloat(lng) || 0));
+    $('#selectedCoordsText').text(`${selectedLat.toFixed(5)}, ${selectedLng.toFixed(5)}`);
+    $('#mapLatInput').val(selectedLat.toFixed(5));
+    $('#mapLngInput').val(selectedLng.toFixed(5));
+    $('#reverseGeocodeText').text(customLabel || resolverReferenciaLocal(selectedLat, selectedLng));
+}
+
+function actualizarDesdeInputsManuales() {
+    const lat = parseFloat($('#mapLatInput').val());
+    const lng = parseFloat($('#mapLngInput').val());
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return;
+    }
     selectedLat = lat;
     selectedLng = lng;
-    $('#selectedCoordsText').text(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    $('#selectedCoordsText').text(`${selectedLat.toFixed(5)}, ${selectedLng.toFixed(5)}`);
+    $('#reverseGeocodeText').text(resolverReferenciaLocal(selectedLat, selectedLng));
+    if (mapPicker && mapMarker) {
+        mapMarker.setLatLng([selectedLat, selectedLng]);
+        mapPicker.panTo([selectedLat, selectedLng]);
+    }
+}
+
+function seleccionarCiudadCatalogo(idxStr) {
+    if (idxStr === '' || idxStr === null || idxStr === undefined) return;
+    const idx = parseInt(idxStr, 10);
+    const ciudad = CATALOGO_CIUDADES_VE[idx];
+    if (!ciudad) return;
+    if (mapPicker && mapMarker) {
+        mapPicker.setView([ciudad.lat, ciudad.lng], 13);
+        mapMarker.setLatLng([ciudad.lat, ciudad.lng]);
+    }
+    updateSelectedCoords(ciudad.lat, ciudad.lng, `${ciudad.nombre}, ${ciudad.estado}`);
 }
 
 function buscarEnMapa() {
-    const query = $('#mapSearchInput').val().trim();
-    if (!query) return;
+    const rawQuery = $('#mapSearchInput').val().trim();
+    if (!rawQuery) return;
 
-    $('#reverseGeocodeText').text('Buscando en mapa...');
-    $.getJSON(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`, function (data) {
-        if (data && data.length > 0) {
-            const lat = parseFloat(data[0].lat);
-            const lon = parseFloat(data[0].lon);
-            mapPicker.setView([lat, lon], 15);
-            mapMarker.setLatLng([lat, lon]);
-            updateSelectedCoords(lat, lon);
-            $('#reverseGeocodeText').text(data[0].display_name);
-        } else {
-            Swal.fire('Sin resultados', 'No se encontró la zona o dirección especificada.', 'info');
+    const coordsDirectas = extraerCoordenadasDeTexto(rawQuery);
+    if (coordsDirectas) {
+        if (mapPicker && mapMarker) {
+            mapPicker.setView([coordsDirectas.lat, coordsDirectas.lng], 14);
+            mapMarker.setLatLng([coordsDirectas.lat, coordsDirectas.lng]);
         }
+        updateSelectedCoords(coordsDirectas.lat, coordsDirectas.lng);
+        return;
+    }
+
+    const qNorm = normalizarTextoMapa(rawQuery);
+    const match = CATALOGO_CIUDADES_VE.find(c => {
+        const full = normalizarTextoMapa(`${c.nombre} ${c.estado}`);
+        const cityOnly = normalizarTextoMapa(c.nombre);
+        return full.indexOf(qNorm) !== -1 || qNorm.indexOf(cityOnly) !== -1;
     });
+
+    if (match) {
+        if (mapPicker && mapMarker) {
+            mapPicker.setView([match.lat, match.lng], 13);
+            mapMarker.setLatLng([match.lat, match.lng]);
+        }
+        updateSelectedCoords(match.lat, match.lng, `${match.nombre}, ${match.estado}`);
+    } else {
+        Swal.fire('Búsqueda Local', 'No se encontró esa localidad en el catálogo offline. Puedes seleccionar una ciudad de la lista o ingresar Latitud y Longitud manualmente.', 'info');
+    }
 }
 
 function confirmarUbicacionMapa() {
-    const googleMapsUrl = `https://www.google.com/maps?q=${selectedLat.toFixed(5)},${selectedLng.toFixed(5)}`;
-    $('#gema_link_gps').val(googleMapsUrl).trigger('change');
+    const geoUri = `geo:${selectedLat.toFixed(5)},${selectedLng.toFixed(5)}`;
+    $('#gema_link_gps').val(geoUri).trigger('change');
     
     const modalEl = document.getElementById('modalMapPicker');
     const modal = bootstrap.Modal.getInstance(modalEl);
@@ -465,7 +707,7 @@ function confirmarUbicacionMapa() {
     Swal.fire({
         icon: 'success',
         title: 'Ubicación GPS Seleccionada',
-        text: `Se ha vinculado el enlace Google Maps: ${googleMapsUrl}`,
+        text: `Se han fijado las coordenadas locales: ${geoUri}`,
         timer: 2000,
         showConfirmButton: false
     });
@@ -1243,7 +1485,7 @@ function confirmLogout(event) {
         cancelButtonText: 'Cancelar'
     }).then((result) => {
         if (result.isConfirmed) {
-            window.location.href = '/starfi_crm/logout.php';
+            window.location.href = '../../logout.php';
         }
     });
 }

@@ -1,6 +1,6 @@
 <?php
 // cron_campanas_autopilot.php
-// Ejecutor Diario de Piloto Automático para Campañas de Difusión APROBADAS | STARFI CRM
+// Ejecutor Diario de Piloto Automático para Campañas de Difusión APROBADAS | STARFI CRM (QA-STD-GLOBAL-2.1)
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit('CLI only');
@@ -8,14 +8,15 @@ if (PHP_SAPI !== 'cli') {
 @ini_set('display_errors', '0');
 date_default_timezone_set('America/Caracas');
 require_once __DIR__ . '/core/auth.php';
+require_once __DIR__ . '/core/audit.php';
 
 $con = getDbConnection();
-if (!$con) {
+if (!($con instanceof mysqli)) {
     echo "Error de conexión a la base de datos.\n";
     exit(1);
 }
 
-echo "[" . date('Y-m-d H:i:s') . "] Iniciando Piloto Automático Diario de Campañas de Difusión...\n";
+echo '[' . date('Y-m-d H:i:s') . "] Iniciando Piloto Automático Diario de Campañas de Difusión...\n";
 
 function normalizeVePhoneCron($rawPhone) {
     $tel = preg_replace('/[^0-9]/', '', (string)$rawPhone);
@@ -40,76 +41,171 @@ function sanitizeParamCron($text, $stripTrailingDot = false) {
     return $clean !== '' ? $clean : 'N/A';
 }
 
+if (!function_exists('starfi_marketing_category_sql_expr')) {
+    function starfi_marketing_category_sql_expr(mysqli $con): string {
+        static $cache = [];
+        $cid = spl_object_id($con);
+        if (isset($cache[$cid])) {
+            return $cache[$cid];
+        }
+        $hasCatMeta = false;
+        $hasTplCat = false;
+        $resCols = @$con->query('SHOW COLUMNS FROM `campanas_difusion`');
+        if ($resCols) {
+            while ($col = $resCols->fetch_assoc()) {
+                $field = (string)($col['Field'] ?? '');
+                if ($field === 'categoria_meta') {
+                    $hasCatMeta = true;
+                } elseif ($field === 'template_category') {
+                    $hasTplCat = true;
+                }
+            }
+        }
+        if ($hasCatMeta && $hasTplCat) {
+            $expr = 'UPPER(COALESCE(NULLIF(c.categoria_meta, \'\'), NULLIF(c.template_category, \'\'), \'MARKETING\')) = \'MARKETING\'';
+        } elseif ($hasCatMeta) {
+            $expr = 'UPPER(IFNULL(NULLIF(c.categoria_meta, \'\'), \'MARKETING\')) = \'MARKETING\'';
+        } elseif ($hasTplCat) {
+            $expr = 'UPPER(IFNULL(NULLIF(c.template_category, \'\'), \'MARKETING\')) = \'MARKETING\'';
+        } else {
+            $expr = '1 = 1';
+        }
+        $cache[$cid] = $expr;
+        return $expr;
+    }
+}
+
+if (!function_exists('starfi_check_marketing_antifatigue_24h')) {
+    /**
+     * Escudo Anti-Fatiga 24h (Meta Error 131049) en Backend:
+     * Verifica si el teléfono (o sus variantes con/sin + o formato local) recibió algún envío
+     * de una campaña MARKETING en las últimas 24 horas sin haber respondido.
+     */
+    function starfi_check_marketing_antifatigue_24h(mysqli $con, string $telefono, int $excludeDestId = 0): bool {
+        $norm = normalizeVePhoneCron($telefono);
+        if ($norm === '') {
+            return false;
+        }
+        $v1 = $norm;
+        $v2 = '+' . $norm;
+        $v3 = (strlen($norm) === 12 && strpos($norm, '58') === 0) ? ('0' . substr($norm, 2)) : $norm;
+        $rawClean = preg_replace('/[^0-9+]/', '', trim($telefono));
+        $v4 = ($rawClean !== '') ? $rawClean : $norm;
+        $excl = max(0, intval($excludeDestId));
+        $catExpr = starfi_marketing_category_sql_expr($con);
+
+        $sql = 'SELECT d.id
+                FROM campanas_difusion_destinatarios d
+                INNER JOIN campanas_difusion c ON c.id = d.id_campana
+                WHERE ' . $catExpr . '
+                  AND d.telefono IN (?, ?, ?, ?)
+                  AND d.fecha_envio >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                  AND d.estado_envio IN (\'PROCESANDO\', \'ENVIADO\', \'ENTREGADO\', \'LEIDO\')
+                  AND IFNULL(d.respondido, 0) = 0
+                  AND d.id != ?
+                LIMIT 1';
+
+        $stmt = $con->prepare($sql);
+        if (!$stmt) {
+            starfi_log_exception('campanas', 'Error preparando verificación anti-fatiga 24h en cron', ['error' => $con->error]);
+            return false;
+        }
+        $stmt->bind_param('ssssi', $v1, $v2, $v3, $v4, $excl);
+        $fatigued = false;
+        if (@$stmt->execute()) {
+            $stmt->store_result();
+            $fatigued = ($stmt->num_rows > 0);
+        }
+        $stmt->close();
+        return $fatigued;
+    }
+}
+
+function stripLeadingAppSubpathCron($path) {
+    $norm = ltrim(str_replace('\\', '/', trim((string)$path)), '/');
+    if (strpos($norm, 'starfi_crm/') === 0) {
+        $norm = substr($norm, strlen('starfi_crm/'));
+    }
+    return ltrim($norm, '/');
+}
+
 function resolveCampaignImageCron($con, $camp) {
     $baseDir = __DIR__;
     if (!empty($camp['header_imagen_path'])) {
-        $rel = ltrim(str_replace(['/starfi_crm/', '\\'], ['', '/'], $camp['header_imagen_path']), '/');
-        $candidate = $baseDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
-        if (file_exists($candidate) && is_file($candidate)) {
-            return $candidate;
-        }
-    }
-    $res_emp = @mysqli_query($con, "SELECT logo_url FROM empresa_perfil ORDER BY id ASC LIMIT 1");
-    if ($res_emp && mysqli_num_rows($res_emp) > 0) {
-        $logo_rel = trim(mysqli_fetch_assoc($res_emp)['logo_url'] ?? '');
-        if (!empty($logo_rel)) {
-            $rel = ltrim(str_replace(['/starfi_crm/', '\\'], ['', '/'], $logo_rel), '/');
+        $rel = stripLeadingAppSubpathCron($camp['header_imagen_path']);
+        if ($rel !== '') {
             $candidate = $baseDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
             if (file_exists($candidate) && is_file($candidate)) {
                 return $candidate;
             }
         }
     }
-    $fallbacks = [
-        $baseDir . '/docs/identidad_visual/logos/logo_starfi.png',
-        $baseDir . '/uploads/empresa/logo_1784639274_107.png',
-        $baseDir . '/assets/img/legacy_pdf_assets/logo_sf.png',
-        $baseDir . '/docs/identidad_visual/logos/isologo.png'
-    ];
-    foreach ($fallbacks as $fb) {
-        $fbReal = str_replace('/', DIRECTORY_SEPARATOR, $fb);
-        if (file_exists($fbReal) && is_file($fbReal)) {
-            return $fbReal;
+
+    if ($con instanceof mysqli) {
+        $stmtEmp = $con->prepare('SELECT logo_url FROM empresa_perfil WHERE logo_url IS NOT NULL AND logo_url != \'\' ORDER BY id ASC LIMIT 1');
+        if ($stmtEmp) {
+            if (@$stmtEmp->execute()) {
+                $resEmp = $stmtEmp->get_result();
+                if ($resEmp && ($rowEmp = $resEmp->fetch_assoc())) {
+                    $logo_rel = stripLeadingAppSubpathCron($rowEmp['logo_url'] ?? '');
+                    if ($logo_rel !== '') {
+                        $candidate = $baseDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $logo_rel);
+                        if (file_exists($candidate) && is_file($candidate)) {
+                            $stmtEmp->close();
+                            return $candidate;
+                        }
+                    }
+                }
+            }
+            $stmtEmp->close();
         }
     }
+
     return null;
 }
 
 function getOrUploadHeaderMediaIdCron($con, array &$camp, string $phone_id, string $token): ?string {
-    $existing_id = trim($camp['header_media_id'] ?? '');
-    if (!empty($existing_id)) {
+    $existing_id = trim((string)($camp['header_media_id'] ?? ''));
+    if ($existing_id !== '') {
         return $existing_id;
     }
     $img_path = resolveCampaignImageCron($con, $camp);
-    if (!$img_path || !file_exists($img_path)) {
+    if (!$img_path || !file_exists($img_path) || !is_file($img_path)) {
         return null;
     }
-    $mime = @mime_content_type($img_path) ?: 'image/png';
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = strtolower(trim((string)$finfo->file($img_path)));
     if (!in_array($mime, ['image/jpeg', 'image/png'], true)) {
-        $mime = 'image/png';
+        return null;
     }
-    $media_url = "https://graph.facebook.com/v23.0/{$phone_id}/media";
+    $apiVer = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+    $media_url = "https://graph.facebook.com/{$apiVer}/{$phone_id}/media";
     $cfile = new CURLFile($img_path, $mime, basename($img_path));
     $post_media = ['messaging_product' => 'whatsapp', 'type' => $mime, 'file' => $cfile];
 
     $ch = curl_init($media_url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $post_media);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer $token"]);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ["Authorization: Bearer {$token}"]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
     $resp = curl_exec($ch);
     curl_close($ch);
 
-    $data = json_decode($resp, true);
+    $data = json_decode((string)$resp, true);
     if (!empty($data['id'])) {
-        $media_id = trim($data['id']);
+        $media_id = trim((string)$data['id']);
         $camp['header_media_id'] = $media_id;
         $id_camp = intval($camp['id'] ?? 0);
-        if ($id_camp > 0) {
-            $mid_esc = mysqli_real_escape_string($con, $media_id);
-            mysqli_query($con, "UPDATE campanas_difusion SET header_media_id = '$mid_esc' WHERE id = $id_camp");
+        if ($id_camp > 0 && ($con instanceof mysqli)) {
+            $stmtUpd = $con->prepare('UPDATE campanas_difusion SET header_media_id = ? WHERE id = ?');
+            if ($stmtUpd) {
+                $stmtUpd->bind_param('si', $media_id, $id_camp);
+                @$stmtUpd->execute();
+                $stmtUpd->close();
+            }
         }
         return $media_id;
     }
@@ -118,112 +214,190 @@ function getOrUploadHeaderMediaIdCron($con, array &$camp, string $phone_id, stri
 
 function recalcularCampanaCron($con, $id_campana) {
     $id_campana = intval($id_campana);
-    if ($id_campana <= 0) return;
-    @mysqli_query($con, "UPDATE campanas_difusion_destinatarios d
-        INNER JOIN campanas_difusion c ON c.id = d.id_campana
-        INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta = CONVERT(d.id_mensaje_meta USING utf8mb4)
-        SET d.estado_envio = CASE
-                WHEN m.estado_envio = 'FALLIDO' THEN 'FALLIDO'
-                WHEN d.respondido = 1 THEN 'RESPONDIDO'
-                WHEN m.estado_envio = 'LEIDO' THEN 'LEIDO'
-                WHEN m.estado_envio = 'ENTREGADO' AND d.estado_envio NOT IN ('LEIDO', 'RESPONDIDO') THEN 'ENTREGADO'
-                ELSE d.estado_envio
-            END,
-            d.fecha_entrega = CASE
-                WHEN m.estado_envio IN ('ENTREGADO', 'LEIDO') THEN IFNULL(d.fecha_entrega, IFNULL(m.timestamp, NOW()))
-                ELSE d.fecha_entrega
-            END,
-            d.fecha_lectura = CASE
-                WHEN m.estado_envio = 'LEIDO' THEN IFNULL(d.fecha_lectura, IFNULL(m.timestamp, NOW()))
-                ELSE d.fecha_lectura
-            END,
-            d.error_detalle = CASE
-                WHEN m.estado_envio = 'FALLIDO' AND m.error_detalle IS NOT NULL AND m.error_detalle != '' THEN m.error_detalle
-                ELSE d.error_detalle
-            END,
-            d.costo_usd = CASE
-                WHEN m.estado_envio = 'FALLIDO' THEN 0.0000
-                WHEN d.costo_usd <= 0 AND c.costo_unitario_usd > 0 THEN c.costo_unitario_usd
-                ELSE d.costo_usd
-            END
-        WHERE d.id_campana = $id_campana
-          AND d.id_mensaje_meta IS NOT NULL
-          AND d.id_mensaje_meta != ''
-          AND d.estado_envio IN ('ENVIADO', 'ENTREGADO', 'LEIDO')");
+    if (!($con instanceof mysqli) || $id_campana <= 0) {
+        return;
+    }
 
-    mysqli_query($con, "UPDATE campanas_difusion c
-        INNER JOIN (
-            SELECT id_campana,
-                   COUNT(*) AS tot,
-                   SUM(estado_envio = 'PENDIENTE') AS pend,
-                   SUM(estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO')) AS env,
-                   SUM(fecha_entrega IS NOT NULL OR estado_envio IN ('ENTREGADO','LEIDO','RESPONDIDO')) AS ent,
-                   SUM(fecha_lectura IS NOT NULL OR estado_envio IN ('LEIDO','RESPONDIDO')) AS lei,
-                   SUM(respondido = 1) AS resp,
-                   SUM(estado_envio = 'FALLIDO') AS fall,
-                   IFNULL(SUM(CASE WHEN estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') THEN costo_usd ELSE 0 END), 0) AS costo_real
-            FROM campanas_difusion_destinatarios
-            WHERE id_campana = $id_campana
-            GROUP BY id_campana
-        ) agg ON agg.id_campana = c.id
-        SET c.total_destinatarios = agg.tot,
-            c.pendientes = agg.pend,
-            c.enviados = agg.env,
-            c.entregados = agg.ent,
-            c.leidos = agg.lei,
-            c.respondidos = agg.resp,
-            c.fallidos = agg.fall,
-            c.costo_real_usd = agg.costo_real
-        WHERE c.id = $id_campana");
+    $stmtSync = $con->prepare(
+        'UPDATE campanas_difusion_destinatarios d
+         INNER JOIN campanas_difusion c ON c.id = d.id_campana
+         INNER JOIN mensajes_y_eventos m ON m.id_mensaje_meta = CONVERT(d.id_mensaje_meta USING utf8mb4)
+         SET d.estado_envio = CASE
+                 WHEN m.estado_envio = \'FALLIDO\' THEN \'FALLIDO\'
+                 WHEN d.respondido = 1 THEN \'RESPONDIDO\'
+                 WHEN m.estado_envio = \'LEIDO\' THEN \'LEIDO\'
+                 WHEN m.estado_envio = \'ENTREGADO\' AND d.estado_envio NOT IN (\'LEIDO\', \'RESPONDIDO\') THEN \'ENTREGADO\'
+                 ELSE d.estado_envio
+             END,
+             d.fecha_entrega = CASE
+                 WHEN m.estado_envio IN (\'ENTREGADO\', \'LEIDO\') THEN IFNULL(d.fecha_entrega, IFNULL(m.timestamp, NOW()))
+                 ELSE d.fecha_entrega
+             END,
+             d.fecha_lectura = CASE
+                 WHEN m.estado_envio = \'LEIDO\' THEN IFNULL(d.fecha_lectura, IFNULL(m.timestamp, NOW()))
+                 ELSE d.fecha_lectura
+             END,
+             d.error_detalle = CASE
+                 WHEN m.estado_envio = \'FALLIDO\' AND m.error_detalle IS NOT NULL AND m.error_detalle != \'\' THEN m.error_detalle
+                 ELSE d.error_detalle
+             END,
+             d.costo_usd = CASE
+                 WHEN m.estado_envio = \'FALLIDO\' THEN 0.0000
+                 WHEN d.costo_usd <= 0 AND c.costo_unitario_usd > 0 THEN c.costo_unitario_usd
+                 ELSE d.costo_usd
+             END
+         WHERE d.id_campana = ?
+           AND d.id_mensaje_meta IS NOT NULL
+           AND d.id_mensaje_meta != \'\'
+           AND d.estado_envio IN (\'ENVIADO\', \'ENTREGADO\', \'LEIDO\')'
+    );
+    if ($stmtSync) {
+        $stmtSync->bind_param('i', $id_campana);
+        @$stmtSync->execute();
+        $stmtSync->close();
+    }
+
+    $stmtAgg = $con->prepare(
+        'UPDATE campanas_difusion c
+         INNER JOIN (
+             SELECT id_campana,
+                    COUNT(*) AS tot,
+                    COALESCE(SUM(estado_envio = \'PENDIENTE\'), 0) AS pend,
+                    COALESCE(SUM(estado_envio IN (\'ENVIADO\',\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\')), 0) AS env,
+                    COALESCE(SUM(fecha_entrega IS NOT NULL OR estado_envio IN (\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\')), 0) AS ent,
+                    COALESCE(SUM(fecha_lectura IS NOT NULL OR estado_envio IN (\'LEIDO\',\'RESPONDIDO\')), 0) AS lei,
+                    COALESCE(SUM(respondido = 1), 0) AS resp,
+                    COALESCE(SUM(estado_envio = \'FALLIDO\'), 0) AS fall,
+                    IFNULL(SUM(CASE WHEN estado_envio IN (\'ENVIADO\',\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\') THEN costo_usd ELSE 0 END), 0) AS costo_real
+             FROM campanas_difusion_destinatarios
+             WHERE id_campana = ?
+             GROUP BY id_campana
+         ) agg ON agg.id_campana = c.id
+         SET c.total_destinatarios = agg.tot,
+             c.pendientes = agg.pend,
+             c.enviados = agg.env,
+             c.entregados = agg.ent,
+             c.leidos = agg.lei,
+             c.respondidos = agg.resp,
+             c.fallidos = agg.fall,
+             c.costo_real_usd = agg.costo_real
+         WHERE c.id = ?'
+    );
+    if ($stmtAgg) {
+        $stmtAgg->bind_param('ii', $id_campana, $id_campana);
+        if (!@$stmtAgg->execute()) {
+            starfi_log_exception('campanas', 'Error recalculando métricas de campaña en cron', ['id_campana' => $id_campana, 'error' => $stmtAgg->error]);
+        }
+        $stmtAgg->close();
+    }
 }
 
 // Liberar filas atascadas en PROCESANDO por más de 3 minutos sin wamid
-@mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'PENDIENTE' WHERE estado_envio = 'PROCESANDO' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '') AND fecha_envio < DATE_SUB(NOW(), INTERVAL 3 MINUTE)");
+$stmtStuck = $con->prepare(
+    'UPDATE campanas_difusion_destinatarios
+     SET estado_envio = \'PENDIENTE\'
+     WHERE estado_envio = \'PROCESANDO\'
+       AND (id_mensaje_meta IS NULL OR id_mensaje_meta = \'\')
+       AND fecha_envio < DATE_SUB(NOW(), INTERVAL 3 MINUTE)'
+);
+if ($stmtStuck) {
+    @$stmtStuck->execute();
+    $stmtStuck->close();
+}
 
-// Buscar únicamente campañas APROBADAS con Piloto Automático activo, destinatarios pendientes, cuya hora programada ya llegó y que NO estén enviando en vivo desde el navegador en los últimos 90s
-$sql = "SELECT * FROM campanas_difusion c
-        WHERE c.piloto_automatico = 1 
-          AND c.aprobado_por IS NOT NULL 
-          AND c.pendientes > 0 
-          AND IFNULL(c.hora_programada, '00:00:00') <= CURTIME()
-          AND c.estado NOT IN ('PENDIENTE_APROBACION', 'CANCELADA', 'COMPLETADA', 'TOPE_PRESUPUESTO')
-          AND NOT EXISTS (SELECT 1 FROM campanas_difusion_destinatarios d_act WHERE d_act.id_campana = c.id AND d_act.fecha_envio >= DATE_SUB(NOW(), INTERVAL 90 SECOND))
-        ORDER BY c.id ASC";
-$res = mysqli_query($con, $sql);
+// Buscar únicamente campañas APROBADAS con Piloto Automático activo, destinatarios pendientes, cuya hora programada ya llegó
+$stmtCamps = $con->prepare(
+    'SELECT * FROM campanas_difusion c
+     WHERE c.piloto_automatico = 1
+       AND c.aprobado_por IS NOT NULL
+       AND c.pendientes > 0
+       AND IFNULL(c.hora_programada, \'00:00:00\') <= CURTIME()
+       AND c.estado NOT IN (\'PENDIENTE_APROBACION\', \'CANCELADA\', \'COMPLETADA\', \'TOPE_PRESUPUESTO\')
+       AND NOT EXISTS (
+           SELECT 1 FROM campanas_difusion_destinatarios d_act
+           WHERE d_act.id_campana = c.id
+             AND d_act.fecha_envio >= DATE_SUB(NOW(), INTERVAL 90 SECOND)
+       )
+     ORDER BY c.id ASC'
+);
 
-if (!$res || mysqli_num_rows($res) === 0) {
+$campanas_pendientes = [];
+if ($stmtCamps) {
+    if (@$stmtCamps->execute()) {
+        $resCamps = $stmtCamps->get_result();
+        if ($resCamps) {
+            while ($rCamp = $resCamps->fetch_assoc()) {
+                $campanas_pendientes[] = $rCamp;
+            }
+        }
+    }
+    $stmtCamps->close();
+}
+
+if (empty($campanas_pendientes)) {
     echo "No hay campañas aprobadas con cuotas pendientes para hoy.\n";
     exit(0);
 }
 
-while ($camp = mysqli_fetch_assoc($res)) {
+$apiVer = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+
+foreach ($campanas_pendientes as $camp) {
+    $camp_antes = $camp;
     $id_campana = intval($camp['id']);
     $id_sede = intval($camp['id_sede']);
     $id_usuario = intval($camp['aprobado_por'] ?: $camp['id_usuario'] ?: 1);
-    $nombre_campana = $camp['nombre_campana'];
+    $nombre_campana = (string)$camp['nombre_campana'];
 
     echo "Procesando Campaña #{$id_campana}: {$nombre_campana} (Sede ID: {$id_sede})...\n";
 
     // Obtener configuración de flujo diario de la sede
-    $res_q = mysqli_query($con, "SELECT limite_diario_mensajes, cadencia_ms FROM campanas_cuotas_sede WHERE id_sede = $id_sede LIMIT 1");
     $lim_sede = 250;
     $cad_ms = 1000;
-    if ($res_q && mysqli_num_rows($res_q) > 0) {
-        $rq = mysqli_fetch_assoc($res_q);
-        $lim_sede = max(1, intval($rq['limite_diario_mensajes']));
-        $cad_ms = max(250, intval($rq['cadencia_ms']));
+    $stmtQ = $con->prepare('SELECT limite_diario_mensajes, cadencia_ms FROM campanas_cuotas_sede WHERE id_sede = ? LIMIT 1');
+    if ($stmtQ) {
+        $stmtQ->bind_param('i', $id_sede);
+        if (@$stmtQ->execute()) {
+            $resQ = $stmtQ->get_result();
+            if ($resQ && ($rq = $resQ->fetch_assoc())) {
+                $lim_sede = max(1, intval($rq['limite_diario_mensajes']));
+                $cad_ms = max(250, intval($rq['cadencia_ms']));
+            }
+        }
+        $stmtQ->close();
     }
 
     $cuota_camp = max(1, intval($camp['cuota_diaria_programada'] ?: $lim_sede));
-    if ($cuota_camp > $lim_sede) $lim_sede = $cuota_camp;
+    if ($cuota_camp > $lim_sede) {
+        $lim_sede = $cuota_camp;
+    }
     $tope_hoy = min($lim_sede, $cuota_camp);
 
     // Verificar enviados hoy en la sede y en la campaña
-    $rh_s = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = $id_sede AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
-    $env_sede_hoy = ($rh_s && $r1 = mysqli_fetch_assoc($rh_s)) ? intval($r1['c']) : 0;
+    $env_sede_hoy = 0;
+    $stmtHs = $con->prepare('SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_sede = ? AND estado_envio IN (\'ENVIADO\',\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\') AND DATE(fecha_envio) = CURDATE()');
+    if ($stmtHs) {
+        $stmtHs->bind_param('i', $id_sede);
+        if (@$stmtHs->execute()) {
+            $rHs = $stmtHs->get_result();
+            if ($rHs && ($r1 = $rHs->fetch_assoc())) {
+                $env_sede_hoy = intval($r1['c']);
+            }
+        }
+        $stmtHs->close();
+    }
 
-    $rh_c = mysqli_query($con, "SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE()");
-    $env_camp_hoy = ($rh_c && $r2 = mysqli_fetch_assoc($rh_c)) ? intval($r2['c']) : 0;
+    $env_camp_hoy = 0;
+    $stmtHc = $con->prepare('SELECT COUNT(*) AS c FROM campanas_difusion_destinatarios WHERE id_campana = ? AND estado_envio IN (\'ENVIADO\',\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\') AND DATE(fecha_envio) = CURDATE()');
+    if ($stmtHc) {
+        $stmtHc->bind_param('i', $id_campana);
+        if (@$stmtHc->execute()) {
+            $rHc = $stmtHc->get_result();
+            if ($rHc && ($r2 = $rHc->fetch_assoc())) {
+                $env_camp_hoy = intval($r2['c']);
+            }
+        }
+        $stmtHc->close();
+    }
 
     $disp_hoy = min(max(0, $lim_sede - $env_sede_hoy), max(0, $tope_hoy - $env_camp_hoy));
     if ($disp_hoy <= 0) {
@@ -232,59 +406,167 @@ while ($camp = mysqli_fetch_assoc($res)) {
     }
 
     // Obtener línea activa de la sede
-    $res_lin = mysqli_query($con, "SELECT l.id, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) AS id_empresa, COALESCE(s.nombre_sede, 'Sede') AS nombre_sede
-                                   FROM lineas_whatsapp l
-                                   LEFT JOIN sedes s ON s.id = l.id_sede
-                                   WHERE l.id_sede = $id_sede AND l.estado = 'ACTIVO' LIMIT 1");
-    if (!$res_lin || mysqli_num_rows($res_lin) === 0) {
-        echo " - Sin línea activa en la sede $id_sede.\n";
+    $linea = null;
+    $stmtLin = $con->prepare(
+        'SELECT l.id, l.meta_app_id, l.meta_token, COALESCE(s.id_empresa, 1) AS id_empresa, COALESCE(s.nombre_sede, \'Sede\') AS nombre_sede
+         FROM lineas_whatsapp l
+         LEFT JOIN sedes s ON s.id = l.id_sede
+         WHERE l.id_sede = ? AND l.estado = \'ACTIVO\'
+         LIMIT 1'
+    );
+    if ($stmtLin) {
+        $stmtLin->bind_param('i', $id_sede);
+        if (@$stmtLin->execute()) {
+            $resLin = $stmtLin->get_result();
+            if ($resLin && $resLin->num_rows > 0) {
+                $linea = $resLin->fetch_assoc();
+            }
+        }
+        $stmtLin->close();
+    }
+
+    if (!$linea) {
+        echo " - Sin línea activa en la sede {$id_sede}.\n";
         continue;
     }
-    $linea = mysqli_fetch_assoc($res_lin);
+
     $id_linea = intval($linea['id']);
     $id_empresa = intval($linea['id_empresa'] ?? 1);
-    $nombre_sede_actual = trim($linea['nombre_sede'] ?? 'Sede');
-    $phone_id = trim($linea['meta_app_id']);
-    $token = !empty($linea['meta_token']) ? trim($linea['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+    $nombre_sede_actual = trim((string)($linea['nombre_sede'] ?? 'Sede'));
+    $phone_id = trim((string)$linea['meta_app_id']);
+    $token = !empty($linea['meta_token']) ? trim((string)$linea['meta_token']) : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
 
     // Obtener lote pendiente de hoy
-    $res_dest = mysqli_query($con, "SELECT * FROM campanas_difusion_destinatarios 
-                                    WHERE id_campana = $id_campana AND estado_envio = 'PENDIENTE' 
-                                    ORDER BY numero_tanda ASC, id ASC 
-                                    LIMIT $disp_hoy");
+    $lote_dest = [];
+    $stmtDestList = $con->prepare(
+        'SELECT * FROM campanas_difusion_destinatarios
+         WHERE id_campana = ? AND estado_envio = \'PENDIENTE\'
+         ORDER BY numero_tanda ASC, id ASC
+         LIMIT ?'
+    );
+    if ($stmtDestList) {
+        $stmtDestList->bind_param('ii', $id_campana, $disp_hoy);
+        if (@$stmtDestList->execute()) {
+            $resDestList = $stmtDestList->get_result();
+            if ($resDestList) {
+                while ($rd = $resDestList->fetch_assoc()) {
+                    $lote_dest[] = $rd;
+                }
+            }
+        }
+        $stmtDestList->close();
+    }
+
     $enviados_tanda = 0;
-    while ($dest = mysqli_fetch_assoc($res_dest)) {
+    $omitidos_antifatiga = 0;
+    $camp_cat = strtoupper(trim((string)($camp['categoria_meta'] ?? ($camp['template_category'] ?? 'MARKETING')))) ?: 'MARKETING';
+
+    foreach ($lote_dest as $dest) {
         $id_dest = intval($dest['id']);
         $telefono_limpio = normalizeVePhoneCron($dest['telefono']);
-        $tel_esc_lock = mysqli_real_escape_string($con, $telefono_limpio);
-        $template_name = $camp['template_name'] ?: 'starfi_difusion_directa';
-        $tpl_esc_lock = mysqli_real_escape_string($con, $template_name);
+        $template_name = trim((string)($camp['template_name'] ?: 'starfi_difusion_directa'));
 
         // Reclamo atómico de la fila para evitar colisiones con navegador u otro cron
-        mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
-                            SET estado_envio = 'PROCESANDO', fecha_envio = NOW() 
-                            WHERE id = $id_dest AND id_campana = $id_campana AND estado_envio = 'PENDIENTE' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = '')");
-        if (mysqli_affected_rows($con) <= 0) {
+        $claimed = false;
+        $stmtClaim = $con->prepare(
+            'UPDATE campanas_difusion_destinatarios
+             SET estado_envio = \'PROCESANDO\', fecha_envio = NOW()
+             WHERE id = ? AND id_campana = ? AND estado_envio = \'PENDIENTE\' AND (id_mensaje_meta IS NULL OR id_mensaje_meta = \'\')'
+        );
+        if ($stmtClaim) {
+            $stmtClaim->bind_param('ii', $id_dest, $id_campana);
+            if (@$stmtClaim->execute()) {
+                $claimed = ($stmtClaim->affected_rows > 0);
+            }
+            $stmtClaim->close();
+        }
+        if (!$claimed) {
+            continue;
+        }
+
+        // ESCUDO ANTI-FATIGA 24H EN BACKEND (QA-BUG-CRM2-08 / CHK-CLD-02)
+        if ($camp_cat === 'MARKETING' && starfi_check_marketing_antifatigue_24h($con, $telefono_limpio, $id_dest)) {
+            $msg_fatiga = 'Omitido por Escudo Anti-Fatiga 24h (Meta 131049)';
+            $stmtSkipFat = $con->prepare(
+                'UPDATE campanas_difusion_destinatarios
+                 SET estado_envio = \'OMITIDO_ANTIFATIGA\', error_detalle = ?, costo_usd = 0.0000
+                 WHERE id = ?'
+            );
+            if ($stmtSkipFat) {
+                $stmtSkipFat->bind_param('si', $msg_fatiga, $id_dest);
+                @$stmtSkipFat->execute();
+                $stmtSkipFat->close();
+            }
+            $omitidos_antifatiga++;
+            registrar_auditoria(
+                'campanas',
+                'OMITIR_DESTINATARIO_ANTIFATIGA_CRON',
+                "Destinatario #{$id_dest} ({$telefono_limpio}) omitido por Escudo Anti-Fatiga 24h en campaña #{$id_campana}",
+                ['id_destinatario' => $id_dest, 'estado_envio' => 'PENDIENTE', 'telefono' => $telefono_limpio],
+                ['id_destinatario' => $id_dest, 'estado_envio' => 'OMITIDO_ANTIFATIGA', 'error_detalle' => $msg_fatiga],
+                $con,
+                $id_usuario,
+                $id_sede
+            );
             continue;
         }
 
         // Protección anti-duplicado por teléfono en la misma campaña / mismo día
-        $res_dup_tel = mysqli_query($con, "SELECT id FROM campanas_difusion_destinatarios WHERE id_campana = $id_campana AND id != $id_dest AND telefono = '$tel_esc_lock' AND estado_envio IN ('PROCESANDO','ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') LIMIT 1");
-        $res_dup_notif = mysqli_query($con, "SELECT id FROM notificacion_enviada WHERE fecha = CURDATE() AND telefono_receptor = '$tel_esc_lock' AND template = '$tpl_esc_lock' AND status = 'ENVIADO' LIMIT 1");
-        if (($res_dup_tel && mysqli_num_rows($res_dup_tel) > 0) || ($res_dup_notif && mysqli_num_rows($res_dup_notif) > 0)) {
-            mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'ENVIADO', error_detalle = 'Omitido automáticamente: número ya notificado hoy.' WHERE id = $id_dest");
+        $es_dup_hoy = false;
+        $stmtDupTel = $con->prepare(
+            'SELECT id FROM campanas_difusion_destinatarios
+             WHERE id_campana = ? AND id != ? AND telefono = ?
+               AND estado_envio IN (\'PROCESANDO\',\'ENVIADO\',\'ENTREGADO\',\'LEIDO\',\'RESPONDIDO\')
+             LIMIT 1'
+        );
+        if ($stmtDupTel) {
+            $stmtDupTel->bind_param('iis', $id_campana, $id_dest, $telefono_limpio);
+            if (@$stmtDupTel->execute()) {
+                $stmtDupTel->store_result();
+                if ($stmtDupTel->num_rows > 0) {
+                    $es_dup_hoy = true;
+                }
+            }
+            $stmtDupTel->close();
+        }
+
+        if (!$es_dup_hoy) {
+            $stmtDupNotif = $con->prepare(
+                'SELECT id FROM notificacion_enviada
+                 WHERE fecha = CURDATE() AND telefono_receptor = ? AND template = ? AND status = \'ENVIADO\'
+                 LIMIT 1'
+            );
+            if ($stmtDupNotif) {
+                $stmtDupNotif->bind_param('ss', $telefono_limpio, $template_name);
+                if (@$stmtDupNotif->execute()) {
+                    $stmtDupNotif->store_result();
+                    if ($stmtDupNotif->num_rows > 0) {
+                        $es_dup_hoy = true;
+                    }
+                }
+                $stmtDupNotif->close();
+            }
+        }
+
+        if ($es_dup_hoy) {
+            $msg_dup = 'Omitido automáticamente: número ya notificado hoy.';
+            $stmtSkipDup = $con->prepare('UPDATE campanas_difusion_destinatarios SET estado_envio = \'ENVIADO\', error_detalle = ? WHERE id = ?');
+            if ($stmtSkipDup) {
+                $stmtSkipDup->bind_param('si', $msg_dup, $id_dest);
+                @$stmtSkipDup->execute();
+                $stmtSkipDup->close();
+            }
             continue;
         }
 
-        $nombre_cliente = trim($dest['nombre'] ?: 'Cliente');
+        $nombre_cliente = trim((string)($dest['nombre'] ?: 'Cliente'));
         $primer_nombre = explode(' ', $nombre_cliente)[0];
         if (empty($primer_nombre) || strlen($primer_nombre) < 2 || preg_match('/^\+?[0-9\s\-]+$/', $primer_nombre)) {
             $primer_nombre = 'Estimado(a) cliente';
         }
         $primer_nombre = sanitizeParamCron($primer_nombre, false);
-        $camp_lang = trim($camp['template_language'] ?? 'es') ?: 'es';
-        $camp_cat = strtoupper(trim($camp['template_category'] ?? 'MARKETING')) ?: 'MARKETING';
-        $camp_hdr_fmt = strtoupper(trim($camp['header_format'] ?? 'IMAGE')) ?: 'IMAGE';
+        $camp_lang = trim((string)($camp['template_language'] ?? 'es')) ?: 'es';
+        $camp_hdr_fmt = strtoupper(trim((string)($camp['header_format'] ?? 'IMAGE'))) ?: 'IMAGE';
         $costo_unit = floatval($camp['costo_unitario_usd'] ?: 0.07);
 
         $resolveDynamicTokenCron = function ($val_raw) use ($primer_nombre, $nombre_cliente, $telefono_limpio, $nombre_sede_actual) {
@@ -296,7 +578,7 @@ while ($camp = mysqli_fetch_assoc($res)) {
             return sanitizeParamCron($str, true);
         };
 
-        $tpl_json_data = !empty($camp['template_params_json']) ? json_decode($camp['template_params_json'], true) : null;
+        $tpl_json_data = !empty($camp['template_params_json']) ? json_decode((string)$camp['template_params_json'], true) : null;
         $params_arr = [];
         $header_text_resolved = '';
         $texto_renderizado_log = '';
@@ -322,8 +604,8 @@ while ($camp = mysqli_fetch_assoc($res)) {
             $params_arr = [$primer_nombre, $param_2, $param_3];
         }
 
-        $url = "https://graph.facebook.com/v23.0/{$phone_id}/messages";
-        $headers = ["Authorization: Bearer $token", "Content-Type: application/json"];
+        $url = "https://graph.facebook.com/{$apiVer}/{$phone_id}/messages";
+        $headers = ["Authorization: Bearer {$token}", 'Content-Type: application/json'];
         $lang_candidates = array_values(array_unique([$camp_lang, 'es', 'es_ES']));
         $http_code = 0;
         $resp_data = [];
@@ -385,16 +667,17 @@ while ($camp = mysqli_fetch_assoc($res)) {
                 curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 8);
                 $response = curl_exec($ch);
                 $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_close($ch);
-                $resp_data = json_decode($response, true) ?? [];
+                $resp_data = json_decode((string)$response, true) ?? [];
                 if ($idx_lang === 0 && $first_resp_data === null) {
                     $first_resp_data = $resp_data;
                 }
                 $err_code_meta = intval($resp_data['error']['code'] ?? 0);
-                $err_details_meta = strtoupper($resp_data['error']['error_data']['details'] ?? ($resp_data['error']['message'] ?? ''));
+                $err_details_meta = strtoupper((string)($resp_data['error']['error_data']['details'] ?? ($resp_data['error']['message'] ?? '')));
 
                 if ($attempt_img === 0 && ($err_code_meta === 132012 || $err_code_meta === 131053 || $err_code_meta === 132000)) {
                     if (strpos($err_details_meta, 'EXPECTED IMAGE') !== false) {
@@ -426,46 +709,93 @@ while ($camp = mysqli_fetch_assoc($res)) {
         if ($texto_renderizado_log !== '') {
             $contenido_log .= ' | Texto: ' . $texto_renderizado_log;
         }
-        $contenido_log_esc = mysqli_real_escape_string($con, $contenido_log);
         $fecha_hoy = date('Y-m-d');
         $hora_actual = date('H:i:s');
-        $now_full = "$fecha_hoy $hora_actual";
+        $now_full = "{$fecha_hoy} {$hora_actual}";
 
         if ($http_code >= 200 && $http_code < 300 && isset($resp_data['messages'][0]['id'])) {
-            $wamid_raw = $resp_data['messages'][0]['id'];
-            $wamid = mysqli_real_escape_string($con, $wamid_raw);
-            $tel_esc = mysqli_real_escape_string($con, $telefono_limpio);
+            $wamid_raw = (string)$resp_data['messages'][0]['id'];
 
-            mysqli_query($con, "INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status)
-                                VALUES ('$template_name', '$fecha_hoy', '$hora_actual', '$phone_id', '$telefono_limpio', '$contenido_log_esc', 'ENVIADO')");
+            $stmtNotifOk = $con->prepare(
+                'INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status)
+                 VALUES (?, ?, ?, ?, ?, ?, \'ENVIADO\')'
+            );
+            if ($stmtNotifOk) {
+                $stmtNotifOk->bind_param('ssssss', $template_name, $fecha_hoy, $hora_actual, $phone_id, $telefono_limpio, $contenido_log);
+                @$stmtNotifOk->execute();
+                $stmtNotifOk->close();
+            }
 
             // Asegurar cliente en clientes_contactos
             $id_cliente = intval($dest['id_cliente'] ?? 0);
             if ($id_cliente <= 0) {
-                $res_c_find = mysqli_query($con, "SELECT id, nombre FROM clientes_contactos WHERE numero_whatsapp = '$tel_esc' OR numero_whatsapp LIKE '%$tel_esc%' LIMIT 1");
-                if ($res_c_find && mysqli_num_rows($res_c_find) > 0) {
-                    $row_cli = mysqli_fetch_assoc($res_c_find);
-                    $id_cliente = intval($row_cli['id']);
-                    mysqli_query($con, "UPDATE clientes_contactos SET ultimo_contacto = '$now_full' WHERE id = $id_cliente");
+                $like_tel = '%' . $telefono_limpio . '%';
+                $stmtCFind = $con->prepare('SELECT id, nombre FROM clientes_contactos WHERE numero_whatsapp = ? OR numero_whatsapp LIKE ? LIMIT 1');
+                if ($stmtCFind) {
+                    $stmtCFind->bind_param('ss', $telefono_limpio, $like_tel);
+                    if (@$stmtCFind->execute()) {
+                        $resCFind = $stmtCFind->get_result();
+                        if ($resCFind && ($row_cli = $resCFind->fetch_assoc())) {
+                            $id_cliente = intval($row_cli['id']);
+                        }
+                    }
+                    $stmtCFind->close();
+                }
+
+                if ($id_cliente > 0) {
+                    $stmtUpdCli = $con->prepare('UPDATE clientes_contactos SET ultimo_contacto = ? WHERE id = ?');
+                    if ($stmtUpdCli) {
+                        $stmtUpdCli->bind_param('si', $now_full, $id_cliente);
+                        @$stmtUpdCli->execute();
+                        $stmtUpdCli->close();
+                    }
                 } else {
-                    $nom_insert = ($primer_nombre !== 'Estimado(a) cliente') ? "'" . mysqli_real_escape_string($con, $nombre_cliente) . "'" : "NULL";
-                    mysqli_query($con, "INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre, fecha_registro, ultimo_contacto) 
-                                        VALUES ($id_empresa, $id_sede, '$tel_esc', $nom_insert, '$now_full', '$now_full')");
-                    $id_cliente = mysqli_insert_id($con);
+                    $nom_insert_param = ($primer_nombre !== 'Estimado(a) cliente') ? $nombre_cliente : null;
+                    $stmtInsCli = $con->prepare(
+                        'INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre, fecha_registro, ultimo_contacto)
+                         VALUES (?, ?, ?, ?, ?, ?)'
+                    );
+                    if ($stmtInsCli) {
+                        $stmtInsCli->bind_param('iissss', $id_empresa, $id_sede, $telefono_limpio, $nom_insert_param, $now_full, $now_full);
+                        if (@$stmtInsCli->execute()) {
+                            $id_cliente = intval($stmtInsCli->insert_id);
+                        }
+                        $stmtInsCli->close();
+                    }
                 }
             } else {
-                mysqli_query($con, "UPDATE clientes_contactos SET ultimo_contacto = '$now_full' WHERE id = $id_cliente");
+                $stmtUpdCli = $con->prepare('UPDATE clientes_contactos SET ultimo_contacto = ? WHERE id = ?');
+                if ($stmtUpdCli) {
+                    $stmtUpdCli->bind_param('si', $now_full, $id_cliente);
+                    @$stmtUpdCli->execute();
+                    $stmtUpdCli->close();
+                }
             }
 
-            // Asegurar conversación activa en la sede para trazabilidad con Bandeja y Bot IA
+            // Asegurar conversación activa en la sede
             $id_conversacion = 0;
             if ($id_cliente > 0) {
-                $res_conv = mysqli_query($con, "SELECT id FROM conversaciones WHERE id_cliente = $id_cliente AND id_linea = $id_linea AND estado NOT IN ('CERRADO', 'RESUELTO') ORDER BY id DESC LIMIT 1");
-                if ($res_conv && mysqli_num_rows($res_conv) > 0) {
-                    $id_conversacion = intval(mysqli_fetch_assoc($res_conv)['id']);
-                } else {
-                    mysqli_query($con, "INSERT INTO conversaciones (id_linea, id_cliente, estado, mensajes_no_leidos, fecha_inicio) VALUES ($id_linea, $id_cliente, 'ESPERA_ASIGNACION', 0, '$now_full')");
-                    $id_conversacion = mysqli_insert_id($con);
+                $stmtConv = $con->prepare('SELECT id FROM conversaciones WHERE id_cliente = ? AND id_linea = ? AND estado NOT IN (\'CERRADO\', \'RESUELTO\') ORDER BY id DESC LIMIT 1');
+                if ($stmtConv) {
+                    $stmtConv->bind_param('ii', $id_cliente, $id_linea);
+                    if (@$stmtConv->execute()) {
+                        $resConv = $stmtConv->get_result();
+                        if ($resConv && ($rowConv = $resConv->fetch_assoc())) {
+                            $id_conversacion = intval($rowConv['id']);
+                        }
+                    }
+                    $stmtConv->close();
+                }
+
+                if ($id_conversacion <= 0) {
+                    $stmtInsConv = $con->prepare('INSERT INTO conversaciones (id_linea, id_cliente, estado, mensajes_no_leidos, fecha_inicio) VALUES (?, ?, \'ESPERA_ASIGNACION\', 0, ?)');
+                    if ($stmtInsConv) {
+                        $stmtInsConv->bind_param('iis', $id_linea, $id_cliente, $now_full);
+                        if (@$stmtInsConv->execute()) {
+                            $id_conversacion = intval($stmtInsConv->insert_id);
+                        }
+                        $stmtInsConv->close();
+                    }
                 }
             }
 
@@ -473,50 +803,137 @@ while ($camp = mysqli_fetch_assoc($res)) {
                 $rel_media_bandeja = null;
                 if ($needs_image_header) {
                     if (!empty($camp['header_imagen_path'])) {
-                        $rel_media_bandeja = '../../' . ltrim(str_replace(['/starfi_crm/', '\\'], ['', '/'], $camp['header_imagen_path']), '/');
+                        $rel_media_bandeja = '../../' . stripLeadingAppSubpathCron($camp['header_imagen_path']);
                     } else {
                         $abs_img_used = resolveCampaignImageCron($con, $camp);
                         $base_root = str_replace('\\', '/', __DIR__);
                         $abs_norm = $abs_img_used ? str_replace('\\', '/', $abs_img_used) : '';
-                        if ($abs_norm && strpos($abs_norm, $base_root) === 0) {
+                        if ($abs_norm !== '' && strpos($abs_norm, $base_root) === 0) {
                             $rel_media_bandeja = '../../' . ltrim(substr($abs_norm, strlen($base_root)), '/');
                         }
                     }
                 }
                 $tipo_msg_bandeja = !empty($rel_media_bandeja) ? 'IMAGEN' : 'TEXTO';
-                $url_arch_sql = !empty($rel_media_bandeja) ? ("'" . mysqli_real_escape_string($con, $rel_media_bandeja) . "'") : "NULL";
-                $cat_meta_esc = mysqli_real_escape_string($con, $camp_cat);
-                mysqli_query($con, "INSERT INTO mensajes_y_eventos 
-                    (id_conversacion, id_mensaje_meta, tipo, origen, id_agente, contenido, url_archivo, estado_envio, categoria_meta, es_pagado, costo_meta_estimado, timestamp) 
-                    VALUES ($id_conversacion, '$wamid', '$tipo_msg_bandeja', 'API_TRANSACCIONAL', $id_usuario, '$contenido_log_esc', $url_arch_sql, 'ENVIADO', '$cat_meta_esc', 1, $costo_unit, '$now_full')");
-                $new_cron_msg_id = intval(mysqli_insert_id($con));
-                if ($new_cron_msg_id > 0) {
-                    mysqli_query($con, "UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), $new_cron_msg_id) WHERE id = $id_conversacion AND ultimo_msg_id < $new_cron_msg_id");
+                $stmtInsEv = $con->prepare(
+                    'INSERT INTO mensajes_y_eventos
+                        (id_conversacion, id_mensaje_meta, tipo, origen, id_agente, contenido, url_archivo, estado_envio, categoria_meta, es_pagado, costo_meta_estimado, timestamp)
+                     VALUES (?, ?, ?, \'API_TRANSACCIONAL\', ?, ?, ?, \'ENVIADO\', ?, 1, ?, ?)'
+                );
+                if ($stmtInsEv) {
+                    $stmtInsEv->bind_param(
+                        'ississsds',
+                        $id_conversacion,
+                        $wamid_raw,
+                        $tipo_msg_bandeja,
+                        $id_usuario,
+                        $contenido_log,
+                        $rel_media_bandeja,
+                        $camp_cat,
+                        $costo_unit,
+                        $now_full
+                    );
+                    if (@$stmtInsEv->execute()) {
+                        $new_cron_msg_id = intval($stmtInsEv->insert_id);
+                        if ($new_cron_msg_id > 0) {
+                            $stmtSyncU = $con->prepare('UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), ?) WHERE id = ? AND IFNULL(ultimo_msg_id, 0) < ?');
+                            if ($stmtSyncU) {
+                                $stmtSyncU->bind_param('iii', $new_cron_msg_id, $id_conversacion, $new_cron_msg_id);
+                                @$stmtSyncU->execute();
+                                $stmtSyncU->close();
+                            }
+                        }
+                    }
+                    $stmtInsEv->close();
                 }
             }
 
-            mysqli_query($con, "UPDATE campanas_difusion_destinatarios 
-                                SET id_cliente = $id_cliente, id_conversacion = $id_conversacion, telefono = '$tel_esc', id_mensaje_meta = '$wamid', estado_envio = 'ENVIADO', costo_usd = $costo_unit, fecha_envio = NOW(), error_detalle = NULL
-                                WHERE id = $id_dest");
+            $stmtUpdDestOk = $con->prepare(
+                'UPDATE campanas_difusion_destinatarios
+                 SET id_cliente = ?, id_conversacion = ?, telefono = ?, id_mensaje_meta = ?, estado_envio = \'ENVIADO\', costo_usd = ?, fecha_envio = NOW(), error_detalle = NULL
+                 WHERE id = ?'
+            );
+            if ($stmtUpdDestOk) {
+                $stmtUpdDestOk->bind_param('iissdi', $id_cliente, $id_conversacion, $telefono_limpio, $wamid_raw, $costo_unit, $id_dest);
+                @$stmtUpdDestOk->execute();
+                $stmtUpdDestOk->close();
+            }
             $enviados_tanda++;
         } else {
-            $err_msg = mysqli_real_escape_string($con, $resp_data['error']['message'] ?? 'Error Meta API');
-            mysqli_query($con, "INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status)
-                                VALUES ('$template_name', '$fecha_hoy', '$hora_actual', '$phone_id', '$telefono_limpio', '$contenido_log_esc', 'ERROR')");
-            mysqli_query($con, "UPDATE campanas_difusion_destinatarios SET estado_envio = 'FALLIDO', error_detalle = '$err_msg', fecha_envio = NOW() WHERE id = $id_dest");
+            $err_msg = (string)($resp_data['error']['message'] ?? 'Error Meta API');
+            starfi_log_exception('campanas', 'Fallo de envío Meta API en cron piloto automático', [
+                'id_campana' => $id_campana,
+                'id_destinatario' => $id_dest,
+                'http_code' => $http_code,
+                'error' => $err_msg
+            ]);
+
+            $stmtNotifErr = $con->prepare(
+                'INSERT INTO notificacion_enviada (template, fecha, hora, telefono_emisor, telefono_receptor, contenido, status)
+                 VALUES (?, ?, ?, ?, ?, ?, \'ERROR\')'
+            );
+            if ($stmtNotifErr) {
+                $stmtNotifErr->bind_param('ssssss', $template_name, $fecha_hoy, $hora_actual, $phone_id, $telefono_limpio, $contenido_log);
+                @$stmtNotifErr->execute();
+                $stmtNotifErr->close();
+            }
+
+            $stmtUpdDestErr = $con->prepare('UPDATE campanas_difusion_destinatarios SET estado_envio = \'FALLIDO\', error_detalle = ?, fecha_envio = NOW() WHERE id = ?');
+            if ($stmtUpdDestErr) {
+                $stmtUpdDestErr->bind_param('si', $err_msg, $id_dest);
+                @$stmtUpdDestErr->execute();
+                $stmtUpdDestErr->close();
+            }
         }
 
         usleep($cad_ms * 1000);
     }
 
     recalcularCampanaCron($con, $id_campana);
-    $res_p = mysqli_query($con, "SELECT pendientes FROM campanas_difusion WHERE id = $id_campana LIMIT 1");
-    $pend = ($res_p && $rp = mysqli_fetch_assoc($res_p)) ? intval($rp['pendientes']) : 0;
-    $nuevo_est = ($pend > 0) ? 'PILOTO_AUTOMATICO' : 'COMPLETADA';
-    mysqli_query($con, "UPDATE campanas_difusion SET estado = '$nuevo_est', fecha_fin = NOW() WHERE id = $id_campana");
 
-    echo " - Tanda finalizada: {$enviados_tanda} enviados. Pendientes restantes: {$pend}.\n";
+    $pend = 0;
+    $stmtPend = $con->prepare('SELECT pendientes FROM campanas_difusion WHERE id = ? LIMIT 1');
+    if ($stmtPend) {
+        $stmtPend->bind_param('i', $id_campana);
+        if (@$stmtPend->execute()) {
+            $resPend = $stmtPend->get_result();
+            if ($resPend && ($rp = $resPend->fetch_assoc())) {
+                $pend = intval($rp['pendientes']);
+            }
+        }
+        $stmtPend->close();
+    }
+
+    $nuevo_est = ($pend > 0) ? 'PILOTO_AUTOMATICO' : 'COMPLETADA';
+    $stmtFinCamp = $con->prepare('UPDATE campanas_difusion SET estado = ?, fecha_fin = NOW() WHERE id = ?');
+    if ($stmtFinCamp) {
+        $stmtFinCamp->bind_param('si', $nuevo_est, $id_campana);
+        @$stmtFinCamp->execute();
+        $stmtFinCamp->close();
+    }
+
+    registrar_auditoria(
+        'campanas',
+        'EJECUTAR_TANDA_PILOTO_AUTOMATICO',
+        "Ejecución diaria de Piloto Automático en campaña #{$id_campana}: {$enviados_tanda} enviados, {$omitidos_antifatiga} omitidos por anti-fatiga, {$pend} pendientes",
+        [
+            'id_campana' => $id_campana,
+            'estado' => $camp_antes['estado'] ?? '',
+            'pendientes' => intval($camp_antes['pendientes'] ?? 0),
+            'enviados' => intval($camp_antes['enviados'] ?? 0)
+        ],
+        [
+            'id_campana' => $id_campana,
+            'estado' => $nuevo_est,
+            'enviados_tanda' => $enviados_tanda,
+            'omitidos_antifatiga_24h' => $omitidos_antifatiga,
+            'pendientes_restantes' => $pend
+        ],
+        $con,
+        $id_usuario,
+        $id_sede
+    );
+
+    echo " - Tanda finalizada: {$enviados_tanda} enviados, {$omitidos_antifatiga} omitidos por anti-fatiga 24h. Pendientes restantes: {$pend}.\n";
 }
 
 echo "Ejecución de Piloto Automático finalizada.\n";
-?>

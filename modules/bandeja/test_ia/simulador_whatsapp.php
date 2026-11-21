@@ -1,17 +1,17 @@
 <?php
 /**
- * database/tools/simulador_whatsapp.php
- * Herramienta CLI de simulación local de recepción de mensajes Meta (fuera de raíz web pública).
+ * modules/bandeja/test_ia/simulador_whatsapp.php
+ * Herramienta CLI de simulación local de recepción de mensajes Meta (encapsulada en /modules/bandeja/test_ia/).
  */
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit('CLI only');
 }
 
-require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../../config/database.php';
 
 $secret = defined('META_APP_SECRET') ? META_APP_SECRET : '';
-$url_webhook = 'http://localhost/starfi_crm/webhook.php';
+$url_webhook = getenv('STARFI_WEBHOOK_TEST_URL') ?: 'http://127.0.0.1/webhook.php';
 
 $payload = [
     'object' => 'whatsapp_business_account',
@@ -46,6 +46,8 @@ curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, $json_payload);
 curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
 $resp = curl_exec($ch);
 $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);

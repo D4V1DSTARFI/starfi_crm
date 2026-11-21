@@ -11,6 +11,7 @@ if (isset($_SESSION['agente_id'])) {
 }
 
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/audit.php';
 
 $error = '';
 if (isset($_GET['error']) && $_GET['error'] == 'expired') {
@@ -22,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     @ini_set('display_errors', '0');
     $email = $_POST['email'] ?? '';
     $password = $_POST['password'] ?? '';
+    $email_clean = strtolower(trim((string)$email));
 
     // Control básico anti-fuerza bruta por IP y sesión (máx. 8 fallos en 10 min)
     $client_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
@@ -35,17 +37,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ((int) $rl_data['count'] >= 8) {
+        registrar_auditoria(
+            'auth',
+            'LOGIN_BLOQUEO_RATELIMIT',
+            'Intento bloqueado por límite anti-fuerza bruta',
+            ['intentos_previos' => (int)$rl_data['count']],
+            ['usuario_intentado' => $email_clean, 'bloqueado' => true],
+            null,
+            0,
+            null
+        );
         $error = "Demasiados intentos fallidos. Por favor espere 10 minutos antes de volver a intentar.";
     } else {
         // Intentar conectar a la base de datos core
         $con = getDbConnection('core');
 
         if ($con) {
-            $email_clean = strtolower(trim($email));
             $user_found = false;
 
             // 1. Buscar en el sistema de usuarios registrados (tabla usuario)
-            $stmt_new = $con->prepare("SELECT u.id, u.usuario, up.nombre, u.contrasena, u.estado, r.nombre AS rol 
+            $stmt_new = $con->prepare("SELECT u.id, u.usuario, up.nombre, u.contrasena, u.estado, u.id_sede, r.nombre AS rol 
                                        FROM usuario u 
                                        LEFT JOIN usuario_perfil up ON u.id = up.id_usuario 
                                        LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
@@ -59,8 +70,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $user_found = true;
                     $estado_usr = strtoupper(trim((string) ($row_new['estado'] ?? 'INACTIVO')));
                     $hash_db = (string) ($row_new['contrasena'] ?? '');
+                    $uid_login = (int) $row_new['id'];
+                    $sede_login = !empty($row_new['id_sede']) ? (int)$row_new['id_sede'] : null;
 
                     if ($estado_usr !== 'ACTIVO') {
+                        registrar_auditoria(
+                            'auth',
+                            'LOGIN_CUENTA_INACTIVA',
+                            'Intento de acceso a cuenta no activa',
+                            ['estado' => $estado_usr],
+                            ['usuario' => $row_new['usuario'], 'acceso' => 'DENEGADO'],
+                            $con,
+                            $uid_login,
+                            $sede_login
+                        );
                         $stmt_new->close();
                         header("Location: login.php?state=inactive");
                         exit();
@@ -70,8 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $new_hash = password_hash($password, PASSWORD_BCRYPT);
                             $stmt_reh = $con->prepare("UPDATE usuario SET contrasena = ? WHERE id = ?");
                             if ($stmt_reh) {
-                                $uid_int = (int) $row_new['id'];
-                                $stmt_reh->bind_param("si", $new_hash, $uid_int);
+                                $stmt_reh->bind_param("si", $new_hash, $uid_login);
                                 $stmt_reh->execute();
                                 $stmt_reh->close();
                             }
@@ -81,18 +103,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         session_regenerate_id(true);
 
                         // Cargar sesión
-                        $_SESSION['agente_id'] = (int) $row_new['id'];
+                        $_SESSION['agente_id'] = $uid_login;
                         $_SESSION['nombre_completo'] = !empty($row_new['nombre']) ? $row_new['nombre'] : ($row_new['usuario'] ?? 'Usuario');
+                        $_SESSION['id_sede'] = $sede_login;
                         $_SESSION['last_activity'] = time();
                         $_SESSION['last_db_heartbeat'] = time();
                         require_once __DIR__ . '/core/crm_sprint2_helper.php';
-                        starfi_touch_agent_presence($con, intval($row_new['id']), true);
+                        starfi_touch_agent_presence($con, $uid_login, true);
+                        registrar_auditoria(
+                            'auth',
+                            'LOGIN_EXITOSO',
+                            'Inicio de sesión exitoso en STARFI CRM',
+                            ['intentos_fallidos_ip' => (int)$rl_data['count']],
+                            ['id_usuario' => $uid_login, 'usuario' => $row_new['usuario'], 'rol' => $row_new['rol'] ?? 'MASTER'],
+                            $con,
+                            $uid_login,
+                            $sede_login
+                        );
                         $stmt_new->close();
                         header("Location: index.php");
                         exit();
                     } else {
-                        $rl_data['count'] = (int) $rl_data['count'] + 1;
+                        $prev_cnt = (int) $rl_data['count'];
+                        $rl_data['count'] = $prev_cnt + 1;
                         @file_put_contents($rl_file, json_encode($rl_data));
+                        registrar_auditoria(
+                            'auth',
+                            'LOGIN_FALLIDO',
+                            'Contraseña incorrecta en inicio de sesión',
+                            ['intentos_fallidos_ip' => $prev_cnt],
+                            ['usuario' => $row_new['usuario'], 'intentos_fallidos_ip' => (int)$rl_data['count']],
+                            $con,
+                            $uid_login,
+                            $sede_login
+                        );
                         $error = "Credenciales inválidas. Inténtelo de nuevo.";
                     }
                 }
@@ -101,8 +145,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // 2. Si no se encontró en la tabla usuario
             if (!$user_found) {
-                $rl_data['count'] = (int) $rl_data['count'] + 1;
+                $prev_cnt = (int) $rl_data['count'];
+                $rl_data['count'] = $prev_cnt + 1;
                 @file_put_contents($rl_file, json_encode($rl_data));
+                registrar_auditoria(
+                    'auth',
+                    'LOGIN_FALLIDO',
+                    'Intento de inicio de sesión con usuario/correo inexistente',
+                    ['intentos_fallidos_ip' => $prev_cnt],
+                    ['usuario_intentado' => $email_clean, 'intentos_fallidos_ip' => (int)$rl_data['count']],
+                    $con,
+                    0,
+                    null
+                );
                 $error = "Credenciales inválidas. Inténtelo de nuevo.";
             }
         } else {
