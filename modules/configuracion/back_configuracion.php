@@ -1,14 +1,146 @@
 <?php
 @ini_set('display_errors', '0');
+header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../core/audit.php';
 requireAuth();
 requirePermission('configuracion');
-header('Content-Type: application/json; charset=utf-8');
+
+$agente = getAgenteInfo();
+$es_master = (intval($agente['id'] ?? 0) === 1 || strtoupper(trim((string)($agente['rol'] ?? ''))) === 'MASTER');
+$user_sede = intval($agente['id_sede'] ?? 0);
 
 $con = getDbConnection();
 $action = $_POST['action'] ?? '';
-$id_empresa = 1; // Prototipo: asumiendo empresa 1
+$id_empresa = 1;
+
+function cfg_deny_master_only() {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Operación reservada exclusivamente al rol MASTER.']);
+    exit;
+}
+
+function cfg_deny_sede_scope($message = 'Acceso denegado: no posee autorización sobre la sede solicitada.') {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => $message]);
+    exit;
+}
+
+function starfi_mask_secret($s) {
+    $str = trim((string)$s);
+    if ($str === '') {
+        return '';
+    }
+    if (strlen($str) <= 4) {
+        return '••••••••';
+    }
+    return '••••••••' . substr($str, -4);
+}
+
+function starfi_is_masked_or_empty_secret($s) {
+    $str = trim((string)$s);
+    if ($str === '') {
+        return true;
+    }
+    if (strpos($str, '••••') !== false || strpos($str, '****') !== false || strpos($str, '••') !== false) {
+        return true;
+    }
+    return false;
+}
+
+function cfg_sanitize_sede_row($row) {
+    if (!is_array($row)) {
+        return null;
+    }
+    $rawTok = trim((string)($row['api_token'] ?? ''));
+    $hasTok = ($rawTok !== '');
+    $masked = starfi_mask_secret($rawTok);
+    $row['has_token'] = $hasTok;
+    $row['api_token_masked'] = $masked;
+    $row['api_token'] = $masked;
+    return $row;
+}
+
+function cfg_sanitize_api_row($row) {
+    if (!is_array($row)) {
+        return null;
+    }
+    $rawTok = trim((string)($row['meta_token'] ?? ''));
+    $hasTok = ($rawTok !== '');
+    $masked = starfi_mask_secret($rawTok);
+    $row['has_token'] = $hasTok;
+    $row['meta_token_masked'] = $masked;
+    $row['meta_token'] = $masked;
+    return $row;
+}
+
+function ensureConfiguracionIaSchema($con) {
+    if (!$con) {
+        return;
+    }
+    if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
+        return;
+    }
+
+    $dbName = 'starfi_crm';
+    $stmtDb = $con->prepare("SELECT DATABASE() AS db_name");
+    if ($stmtDb && $stmtDb->execute()) {
+        $resDb = $stmtDb->get_result();
+        if ($resDb && ($rwDb = $resDb->fetch_assoc()) && !empty($rwDb['db_name'])) {
+            $dbName = (string)$rwDb['db_name'];
+        }
+        $stmtDb->close();
+    }
+
+    $flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_cfg_ia_schema_v3_' . md5($dbName) . '.flag';
+    if (@file_exists($flag)) {
+        return;
+    }
+
+    $colsIa = [];
+    $resColsIa = @$con->query("SHOW COLUMNS FROM `configuraciones_ia`");
+    if ($resColsIa) {
+        while ($c = $resColsIa->fetch_assoc()) {
+            $colsIa[$c['Field']] = true;
+        }
+        if (!isset($colsIa['direccion_sede'])) {
+            @$con->query("ALTER TABLE `configuraciones_ia` ADD COLUMN `direccion_sede` TEXT DEFAULT NULL");
+        }
+        if (!isset($colsIa['link_gps'])) {
+            @$con->query("ALTER TABLE `configuraciones_ia` ADD COLUMN `link_gps` TEXT DEFAULT NULL");
+        }
+    }
+
+    $colsSedes = [];
+    $resColsSedes = @$con->query("SHOW COLUMNS FROM `sedes`");
+    if ($resColsSedes) {
+        while ($c = $resColsSedes->fetch_assoc()) {
+            $colsSedes[$c['Field']] = true;
+        }
+        if (!isset($colsSedes['direccion'])) {
+            @$con->query("ALTER TABLE `sedes` ADD COLUMN `direccion` TEXT DEFAULT NULL");
+        }
+        if (!isset($colsSedes['link_gps'])) {
+            @$con->query("ALTER TABLE `sedes` ADD COLUMN `link_gps` TEXT DEFAULT NULL");
+        }
+    }
+
+    @file_put_contents($flag, date('Y-m-d H:i:s'));
+}
+
+function cfg_resolve_scoped_sede($es_master, $user_sede, $requested_sede) {
+    $req = intval($requested_sede);
+    if (!$es_master) {
+        if ($user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
+        if ($req > 0 && $req !== $user_sede) {
+            cfg_deny_sede_scope();
+        }
+        return $user_sede;
+    }
+    return $req;
+}
 
 function cfg_fetch_one($con, $sql, $types = '', $params = []) {
     if (!$con) return null;
@@ -108,8 +240,35 @@ function cfg_sync_ventas_wsap($legacy_id, $local_api, $activo_val) {
     mysqli_close($con_ventas);
 }
 
+function cfg_ensure_plantillas_whatsapp_table($con) {
+    if (!$con) {
+        return;
+    }
+    if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
+        return;
+    }
+    $chk = @$con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
+    if ($chk && $chk->num_rows > 0) {
+        return;
+    }
+    @$con->query("CREATE TABLE IF NOT EXISTS `plantillas_whatsapp` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `id_sede` int(11) NOT NULL,
+      `name` varchar(255) NOT NULL,
+      `category` varchar(100) NOT NULL,
+      `language` varchar(50) NOT NULL,
+      `status` varchar(100) NOT NULL,
+      `last_sync` datetime NOT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `sede_name` (`id_sede`,`name`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+}
+
 switch ($action) {
     case 'generate_api_token':
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
         $id_sede = intval($_POST['id_sede'] ?? 0);
         if ($id_sede <= 0) {
             echo json_encode(['status' => 'error', 'message' => 'Sede no válida']);
@@ -118,11 +277,16 @@ switch ($action) {
 
         try {
             $datos_anteriores = cfg_fetch_one($con, "SELECT id, nombre_sede, api_token FROM sedes WHERE id = ? AND id_empresa = ? LIMIT 1", "ii", [$id_sede, $id_empresa]);
+            if (!$datos_anteriores) {
+                echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada']);
+                exit;
+            }
             $token = bin2hex(random_bytes(32));
             $stmt = $con->prepare("UPDATE sedes SET api_token = ? WHERE id = ? AND id_empresa = ?");
             if ($stmt) {
                 $stmt->bind_param("sii", $token, $id_sede, $id_empresa);
                 if ($stmt->execute()) {
+                    $stmt->close();
                     registrar_auditoria(
                         'configuracion',
                         'GENERAR_API_TOKEN',
@@ -130,15 +294,20 @@ switch ($action) {
                         $datos_anteriores,
                         ['id_sede' => $id_sede, 'api_token' => $token],
                         $con,
-                        null,
+                        intval($agente['id'] ?? 0),
                         $id_sede
                     );
-                    echo json_encode(['status' => 'success', 'token' => $token]);
+                    echo json_encode([
+                        'status' => 'success',
+                        'token' => $token,
+                        'api_token_masked' => starfi_mask_secret($token),
+                        'has_token' => true
+                    ]);
                 } else {
                     starfi_log_exception('configuracion', 'Error ejecutando generate_api_token', ['id_sede' => $id_sede, 'sql_error' => $stmt->error]);
+                    $stmt->close();
                     echo json_encode(['status' => 'error', 'message' => 'Error al guardar el token']);
                 }
-                $stmt->close();
             } else {
                 starfi_log_exception('configuracion', 'Error preparando generate_api_token', ['sql_error' => $con->error]);
                 echo json_encode(['status' => 'error', 'message' => 'Error en la base de datos']);
@@ -151,8 +320,12 @@ switch ($action) {
 
     // --- GESTIÓN DE PLANTILLAS META ---
     case 'get_meta_templates':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
-        $chk_tbl = $con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
+        if ($id_sede <= 0) {
+            echo json_encode(['status' => 'success', 'data' => []]);
+            exit;
+        }
+        $chk_tbl = @$con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
         if ($chk_tbl && $chk_tbl->num_rows > 0) {
             $data = cfg_fetch_all($con, "SELECT name, category, language, status FROM plantillas_whatsapp WHERE id_sede = ? ORDER BY name ASC", "i", [$id_sede]);
             echo json_encode(['status' => 'success', 'data' => $data]);
@@ -162,7 +335,7 @@ switch ($action) {
         break;
 
     case 'sync_meta_templates':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $row = cfg_fetch_one($con, "SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
         if ($row) {
             if (empty($row['id_negocio'])) {
@@ -170,25 +343,15 @@ switch ($action) {
                 exit;
             }
 
-            $con->query("CREATE TABLE IF NOT EXISTS `plantillas_whatsapp` (
-              `id` int(11) NOT NULL AUTO_INCREMENT,
-              `id_sede` int(11) NOT NULL,
-              `name` varchar(255) NOT NULL,
-              `category` varchar(100) NOT NULL,
-              `language` varchar(50) NOT NULL,
-              `status` varchar(100) NOT NULL,
-              `last_sync` datetime NOT NULL,
-              PRIMARY KEY (`id`),
-              UNIQUE KEY `sede_name` (`id_sede`,`name`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
+            cfg_ensure_plantillas_whatsapp_table($con);
             $prev_tpls = cfg_fetch_all($con, "SELECT name, status FROM plantillas_whatsapp WHERE id_sede = ?", "i", [$id_sede]);
 
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
             $curl = curl_init();
             curl_setopt($curl, CURLOPT_URL, $url);
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -249,7 +412,7 @@ switch ($action) {
         break;
 
     case 'create_meta_template':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $name = trim((string)($_POST['name'] ?? ''));
         $category = trim((string)($_POST['category'] ?? ''));
         $language = trim((string)($_POST['language'] ?? 'es'));
@@ -262,7 +425,8 @@ switch ($action) {
                 exit;
             }
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
             $payload = [
                 "name" => $name,
                 "language" => $language,
@@ -279,7 +443,7 @@ switch ($action) {
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_POST, true);
             curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -308,7 +472,7 @@ switch ($action) {
         break;
 
     case 'create_csat_template':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $name = 'starfi_csat_survey';
         $category = 'UTILITY';
         $language = 'es';
@@ -321,7 +485,8 @@ switch ($action) {
                 exit;
             }
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
             $payload = [
                 "name" => $name,
                 "language" => $language,
@@ -338,7 +503,7 @@ switch ($action) {
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_POST, true);
             curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -367,7 +532,7 @@ switch ($action) {
         break;
 
     case 'create_internal_notification_template':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $name = 'starfi_notificacion_interna';
         $category = 'UTILITY';
         $language = 'es';
@@ -380,7 +545,8 @@ switch ($action) {
                 exit;
             }
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
             $payload = [
                 "name" => $name,
                 "language" => $language,
@@ -402,7 +568,7 @@ switch ($action) {
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_POST, true);
             curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -432,7 +598,7 @@ switch ($action) {
         break;
 
     case 'create_broadcast_template':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $name = 'starfi_difusion_directa';
         $category = 'MARKETING';
         $language = 'es';
@@ -446,7 +612,8 @@ switch ($action) {
                 exit;
             }
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates";
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
             $payload = [
                 "name" => $name,
                 "language" => $language,
@@ -476,7 +643,7 @@ switch ($action) {
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_POST, true);
             curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN, "Content-Type: application/json"]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -506,18 +673,19 @@ switch ($action) {
         break;
 
     case 'delete_meta_template':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $name = trim((string)($_POST['name'] ?? ''));
 
         $row = cfg_fetch_one($con, "SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
         if ($row) {
             $waba_id = $row['id_negocio'];
-            $url = "https://graph.facebook.com/v23.0/$waba_id/message_templates?name=" . rawurlencode($name);
+            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
+            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates?name=" . rawurlencode($name);
 
             $curl = curl_init();
             curl_setopt($curl, CURLOPT_URL, $url);
             curl_setopt($curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . META_GLOBAL_TOKEN]);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '')]);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
             curl_setopt($curl, CURLOPT_TIMEOUT, 8);
@@ -526,7 +694,7 @@ switch ($action) {
             curl_close($curl);
 
             if (isset($resp['success']) && $resp['success'] == true) {
-                $chk_tbl = $con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
+                $chk_tbl = @$con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
                 if ($chk_tbl && $chk_tbl->num_rows > 0) {
                     $stmt_del_t = $con->prepare("DELETE FROM plantillas_whatsapp WHERE id_sede = ? AND name = ?");
                     if ($stmt_del_t) {
@@ -556,22 +724,43 @@ switch ($action) {
 
     // --- GESTIÓN DE SEDES ---
     case 'load_sedes':
-        $rows = cfg_fetch_all(
-            $con,
-            "SELECT s.*, (SELECT COUNT(*) FROM lineas_whatsapp l WHERE l.id_sede = s.id) AS total_apis FROM sedes s WHERE s.id_empresa = ? ORDER BY s.id DESC",
-            "i",
-            [$id_empresa]
-        );
+    case 'list_sedes':
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+            }
+            $rows = cfg_fetch_all(
+                $con,
+                "SELECT s.*, (SELECT COUNT(*) FROM lineas_whatsapp l WHERE l.id_sede = s.id) AS total_apis FROM sedes s WHERE s.id_empresa = ? AND s.id = ? ORDER BY s.id DESC",
+                "ii",
+                [$id_empresa, $user_sede]
+            );
+        } else {
+            $rows = cfg_fetch_all(
+                $con,
+                "SELECT s.*, (SELECT COUNT(*) FROM lineas_whatsapp l WHERE l.id_sede = s.id) AS total_apis FROM sedes s WHERE s.id_empresa = ? ORDER BY s.id DESC",
+                "i",
+                [$id_empresa]
+            );
+        }
         $data = [];
         foreach ($rows as $row) {
             $row['tiene_api'] = (intval($row['total_apis']) > 0);
-            $data[] = $row;
+            $data[] = cfg_sanitize_sede_row($row);
         }
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
     case 'save_sede':
         $id_sede_raw = trim((string)($_POST['id_sede'] ?? ''));
+        $id_sede_num = ($id_sede_raw === '') ? 0 : intval($id_sede_raw);
+
+        if (!$es_master) {
+            if ($id_sede_num <= 0 || $user_sede <= 0 || $id_sede_num !== $user_sede) {
+                cfg_deny_master_only();
+            }
+        }
+
         $razon_social = trim((string)($_POST['razon_social'] ?? ''));
         $rif = trim((string)($_POST['rif'] ?? ''));
         $telefono = trim((string)($_POST['telefono'] ?? ''));
@@ -589,7 +778,7 @@ switch ($action) {
             exit;
         }
 
-        if ($id_sede_raw === '') {
+        if ($id_sede_num <= 0) {
             $stmt = $con->prepare("INSERT INTO sedes (id_empresa, nombre_sede, rif, telefono, email, direccion, ciudad, estado_loc, codigo_postal, tipo_sede, observaciones, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             if (!$stmt) {
                 starfi_log_exception('configuracion', 'Error preparando INSERT sedes', ['sql_error' => $con->error]);
@@ -655,8 +844,12 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Error al crear la sede.']);
             }
         } else {
-            $id_sede = intval($id_sede_raw);
+            $id_sede = $id_sede_num;
             $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM sedes WHERE id = ? AND id_empresa = ? LIMIT 1", "ii", [$id_sede, $id_empresa]);
+            if (!$datos_anteriores) {
+                echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada.']);
+                exit;
+            }
 
             $stmt = $con->prepare("UPDATE sedes SET nombre_sede=?, rif=?, telefono=?, email=?, direccion=?, ciudad=?, estado_loc=?, codigo_postal=?, tipo_sede=?, observaciones=?, estado=? WHERE id=? AND id_empresa=?");
             if (!$stmt) {
@@ -728,17 +921,25 @@ switch ($action) {
         break;
 
     case 'get_sede':
-        $id = intval($_POST['id'] ?? 0);
+        $id = intval($_POST['id'] ?? $_POST['id_sede'] ?? 0);
+        if (!$es_master) {
+            if ($user_sede <= 0 || $id !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
+        }
         $row = cfg_fetch_one($con, "SELECT * FROM sedes WHERE id = ? AND id_empresa = ? LIMIT 1", "ii", [$id, $id_empresa]);
         if ($row) {
-            echo json_encode(['status' => 'success', 'data' => $row]);
+            echo json_encode(['status' => 'success', 'data' => cfg_sanitize_sede_row($row)]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Sede no encontrada.']);
         }
         break;
 
     case 'delete_sede':
-        $id = intval($_POST['id'] ?? 0);
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
+        $id = intval($_POST['id'] ?? $_POST['id_sede'] ?? 0);
         $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM sedes WHERE id = ? AND id_empresa = ? LIMIT 1", "ii", [$id, $id_empresa]);
 
         $stmt_del_l = $con->prepare("DELETE FROM lineas_whatsapp WHERE id_sede = ?");
@@ -777,6 +978,9 @@ switch ($action) {
 
     // --- GESTIÓN DE APIS (META GRAPH) ---
     case 'fetch_meta_apis':
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
         $waba_id = trim($_POST['waba_id'] ?? '');
         $token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
 
@@ -811,6 +1015,9 @@ switch ($action) {
         break;
 
     case 'register_meta_phone':
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
         $phone_id = trim($_POST['phone_id'] ?? '');
         $token = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
         $pin = trim($_POST['pin'] ?? '');
@@ -860,33 +1067,74 @@ switch ($action) {
 
     // --- GESTIÓN DE APIS (LOCALES) ---
     case 'load_apis':
-        $data = cfg_fetch_all(
-            $con,
-            "SELECT l.*, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = ?",
-            "i",
-            [$id_empresa]
-        );
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+            }
+            $rows = cfg_fetch_all(
+                $con,
+                "SELECT l.*, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = ? AND l.id_sede = ?",
+                "ii",
+                [$id_empresa, $user_sede]
+            );
+        } else {
+            $rows = cfg_fetch_all(
+                $con,
+                "SELECT l.*, s.nombre_sede FROM lineas_whatsapp l LEFT JOIN sedes s ON l.id_sede = s.id WHERE s.id_empresa = ?",
+                "i",
+                [$id_empresa]
+            );
+        }
+        $data = [];
+        foreach ($rows as $r) {
+            $data[] = cfg_sanitize_api_row($r);
+        }
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
     case 'save_api':
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
         $id_api_raw = trim((string)($_POST['id_api'] ?? ''));
+        $id_api_num = ($id_api_raw === '') ? 0 : intval($id_api_raw);
         $id_sede = intval($_POST['id_sede'] ?? 0);
         $descripcion = trim((string)($_POST['descripcion'] ?? ''));
         $telefono = preg_replace('/[^0-9]/', '', $_POST['telefono'] ?? '');
         $telefono_meta = trim((string)($_POST['telefono_meta'] ?? ''));
-        $token_meta = defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '';
+        $submitted_meta_token = trim((string)($_POST['meta_token'] ?? $_POST['api_token_meta'] ?? ''));
         $id_negocio = trim((string)($_POST['id_negocio'] ?? ''));
         $estado = trim((string)($_POST['estado'] ?? 'ACTIVO'));
         $limite_solicitudes = intval(!empty($_POST['limite_solicitudes']) ? $_POST['limite_solicitudes'] : 1000);
         $observaciones = trim((string)($_POST['observaciones'] ?? ''));
 
+        $datos_anteriores = null;
+        if ($id_api_num > 0) {
+            $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api_num]);
+            if (!$datos_anteriores) {
+                echo json_encode(['status' => 'error', 'message' => 'API no encontrada.']);
+                exit;
+            }
+            if (starfi_is_masked_or_empty_secret($submitted_meta_token)) {
+                $existing_tok = trim((string)($datos_anteriores['meta_token'] ?? ''));
+                $token_meta = ($existing_tok !== '') ? $existing_tok : (defined('META_GLOBAL_TOKEN') ? trim((string)META_GLOBAL_TOKEN) : '');
+            } else {
+                $token_meta = $submitted_meta_token;
+            }
+        } else {
+            if (starfi_is_masked_or_empty_secret($submitted_meta_token)) {
+                $token_meta = defined('META_GLOBAL_TOKEN') ? trim((string)META_GLOBAL_TOKEN) : '';
+            } else {
+                $token_meta = $submitted_meta_token;
+            }
+        }
+
         if ($id_sede <= 0 || $descripcion === '' || $telefono === '' || $telefono_meta === '' || $token_meta === '') {
-            echo json_encode(['status' => 'error', 'message' => 'Campos obligatorios incompletos o el Token Global no está configurado en database.php.']);
+            echo json_encode(['status' => 'error', 'message' => 'Campos obligatorios incompletos o el Token de Meta no está configurado.']);
             exit;
         }
 
-        if ($id_api_raw === '') {
+        if ($id_api_num <= 0) {
             $stmt = $con->prepare("INSERT INTO lineas_whatsapp (id_sede, descripcion, numero_telefono, meta_app_id, meta_token, id_negocio, estado_conexion, limite_solicitudes, observaciones, estado) VALUES (?, ?, ?, ?, ?, ?, 'CONECTADO', ?, ?, ?)");
             if (!$stmt) {
                 starfi_log_exception('configuracion', 'Error preparando INSERT lineas_whatsapp', ['sql_error' => $con->error]);
@@ -933,9 +1181,7 @@ switch ($action) {
                 echo json_encode(['status' => 'error', 'message' => 'Error al registrar API.']);
             }
         } else {
-            $id_api = intval($id_api_raw);
-            $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api]);
-
+            $id_api = $id_api_num;
             $stmt = $con->prepare("UPDATE lineas_whatsapp SET id_sede=?, descripcion=?, numero_telefono=?, meta_app_id=?, meta_token=?, id_negocio=?, limite_solicitudes=?, observaciones=?, estado=? WHERE id=?");
             if (!$stmt) {
                 starfi_log_exception('configuracion', 'Error preparando UPDATE lineas_whatsapp', ['sql_error' => $con->error]);
@@ -984,23 +1230,32 @@ switch ($action) {
         break;
 
     case 'get_api_by_sede':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $row = cfg_fetch_one($con, "SELECT * FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
-        echo json_encode(['status' => 'success', 'data' => $row]);
+        echo json_encode(['status' => 'success', 'data' => cfg_sanitize_api_row($row)]);
         break;
 
     case 'get_api_by_id':
-        $id_api = intval($_POST['id_api'] ?? 0);
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
+        $id_api = intval($_POST['id_api'] ?? $_POST['id'] ?? 0);
         $row = cfg_fetch_one($con, "SELECT * FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api]);
         if ($row) {
-            echo json_encode(['status' => 'success', 'data' => $row]);
+            if (!$es_master && intval($row['id_sede'] ?? 0) !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
+            echo json_encode(['status' => 'success', 'data' => cfg_sanitize_api_row($row)]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'API no encontrada.']);
         }
         break;
 
     case 'delete_api':
-        $id_api = intval($_POST['id'] ?? 0);
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
+        $id_api = intval($_POST['id'] ?? $_POST['id_api'] ?? 0);
         $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api]);
         $stmt = $con->prepare("DELETE FROM lineas_whatsapp WHERE id = ?");
         if ($stmt) {
@@ -1030,6 +1285,9 @@ switch ($action) {
         break;
 
     case 'toggle_api_estado':
+        if (!$es_master) {
+            cfg_deny_master_only();
+        }
         $id_api = intval($_POST['id_api'] ?? 0);
         $nuevo_estado = trim((string)($_POST['nuevo_estado'] ?? ''));
 
@@ -1083,6 +1341,9 @@ switch ($action) {
         break;
 
     case 'test_api':
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
         $id_api = intval($_POST['id_api'] ?? 0);
         $numero = trim((string)($_POST['numero'] ?? ''));
         $mensaje = trim((string)($_POST['mensaje'] ?? ''));
@@ -1092,10 +1353,13 @@ switch ($action) {
             exit;
         }
 
-        $row = cfg_fetch_one($con, "SELECT meta_app_id, meta_token FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api]);
+        $row = cfg_fetch_one($con, "SELECT id_sede, meta_app_id, meta_token FROM lineas_whatsapp WHERE id = ? LIMIT 1", "i", [$id_api]);
         if ($row) {
+            if (!$es_master && intval($row['id_sede'] ?? 0) !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
             $telefono_meta = $row['meta_app_id'];
-            $token_meta = $row['meta_token'] ?? (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
+            $token_meta = !empty($row['meta_token']) ? $row['meta_token'] : (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : '');
 
             $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
             $url = "https://graph.facebook.com/{$api_ver_cfg}/{$telefono_meta}/messages";
@@ -1137,93 +1401,79 @@ switch ($action) {
         }
         break;
 
-    // --- OTROS ---
+    // --- LISTADOS AUXILIARES DE SEDES ---
     case 'load_users':
-        $data = cfg_fetch_all(
-            $con,
-            "SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre, r.nombre AS rol,
-                    (SELECT nombre_sede FROM sedes WHERE id = u.id_empresa LIMIT 1) AS sede,
-                    u.limite_chats_simultaneos AS limite
-             FROM usuario u
-             LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
-             LEFT JOIN roles r ON u.rol = r.id
-             WHERE u.id_empresa = ? AND u.estado = 'ACTIVO'",
-            "i",
-            [$id_empresa]
-        );
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+            }
+            $data = cfg_fetch_all(
+                $con,
+                "SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre, r.nombre AS rol,
+                        (SELECT nombre_sede FROM sedes WHERE id = u.id_sede LIMIT 1) AS sede,
+                        u.limite_chats_simultaneos AS limite
+                 FROM usuario u
+                 LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
+                 LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
+                 WHERE u.id_empresa = ? AND u.id_sede = ? AND u.estado = 'ACTIVO'",
+                "ii",
+                [$id_empresa, $user_sede]
+            );
+        } else {
+            $data = cfg_fetch_all(
+                $con,
+                "SELECT u.id, COALESCE(up.nombre, u.usuario) AS nombre, r.nombre AS rol,
+                        (SELECT nombre_sede FROM sedes WHERE id = u.id_sede LIMIT 1) AS sede,
+                        u.limite_chats_simultaneos AS limite
+                 FROM usuario u
+                 LEFT JOIN usuario_perfil up ON u.id = up.id_usuario
+                 LEFT JOIN roles r ON CAST(u.rol AS UNSIGNED) = r.id
+                 WHERE u.id_empresa = ? AND u.estado = 'ACTIVO'",
+                "i",
+                [$id_empresa]
+            );
+        }
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
-    case 'add_user':
-        $nombre = trim((string)($_POST['nombre'] ?? ''));
-        $email = trim((string)($_POST['email'] ?? ''));
-        $password = password_hash($_POST['password'] ?? '123456', PASSWORD_DEFAULT);
-        $rol_name = trim((string)($_POST['rol'] ?? 'OPERADOR'));
-        $limite = intval($_POST['limite'] ?? 5);
-
-        if ($nombre === '' || $email === '') {
-            echo json_encode(['status' => 'error', 'message' => 'Nombre y email son obligatorios.']);
-            exit;
-        }
-
-        $row_rol = cfg_fetch_one($con, "SELECT id FROM roles WHERE nombre = ? LIMIT 1", "s", [$rol_name]);
-        $rol_id = $row_rol ? intval($row_rol['id']) : 3;
-
-        $usuario_str = strstr($email, '@', true) ?: $nombre;
-        $stmt = $con->prepare("INSERT INTO usuario (usuario, contrasena, estado, rol, id_empresa, limite_chats_simultaneos) VALUES (?, ?, 'ACTIVO', ?, ?, ?)");
-        if ($stmt) {
-            $stmt->bind_param("ssiii", $usuario_str, $password, $rol_id, $id_empresa, $limite);
-            if ($stmt->execute()) {
-                $new_uid = intval($stmt->insert_id);
-                $stmt->close();
-
-                $stmt_p = $con->prepare("INSERT INTO usuario_perfil (id_usuario, nombre, correo) VALUES (?, ?, ?)");
-                if ($stmt_p) {
-                    $stmt_p->bind_param("iss", $new_uid, $nombre, $email);
-                    $stmt_p->execute();
-                    $stmt_p->close();
-                }
-
-                registrar_auditoria(
-                    'configuracion',
-                    'CREAR_OPERADOR',
-                    "Operador creado: $nombre ($email)",
-                    null,
-                    ['id_usuario' => $new_uid, 'usuario' => $usuario_str, 'nombre' => $nombre, 'email' => $email, 'rol_id' => $rol_id, 'limite' => $limite],
-                    $con
-                );
-
-                echo json_encode(['status' => 'success', 'message' => 'Operador creado correctamente.']);
-            } else {
-                starfi_log_exception('configuracion', 'Error ejecutando add_user', ['usuario' => $usuario_str, 'sql_error' => $stmt->error]);
-                $stmt->close();
-                echo json_encode(['status' => 'error', 'message' => 'El usuario o correo electrónico ya está registrado.']);
-            }
-        } else {
-            starfi_log_exception('configuracion', 'Error preparando add_user', ['sql_error' => $con->error]);
-            echo json_encode(['status' => 'error', 'message' => 'Error interno al crear el operador.']);
-        }
-        break;
-
     case 'get_sedes_list':
-        $data = cfg_fetch_all($con, "SELECT id, nombre_sede FROM sedes WHERE id_empresa = ? AND estado = 'ACTIVO'", "i", [$id_empresa]);
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+            }
+            $data = cfg_fetch_all($con, "SELECT id, nombre_sede FROM sedes WHERE id_empresa = ? AND id = ? AND estado = 'ACTIVO'", "ii", [$id_empresa, $user_sede]);
+        } else {
+            $data = cfg_fetch_all($con, "SELECT id, nombre_sede FROM sedes WHERE id_empresa = ? AND estado = 'ACTIVO'", "i", [$id_empresa]);
+        }
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
     // --- GESTIÓN DE RESPUESTAS RÁPIDAS ---
     case 'load_respuestas_rapidas':
-        $data = cfg_fetch_all(
-            $con,
-            "SELECT r.*, s.nombre_sede FROM respuestas_rapidas r LEFT JOIN sedes s ON r.id_sede = s.id WHERE s.id_empresa = ? ORDER BY r.id DESC",
-            "i",
-            [$id_empresa]
-        );
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+            }
+            $data = cfg_fetch_all(
+                $con,
+                "SELECT r.*, s.nombre_sede FROM respuestas_rapidas r LEFT JOIN sedes s ON r.id_sede = s.id WHERE s.id_empresa = ? AND r.id_sede = ? ORDER BY r.id DESC",
+                "ii",
+                [$id_empresa, $user_sede]
+            );
+        } else {
+            $data = cfg_fetch_all(
+                $con,
+                "SELECT r.*, s.nombre_sede FROM respuestas_rapidas r LEFT JOIN sedes s ON r.id_sede = s.id WHERE s.id_empresa = ? ORDER BY r.id DESC",
+                "i",
+                [$id_empresa]
+            );
+        }
         echo json_encode(['status' => 'success', 'data' => $data]);
         break;
 
     case 'save_respuesta_rapida':
         $id_respuesta_raw = trim((string)($_POST['id_respuesta'] ?? ''));
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $titulo = trim((string)($_POST['titulo'] ?? ''));
         $mensaje = trim((string)($_POST['mensaje'] ?? ''));
 
@@ -1262,6 +1512,13 @@ switch ($action) {
         } else {
             $id_respuesta = intval($id_respuesta_raw);
             $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM respuestas_rapidas WHERE id = ? LIMIT 1", "i", [$id_respuesta]);
+            if (!$datos_anteriores) {
+                echo json_encode(['status' => 'error', 'message' => 'Respuesta no encontrada.']);
+                exit;
+            }
+            if (!$es_master && intval($datos_anteriores['id_sede'] ?? 0) !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
             $stmt = $con->prepare("UPDATE respuestas_rapidas SET id_sede=?, titulo=?, mensaje=? WHERE id=?");
             if ($stmt) {
                 $stmt->bind_param("issi", $id_sede, $titulo, $mensaje, $id_respuesta);
@@ -1291,9 +1548,15 @@ switch ($action) {
         break;
 
     case 'get_respuesta_rapida':
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
         $id_respuesta = intval($_POST['id'] ?? 0);
         $row = cfg_fetch_one($con, "SELECT * FROM respuestas_rapidas WHERE id = ? LIMIT 1", "i", [$id_respuesta]);
         if ($row) {
+            if (!$es_master && intval($row['id_sede'] ?? 0) !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
             echo json_encode(['status' => 'success', 'data' => $row]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Respuesta no encontrada.']);
@@ -1301,8 +1564,18 @@ switch ($action) {
         break;
 
     case 'delete_respuesta_rapida':
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
         $id_respuesta = intval($_POST['id'] ?? 0);
         $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM respuestas_rapidas WHERE id = ? LIMIT 1", "i", [$id_respuesta]);
+        if (!$datos_anteriores) {
+            echo json_encode(['status' => 'error', 'message' => 'Respuesta no encontrada.']);
+            exit;
+        }
+        if (!$es_master && intval($datos_anteriores['id_sede'] ?? 0) !== $user_sede) {
+            cfg_deny_sede_scope();
+        }
         $stmt = $con->prepare("DELETE FROM respuestas_rapidas WHERE id = ?");
         if ($stmt) {
             $stmt->bind_param("i", $id_respuesta);
@@ -1332,16 +1605,13 @@ switch ($action) {
 
     // --- CONFIGURACIÓN GEMA AI MULTI-SEDE ---
     case 'save_gema':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         if ($id_sede <= 0) {
             echo json_encode(['status' => 'error', 'message' => 'Debe seleccionar una Sede válida.']);
             exit;
         }
 
-        @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS direccion_sede TEXT DEFAULT NULL");
-        @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
-        @mysqli_query($con, "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS direccion TEXT DEFAULT NULL");
-        @mysqli_query($con, "ALTER TABLE sedes ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
+        ensureConfiguracionIaSchema($con);
 
         $datos_anteriores = cfg_fetch_one($con, "SELECT * FROM configuraciones_ia WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
 
@@ -1349,9 +1619,21 @@ switch ($action) {
         $direccion_sede = trim($_POST['direccion_sede'] ?? $_POST['direccion'] ?? '');
         $link_gps = trim($_POST['link_gps'] ?? $_POST['gps'] ?? '');
         $agente_instrucciones = trim($_POST['agente_instrucciones'] ?? $_POST['prompt'] ?? '');
-        $gemini_api_key = trim($_POST['gemini_api_key'] ?? $_POST['token'] ?? '');
+        $submitted_key = trim($_POST['gemini_api_key'] ?? $_POST['token'] ?? '');
         $modelo_ia = trim($_POST['modelo_ia'] ?? 'gemma-2-9b-it');
         $temperatura = floatval($_POST['temperatura'] ?? 0.4);
+
+        if (starfi_is_masked_or_empty_secret($submitted_key)) {
+            $existing_key = trim((string)($datos_anteriores['gemini_api_key'] ?? ''));
+            if ($existing_key !== '') {
+                $gemini_api_key = $existing_key;
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Debe ingresar una Gemini API Key válida para configurar el asistente de esta sede.']);
+                exit;
+            }
+        } else {
+            $gemini_api_key = $submitted_key;
+        }
 
         $estado_raw = $_POST['estado_ia'] ?? $_POST['estado'] ?? 'ACTIVO';
         $estado_ia = ($estado_raw === 'ACTIVO' || $estado_raw === '1' || $estado_raw === 1) ? 'ACTIVO' : 'INACTIVO';
@@ -1373,6 +1655,7 @@ switch ($action) {
         if ($stmt) {
             $stmt->bind_param("iissssssds", $id_empresa, $id_sede, $agente_nombre, $direccion_sede, $link_gps, $agente_instrucciones, $gemini_api_key, $modelo_ia, $temperatura, $estado_ia);
             if ($stmt->execute()) {
+                $stmt->close();
                 $bot_val = ($estado_ia === 'ACTIVO') ? 1 : 0;
                 $stmt_s = $con->prepare("UPDATE sedes SET bot_activo = ?, direccion = ?, link_gps = ? WHERE id = ?");
                 if ($stmt_s) {
@@ -1401,12 +1684,17 @@ switch ($action) {
                     $id_sede
                 );
 
-                echo json_encode(['status' => 'success', 'message' => 'Configuración de Asistente IA guardada correctamente para la sede.']);
+                echo json_encode([
+                    'status' => 'success',
+                    'message' => 'Configuración de Asistente IA guardada correctamente para la sede.',
+                    'has_api_key' => true,
+                    'gemini_api_key_masked' => starfi_mask_secret($gemini_api_key)
+                ]);
             } else {
                 starfi_log_exception('configuracion', 'Error ejecutando save_gema', ['id_sede' => $id_sede, 'sql_error' => $stmt->error]);
+                $stmt->close();
                 echo json_encode(['status' => 'error', 'message' => 'Error al guardar la configuración en la base de datos.']);
             }
-            $stmt->close();
         } else {
             starfi_log_exception('configuracion', 'Error preparando save_gema', ['id_sede' => $id_sede, 'sql_error' => $con->error]);
             echo json_encode(['status' => 'error', 'message' => 'Error al preparar la consulta en la base de datos.']);
@@ -1414,9 +1702,9 @@ switch ($action) {
         break;
 
     case 'load_gema':
-        $id_sede = intval($_POST['id_sede'] ?? 0);
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
 
-        if ($id_sede <= 0) {
+        if ($id_sede <= 0 && $es_master) {
             $row_f = cfg_fetch_one($con, "SELECT id FROM sedes WHERE id_empresa = ? AND estado = 'ACTIVO' LIMIT 1", "i", [$id_empresa]);
             if ($row_f) {
                 $id_sede = intval($row_f['id']);
@@ -1424,8 +1712,7 @@ switch ($action) {
         }
 
         if ($id_sede > 0) {
-            @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS direccion_sede TEXT DEFAULT NULL");
-            @mysqli_query($con, "ALTER TABLE configuraciones_ia ADD COLUMN IF NOT EXISTS link_gps TEXT DEFAULT NULL");
+            ensureConfiguracionIaSchema($con);
             $row = cfg_fetch_one(
                 $con,
                 "SELECT c.*, s.direccion AS sede_direccion, s.link_gps AS sede_link_gps FROM configuraciones_ia c LEFT JOIN sedes s ON c.id_sede = s.id WHERE c.id_sede = ? LIMIT 1",
@@ -1433,6 +1720,10 @@ switch ($action) {
                 [$id_sede]
             );
             if ($row) {
+                $rawKey = trim((string)($row['gemini_api_key'] ?? ''));
+                $hasKey = ($rawKey !== '');
+                $maskedKey = starfi_mask_secret($rawKey);
+
                 echo json_encode([
                     'status' => 'success',
                     'id_sede' => $id_sede,
@@ -1442,7 +1733,11 @@ switch ($action) {
                         'direccion_sede' => $row['direccion_sede'] ?? $row['sede_direccion'] ?? '',
                         'link_gps' => $row['link_gps'] ?? $row['sede_link_gps'] ?? '',
                         'prompt' => $row['agente_instrucciones'],
-                        'token' => $row['gemini_api_key'],
+                        'token' => $maskedKey,
+                        'gemini_api_key' => $maskedKey,
+                        'gemini_api_key_masked' => $maskedKey,
+                        'has_api_key' => $hasKey,
+                        'has_token' => $hasKey,
                         'modelo_ia' => $row['modelo_ia'] ?? 'gemma-2-9b-it',
                         'temperatura' => floatval($row['temperatura'] ?? 0.4),
                         'estado' => ($row['estado_ia'] === 'ACTIVO') ? 1 : 0,
@@ -1461,6 +1756,10 @@ switch ($action) {
                 'nombre' => 'Gema',
                 'prompt' => 'Eres Gema, la asistente virtual inteligente de STARFI CRM...',
                 'token' => '',
+                'gemini_api_key' => '',
+                'gemini_api_key_masked' => '',
+                'has_api_key' => false,
+                'has_token' => false,
                 'modelo_ia' => 'gemma-2-9b-it',
                 'temperatura' => 0.4,
                 'estado' => 1,
@@ -1471,12 +1770,22 @@ switch ($action) {
 
     case 'test_gema_connection':
         require_once __DIR__ . '/../../core/IaConnector.php';
-        $apiKey = trim($_POST['token'] ?? $_POST['gemini_api_key'] ?? '');
-        $modelo = trim($_POST['modelo_ia'] ?? 'gemma-2-9b-it');
-        $nombre = trim($_POST['nombre'] ?? $_POST['agente_nombre'] ?? 'Gema');
+        $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
+        $apiKey = trim((string)($_POST['api_key'] ?? $_POST['gemini_api_key'] ?? $_POST['token'] ?? ''));
+        $modelo = trim((string)($_POST['modelo_ia'] ?? 'gemma-2-9b-it'));
+        $nombre = trim((string)($_POST['nombre'] ?? $_POST['agente_nombre'] ?? 'Gema'));
         $temperatura = floatval($_POST['temperatura'] ?? 0.4);
 
-        if (empty($apiKey)) {
+        if (starfi_is_masked_or_empty_secret($apiKey)) {
+            if ($id_sede > 0) {
+                $stored = cfg_fetch_one($con, "SELECT gemini_api_key FROM configuraciones_ia WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
+                $apiKey = trim((string)($stored['gemini_api_key'] ?? ''));
+            } else {
+                $apiKey = '';
+            }
+        }
+
+        if ($apiKey === '') {
             echo json_encode(['status' => 'error', 'message' => 'Por favor introduce una Gemini API Key para realizar la prueba.']);
             exit;
         }
@@ -1506,7 +1815,7 @@ switch ($action) {
             $diagnostico['database'] = ['status' => 'ok', 'message' => 'Conexión a la base de datos exitosa.'];
 
             $existing_tables = [];
-            $res_all_tables = $con->query("SHOW TABLES");
+            $res_all_tables = @$con->query("SHOW TABLES");
             if ($res_all_tables) {
                 while ($rt = $res_all_tables->fetch_row()) {
                     if (!empty($rt[0])) {
@@ -1522,8 +1831,12 @@ switch ($action) {
             }
             $diagnostico['tables'] = ['status' => 'ok', 'data' => $tablas_status];
 
-            $q_lineas = $con->query("SELECT COUNT(*) AS total FROM lineas_whatsapp WHERE estado = 'ACTIVO'");
-            $total_lineas = $q_lineas ? intval($q_lineas->fetch_assoc()['total']) : 0;
+            if (!$es_master && $user_sede > 0) {
+                $row_cnt = cfg_fetch_one($con, "SELECT COUNT(*) AS total FROM lineas_whatsapp WHERE estado = ? AND id_sede = ?", "si", ['ACTIVO', $user_sede]);
+            } else {
+                $row_cnt = cfg_fetch_one($con, "SELECT COUNT(*) AS total FROM lineas_whatsapp WHERE estado = ?", "s", ['ACTIVO']);
+            }
+            $total_lineas = $row_cnt ? intval($row_cnt['total']) : 0;
             $diagnostico['lineas_activas'] = [
                 'status' => $total_lineas > 0 ? 'ok' : 'warning',
                 'message' => $total_lineas > 0 ? "$total_lineas línea(s) de WhatsApp activas en el sistema." : "No hay líneas de WhatsApp activas en el sistema. Los envíos fallarán."
@@ -1549,6 +1862,9 @@ switch ($action) {
         break;
 
     case 'run_simulacion_entrante':
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
         define('WEBHOOK_NO_EXECUTE', true);
         require_once __DIR__ . '/../../webhook.php';
         if ($con && !$con->connect_error) {
@@ -1573,8 +1889,12 @@ switch ($action) {
         break;
 
     case 'run_envio_transaccional':
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
         $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $raw_host = preg_replace('/[^a-zA-Z0-9.\-:\[\]]/', '', (string)($_SERVER['HTTP_HOST'] ?? '127.0.0.1'));
+        $host = ($raw_host !== '') ? $raw_host : '127.0.0.1';
         $base_uri = rtrim(str_replace('\\', '/', dirname(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '')))), '/');
         $url = $protocol . '://' . $host . $base_uri . '/api_notificaciones.php';
         $post_fields = [
@@ -1619,18 +1939,23 @@ switch ($action) {
 
     // --- CONFIGURACIÓN DINÁMICA DE TIEMPOS SLA Y ENRUTAMIENTO ([COM-04]) ---
     case 'get_sla_settings':
-        $ag = getAgenteInfo();
-        $ag_id = intval($ag['id'] ?? 0);
-        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
-        $user_sede = intval($ag['id_sede'] ?? 0);
-        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
-        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+        $ag_id = intval($agente['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($agente['rol'] ?? '')));
+        $is_admin = (!$es_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
 
-        $req_sede = $is_master ? max(0, intval($_POST['id_sede'] ?? 0)) : $user_sede;
+        if (!$es_master && $user_sede <= 0) {
+            cfg_deny_sede_scope('Su usuario no posee una sede asignada.');
+        }
+
+        $posted_sede = intval($_POST['id_sede'] ?? 0);
+        if (!$es_master && $posted_sede > 0 && $posted_sede !== $user_sede) {
+            cfg_deny_sede_scope();
+        }
+        $req_sede = $es_master ? max(0, $posted_sede) : $user_sede;
         $current_cfg = starfi_get_sla_config($con, $req_sede);
 
         $sedes_list = [];
-        if (!$is_master && $user_sede > 0) {
+        if (!$es_master) {
             $stmtS = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE id = ? ORDER BY nombre_sede ASC");
             if ($stmtS) $stmtS->bind_param("i", $user_sede);
         } else {
@@ -1645,7 +1970,7 @@ switch ($action) {
         }
 
         $rules = [];
-        if (!$is_master && $user_sede > 0) {
+        if (!$es_master) {
             $stmtR = $con->prepare("
                 SELECT cs.id_sede, cs.verde_max_min, cs.amarillo_max_min, cs.round_robin_online_min, cs.alerta_sonora_activa,
                        IFNULL(s.nombre_sede, '🌎 Regla Global (Por defecto)') AS ambito_nombre
@@ -1674,7 +1999,7 @@ switch ($action) {
 
         echo json_encode([
             'status'    => 'success',
-            'is_master' => $is_master,
+            'is_master' => $es_master,
             'is_admin'  => $is_admin,
             'user_sede' => $user_sede,
             'config'    => $current_cfg,
@@ -1684,24 +2009,30 @@ switch ($action) {
         break;
 
     case 'save_sla_settings':
-        $ag = getAgenteInfo();
-        $ag_id = intval($ag['id'] ?? 0);
-        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
-        $user_sede = intval($ag['id_sede'] ?? 0);
-        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
-        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+        $ag_id = intval($agente['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($agente['rol'] ?? '')));
+        $is_admin = (!$es_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
 
-        if (!$is_master && !$is_admin) {
+        if (!$es_master && !$is_admin) {
             http_response_code(403);
             echo json_encode(['status' => 'error', 'message' => 'No tienes permisos para modificar los tiempos SLA.']);
             exit;
         }
 
-        $target_sede = $is_master ? max(0, intval($_POST['id_sede'] ?? 0)) : $user_sede;
-        if (!$is_master && $target_sede <= 0) {
-            http_response_code(403);
-            echo json_encode(['status' => 'error', 'message' => 'Tu usuario no posee una sede asignada.']);
-            exit;
+        $posted_sede = isset($_POST['id_sede']) ? intval($_POST['id_sede']) : -1;
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Tu usuario no posee una sede asignada.');
+            }
+            if ($posted_sede === 0) {
+                cfg_deny_master_only();
+            }
+            if ($posted_sede > 0 && $posted_sede !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
+            $target_sede = $user_sede;
+        } else {
+            $target_sede = max(0, $posted_sede);
         }
 
         $datos_anteriores = starfi_get_sla_config($con, $target_sede);
@@ -1738,19 +2069,29 @@ switch ($action) {
         break;
 
     case 'reset_sla_sede':
-        $ag = getAgenteInfo();
-        $ag_id = intval($ag['id'] ?? 0);
-        $rol_u = strtoupper(trim((string)($ag['rol'] ?? '')));
-        $user_sede = intval($ag['id_sede'] ?? 0);
-        $is_master = ($ag_id === 1 || $rol_u === 'MASTER' || $rol_u === 'MASTER CI' || ($rol_u === 'ADMIN' && $user_sede === 0));
-        $is_admin = (!$is_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+        $ag_id = intval($agente['id'] ?? 0);
+        $rol_u = strtoupper(trim((string)($agente['rol'] ?? '')));
+        $is_admin = (!$es_master && in_array($rol_u, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
 
-        if (!$is_master && !$is_admin) {
+        if (!$es_master && !$is_admin) {
             http_response_code(403);
             echo json_encode(['status' => 'error', 'message' => 'Sin autorización.']);
             exit;
         }
-        $target_sede = $is_master ? intval($_POST['id_sede'] ?? 0) : $user_sede;
+
+        $posted_sede = intval($_POST['id_sede'] ?? 0);
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Tu usuario no posee una sede asignada.');
+            }
+            if ($posted_sede > 0 && $posted_sede !== $user_sede) {
+                cfg_deny_sede_scope();
+            }
+            $target_sede = $user_sede;
+        } else {
+            $target_sede = $posted_sede;
+        }
+
         if ($target_sede <= 0) {
             echo json_encode(['status' => 'error', 'message' => 'La Regla Global no puede eliminarse, solo editarse.']);
             exit;

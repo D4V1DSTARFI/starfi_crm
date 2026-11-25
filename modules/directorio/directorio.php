@@ -557,7 +557,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             </section>
         </div>
 
-        <?php include __DIR__ . '/modals_directorio.php'; ?>
+        <?php
+        define('STARFI_MODALS_ALLOWED', true);
+        require __DIR__ . '/modals_directorio.php';
+        ?>
     </main>
 
     <!-- JavaScript Local -->

@@ -1,4 +1,7 @@
-﻿<FilesMatch "\.log$">
+Options -Indexes
+DirectoryIndex dashboard.php
+
+<FilesMatch "^(modals_.*\.php|.*\.log)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -7,3 +10,11 @@
         Deny from all
     </IfModule>
 </FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^imprimir_orden_waba\.php$ ../../imprimir_orden_waba.php [L,QSA]
+    RewriteRule ^waba_ordenes\.php$ ../waba_ordenes/waba_ordenes.php [R=302,L,QSA]
+    RewriteRule ^whatsapp_analytics\.php$ ../whatsapp_analytics/whatsapp_analytics.php [R=302,L,QSA]
+    RewriteRule ^buzon_correos\.php$ ../buzon_correos/buzon_correos.php [R=302,L,QSA]
+</IfModule>

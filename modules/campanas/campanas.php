@@ -1080,7 +1080,10 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
         </main>
     </div>
 
-    <?php require __DIR__ . '/modals_campanas.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_campanas.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>

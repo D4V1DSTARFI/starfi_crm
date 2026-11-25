@@ -14,8 +14,8 @@ Options -Indexes
     Header set X-Content-Type-Options "nosniff"
 </IfModule>
 
-# Bloquear ejecución de scripts y archivos sensibles dentro de assets/uploads
-<FilesMatch "(^\.env|\.(php|php\d|phtml|phar|pl|py|cgi|exe|sh|bat|cmd|ps1|ini|sql|log|bak)$)">
+# Bloquear ejecución de scripts, archivos sensibles y acceso directo sin sesión a multimedia WABA (media_*)
+<FilesMatch "(^\.env|^media_|\.(php|php\d|phtml|phar|pl|py|cgi|exe|sh|bat|cmd|ps1|ini|sql|log|bak|html|htm|svg|xml|js)$)">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -25,8 +25,9 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
-# Enrutar comprobantes WABA obligatoriamente por controlador autenticado por sede
+# Enrutar comprobantes WABA obligatoriamente por controlador autenticado por sede y bloquear media_* directo
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteRule ^media_[A-Za-z0-9._-]+$ - [F,L]
     RewriteRule ^comprobantes_waba/([A-Za-z0-9._-]+)$ ../../ver_documento.php?tipo=comprobante_waba&file=$1 [L,QSA]
 </IfModule>

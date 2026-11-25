@@ -12,14 +12,11 @@ if (!function_exists('starfi_resolve_module_log_path')) {
         $raw = strtolower(trim((string)$modulo));
         $mod_clean = preg_replace('/[^a-z0-9_-]/i', '_', $raw) ?: 'general';
         $aliases = [
-            'empresa'            => 'perfil_empresa',
-            'usuarios'           => 'gestion_usuarios',
-            'roles'              => 'gestion_roles',
-            'bots'               => 'gestor_bots',
-            'waba_billing'       => 'dashboard',
-            'waba_ordenes'       => 'dashboard',
-            'whatsapp_analytics' => 'dashboard',
-            'buzon_correos'      => 'dashboard',
+            'empresa'      => 'perfil_empresa',
+            'usuarios'     => 'gestion_usuarios',
+            'roles'        => 'gestion_roles',
+            'bots'         => 'gestor_bots',
+            'waba_billing' => 'waba_ordenes',
         ];
         $mapped = $aliases[$mod_clean] ?? $mod_clean;
         $root = dirname(__DIR__);
@@ -28,7 +25,9 @@ if (!function_exists('starfi_resolve_module_log_path')) {
         if (is_dir($mod_dir)) {
             $ht = $mod_dir . '/.htaccess';
             if (!is_file($ht)) {
-                $htContent = "<FilesMatch \"\\.log$\">\n"
+                $htContent = "Options -Indexes\n"
+                    . "DirectoryIndex " . $mapped . ".php\n\n"
+                    . "<FilesMatch \"^(modals_.*\\.php|.*\\.log)$\">\n"
                     . "    <IfModule mod_authz_core.c>\n"
                     . "        Require all denied\n"
                     . "    </IfModule>\n"

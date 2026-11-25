@@ -1,17 +1,22 @@
 <?php
-// modules/dashboard/back_waba_billing.php
+// modules/waba_ordenes/back_waba_ordenes.php
 // Motor Financiero y Controlador de Órdenes de Cobro WABA — STARFI CRM (QA-STD-GLOBAL-2.1)
-// Blindado con finfo(FILEINFO_MIME_TYPE) <= 5 MB, bloqueo FOR UPDATE anti-duplicidad de referencias,
+// Blindado con finfo(FILEINFO_MIME_TYPE) <= 5 MB, bloqueo FOR UPDATE anti-duplicidad de referencias y periodos,
 // 100% mysqli_prepare(), timeouts HTTP <= 8s, cero fugas SQL y auditoría formal registrar_auditoria().
 
+@ini_set('display_errors', '0');
+if (!defined('WABA_BILLING_LIB_ONLY') || WABA_BILLING_LIB_ONLY !== true) {
+    header('Content-Type: application/json; charset=utf-8');
+}
 date_default_timezone_set('America/Caracas');
+
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../core/crm_sprint2_helper.php';
 require_once __DIR__ . '/../../core/audit.php';
 
 /**
  * Devuelve mapa de columnas existentes para tablas conocidas de facturación WABA
- * usando consultas SHOW COLUMNS estáticas (cero interpolación de variables).
+ * usando consultas SHOW COLUMNS estáticas preparadas (cero interpolación de variables).
  */
 function starfi_waba_table_columns(mysqli $con, string $table, bool $forceRefresh = false): array {
     static $cache = [];
@@ -26,6 +31,7 @@ function starfi_waba_table_columns(mysqli $con, string $table, bool $forceRefres
         'waba_ordenes_detalles'           => "SHOW COLUMNS FROM `waba_ordenes_detalles`",
         'waba_tarifas_sede'               => "SHOW COLUMNS FROM `waba_tarifas_sede`",
         'sedes'                           => "SHOW COLUMNS FROM `sedes`",
+        'lineas_whatsapp'                 => "SHOW COLUMNS FROM `lineas_whatsapp`",
         'campanas_difusion'               => "SHOW COLUMNS FROM `campanas_difusion`",
         'campanas_difusion_destinatarios' => "SHOW COLUMNS FROM `campanas_difusion_destinatarios`",
         'campanas_cuotas_sede'            => "SHOW COLUMNS FROM `campanas_cuotas_sede`",
@@ -161,7 +167,6 @@ function starfi_validate_waba_receipt_file(string $filePath, int $fileSize): arr
 /**
  * [CHK-SEC-09] Verificación transaccional con bloqueo pesimista (FOR UPDATE) contra duplicidad
  * de referencias de pago en órdenes WABA en estado EN_REVISION o PAGADO (excepto Efectivo).
- * Debe invocarse dentro de una transacción activa.
  */
 function starfi_check_duplicate_waba_reference(mysqli $con, int $idOrden, string $metodoPago, string $referenciaPago): ?array {
     $metodoClean = trim($metodoPago);
@@ -178,14 +183,14 @@ function starfi_check_duplicate_waba_reference(mysqli $con, int $idOrden, string
 
     $stmt = $con->prepare($sql);
     if (!$stmt) {
-        starfi_log_exception('waba_billing', 'No se pudo preparar validación anti-duplicidad de referencia', ['errno' => $con->errno]);
+        starfi_log_exception('waba_ordenes', 'No se pudo preparar validación anti-duplicidad de referencia', ['errno' => $con->errno]);
         throw new RuntimeException('Error interno al validar unicidad de la referencia de pago.');
     }
     $stmt->bind_param("iss", $idOrden, $metodoClean, $refClean);
     if (!$stmt->execute()) {
         $errno = $stmt->errno;
         $stmt->close();
-        starfi_log_exception('waba_billing', 'Error ejecutando validación anti-duplicidad de referencia', ['errno' => $errno]);
+        starfi_log_exception('waba_ordenes', 'Error ejecutando validación anti-duplicidad de referencia', ['errno' => $errno]);
         throw new RuntimeException('Error interno al consultar referencias de pago.');
     }
     $res = $stmt->get_result();
@@ -197,7 +202,7 @@ function starfi_check_duplicate_waba_reference(mysqli $con, int $idOrden, string
 
 /**
  * Auto-migración defensiva e idempotente para garantizar columnas de pagos y trazabilidad.
- * Respeta starfi_tx_is_active($con) para jamás disparar DDL implícito dentro de transacciones de prueba.
+ * Respeta starfi_tx_is_active($con) para jamás disparar DDL implícito dentro de transacciones activas.
  */
 function ensureWabaBillingSchema($con) {
     if (!($con instanceof mysqli)) {
@@ -226,7 +231,8 @@ function ensureWabaBillingSchema($con) {
     if (isset($colsOrd['estado'])) {
         $typeLower = strtolower((string)($colsOrd['estado']['Type'] ?? ''));
         if (strpos($typeLower, 'enum') !== false && (strpos($typeLower, 'en_revision') === false || strpos($typeLower, 'fusionado') === false)) {
-            @$con->query("ALTER TABLE `waba_ordenes_cobro` MODIFY COLUMN `estado` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE'");
+            $stModEst = @$con->prepare("ALTER TABLE `waba_ordenes_cobro` MODIFY COLUMN `estado` VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE'");
+            if ($stModEst) { @$stModEst->execute(); $stModEst->close(); }
         }
     }
 
@@ -297,7 +303,6 @@ function ensureWabaBillingSchema($con) {
         }
     }
 
-    // Refrescar caché de columnas tras migración
     starfi_waba_table_columns($con, 'waba_ordenes_cobro', true);
     starfi_waba_table_columns($con, 'waba_ordenes_detalles', true);
     starfi_waba_table_columns($con, 'waba_tarifas_sede', true);
@@ -333,7 +338,7 @@ function starfi_waba_http_request(string $url, array $headers = [], ?array $post
 
     if ($raw === false || $raw === '') {
         if ($curlErr !== '') {
-            starfi_log_exception('waba_billing', 'Error de transporte HTTP Meta API', ['error' => $curlErr]);
+            starfi_log_exception('waba_ordenes', 'Error de transporte HTTP Meta API', ['detail' => $curlErr]);
         }
         return null;
     }
@@ -370,7 +375,6 @@ function starfi_normalize_waba_order_row(array $row): array {
 }
 
 /**
- * [FAC-02 / CHK-SEC-07 / CHK-SEC-09 / CHK-SEC-04]
  * Registro/Reporte transaccional de pago de orden WABA con bloqueo FOR UPDATE,
  * validación anti-duplicidad de referencias y validación finfo <= 5 MB.
  */
@@ -406,7 +410,6 @@ function starfi_report_waba_payment(
         return ['status' => 'error', 'message' => 'El número de Referencia / TxID / Confirmación es obligatorio para ' . $metodoPago . '.'];
     }
 
-    // Validar archivo comprobante ANTES de tocar la base de datos o mover a disco
     $validatedReceipt = null;
     if (is_array($uploadedFile) && ($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
         if (($uploadedFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -463,8 +466,8 @@ function starfi_report_waba_payment(
         ? ($tsPago ? date('Y-m-d', $tsPago) : date('Y-m-d'))
         : ($tsPago ? date('Y-m-d H:i:s', $tsPago) : date('Y-m-d H:i:s'));
 
-    $outerTx = function_exists('starfi_tx_is_active') && starfi_tx_is_active($con);
-    if (!$outerTx) {
+    $own_tx = !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con));
+    if ($own_tx) {
         $con->begin_transaction();
         if (function_exists('starfi_tx_set_active')) {
             starfi_tx_set_active($con, true);
@@ -475,7 +478,6 @@ function starfi_report_waba_payment(
 
     $movedDestPath = null;
     try {
-        // 1. Bloquear fila de la orden destino con FOR UPDATE
         $stmtOrd = $con->prepare("SELECT * FROM waba_ordenes_cobro WHERE id = ? LIMIT 1 FOR UPDATE");
         if (!$stmtOrd) {
             throw new RuntimeException('No se pudo bloquear la orden de cobro.');
@@ -487,7 +489,7 @@ function starfi_report_waba_payment(
         $stmtOrd->close();
 
         if (!$ordenRaw) {
-            if (!$outerTx) {
+            if ($own_tx) {
                 $con->rollback();
                 if (function_exists('starfi_tx_set_active')) starfi_tx_set_active($con, false);
             } else {
@@ -500,7 +502,7 @@ function starfi_report_waba_payment(
         $ordenSede = intval($orden['id_sede'] ?? 0);
 
         if (!$esMaster && $ordenSede !== $idSedeAgente) {
-            if (!$outerTx) {
+            if ($own_tx) {
                 $con->rollback();
                 if (function_exists('starfi_tx_set_active')) starfi_tx_set_active($con, false);
             } else {
@@ -509,10 +511,9 @@ function starfi_report_waba_payment(
             return ['status' => 'error', 'message' => 'No tiene permiso para reportar pagos de otra sede.'];
         }
 
-        // 2. Verificar duplicidad de referencia (FOR UPDATE) antes de persistir
         $dup = starfi_check_duplicate_waba_reference($con, $idOrden, $metodoPago, $referenciaPago);
         if ($dup !== null) {
-            if (!$outerTx) {
+            if ($own_tx) {
                 $con->rollback();
                 if (function_exists('starfi_tx_set_active')) starfi_tx_set_active($con, false);
             } else {
@@ -527,7 +528,6 @@ function starfi_report_waba_payment(
             ];
         }
 
-        // 3. Almacenar archivo comprobante validado (con extensión derivada de finfo)
         $comprobanteRelPath = $orden['comprobante_ruta'] ?? null;
         if ($validatedReceipt !== null) {
             $uploadDir = __DIR__ . '/../../assets/uploads/comprobantes_waba';
@@ -557,7 +557,6 @@ function starfi_report_waba_payment(
             }
         }
 
-        // 4. Actualizar waba_ordenes_cobro vía mysqli_prepare() adaptándose a las columnas presentes
         $setParts = ["`estado` = ?", "`metodo_pago` = ?", "`referencia_pago` = ?", "`fecha_pago` = ?"];
         $typesUp  = "ssss";
         $paramsUp = [$nuevoEstado, $metodoPago, $referenciaPago, $fechaPago];
@@ -610,19 +609,18 @@ function starfi_report_waba_payment(
         $sqlUp = "UPDATE `waba_ordenes_cobro` SET " . implode(", ", $setParts) . " WHERE `id` = ?";
         $stmtUp = $con->prepare($sqlUp);
         if (!$stmtUp) {
-            starfi_log_exception('waba_billing', 'Error preparando UPDATE en starfi_report_waba_payment', ['errno' => $con->errno]);
+            starfi_log_exception('waba_ordenes', 'Error preparando UPDATE en starfi_report_waba_payment', ['errno' => $con->errno]);
             throw new RuntimeException('Error interno al preparar actualización de pago.');
         }
         $stmtUp->bind_param($typesUp, ...$paramsUp);
         if (!$stmtUp->execute()) {
-            $sqlErr = $stmtUp->error;
+            $sqlErrno = $stmtUp->errno;
             $stmtUp->close();
-            starfi_log_exception('waba_billing', 'Error ejecutando UPDATE en starfi_report_waba_payment', ['id_orden' => $idOrden, 'sql_error' => $sqlErr]);
+            starfi_log_exception('waba_ordenes', 'Error ejecutando UPDATE en starfi_report_waba_payment', ['id_orden' => $idOrden, 'errno' => $sqlErrno]);
             throw new RuntimeException('No se pudo guardar el registro de pago.');
         }
         $stmtUp->close();
 
-        // 5. Auditoría formal (CHK-SEC-04)
         $datosAnteriores = [
             'id_orden'         => $idOrden,
             'estado'           => $orden['estado'] ?? null,
@@ -639,7 +637,7 @@ function starfi_report_waba_payment(
             'comprobante_ruta' => $comprobanteRelPath,
         ];
         registrar_auditoria(
-            'waba_billing',
+            'waba_ordenes',
             'REPORTAR_PAGO',
             "Pago reportado en orden #$idOrden ($metodoPago / Ref: $referenciaPago)",
             $datosAnteriores,
@@ -649,7 +647,7 @@ function starfi_report_waba_payment(
             $ordenSede
         );
 
-        if (!$outerTx) {
+        if ($own_tx) {
             $con->commit();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, false);
@@ -674,7 +672,7 @@ function starfi_report_waba_payment(
         if ($movedDestPath !== null && is_file($movedDestPath)) {
             @unlink($movedDestPath);
         }
-        if (!$outerTx) {
+        if ($own_tx) {
             @$con->rollback();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, false);
@@ -682,16 +680,15 @@ function starfi_report_waba_payment(
         } else {
             @$con->query("ROLLBACK TO SAVEPOINT sp_waba_report_payment");
         }
-        starfi_log_exception('waba_billing', 'Excepción en starfi_report_waba_payment', [
+        starfi_log_exception('waba_ordenes', 'Excepción en starfi_report_waba_payment', [
             'id_orden' => $idOrden,
-            'error'    => $e->getMessage(),
+            'detail'   => $e->getMessage(),
         ]);
         return ['status' => 'error', 'message' => 'No se pudo procesar el reporte de pago en este momento.'];
     }
 }
 
 /**
- * [FAC-02 / CHK-SEC-09 / CHK-SEC-04]
  * Verificación / Auditoría transaccional de Pago por MASTER con bloqueo FOR UPDATE
  * y validación anti-duplicidad de referencias al aprobar o pasar a revisión.
  */
@@ -712,8 +709,8 @@ function starfi_verify_waba_payment(
     }
 
     $colsOrd = starfi_waba_table_columns($con, 'waba_ordenes_cobro');
-    $outerTx = function_exists('starfi_tx_is_active') && starfi_tx_is_active($con);
-    if (!$outerTx) {
+    $own_tx = !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con));
+    if ($own_tx) {
         $con->begin_transaction();
         if (function_exists('starfi_tx_set_active')) {
             starfi_tx_set_active($con, true);
@@ -734,7 +731,7 @@ function starfi_verify_waba_payment(
         $stmtOrd->close();
 
         if (!$ordRaw) {
-            if (!$outerTx) {
+            if ($own_tx) {
                 $con->rollback();
                 if (function_exists('starfi_tx_set_active')) starfi_tx_set_active($con, false);
             } else {
@@ -754,7 +751,7 @@ function starfi_verify_waba_payment(
                 (string)($ord['referencia_pago'] ?? '')
             );
             if ($dup !== null) {
-                if (!$outerTx) {
+                if ($own_tx) {
                     $con->rollback();
                     if (function_exists('starfi_tx_set_active')) starfi_tx_set_active($con, false);
                 } else {
@@ -831,15 +828,15 @@ function starfi_verify_waba_payment(
         }
         $stmt->bind_param($typesUp, ...$paramsUp);
         if (!$stmt->execute()) {
-            $sqlErr = $stmt->error;
+            $sqlErrno = $stmt->errno;
             $stmt->close();
-            starfi_log_exception('waba_billing', 'Error ejecutando verify_payment', ['id_orden' => $idOrden, 'sql_error' => $sqlErr]);
+            starfi_log_exception('waba_ordenes', 'Error ejecutando verify_payment', ['id_orden' => $idOrden, 'errno' => $sqlErrno]);
             throw new RuntimeException('No se pudo actualizar el estado de verificación.');
         }
         $stmt->close();
 
         registrar_auditoria(
-            'waba_billing',
+            'waba_ordenes',
             'VERIFICAR_PAGO_' . $decisionNorm,
             "Verificación MASTER sobre orden #$idOrden: $decisionNorm -> $nuevoEstado",
             [
@@ -859,7 +856,7 @@ function starfi_verify_waba_payment(
             $ordenSede
         );
 
-        if (!$outerTx) {
+        if ($own_tx) {
             $con->commit();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, false);
@@ -874,7 +871,7 @@ function starfi_verify_waba_payment(
             'nuevo_estado' => $nuevoEstado,
         ];
     } catch (Throwable $e) {
-        if (!$outerTx) {
+        if ($own_tx) {
             @$con->rollback();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, false);
@@ -882,16 +879,16 @@ function starfi_verify_waba_payment(
         } else {
             @$con->query("ROLLBACK TO SAVEPOINT sp_waba_verify_payment");
         }
-        starfi_log_exception('waba_billing', 'Excepción en starfi_verify_waba_payment', [
+        starfi_log_exception('waba_ordenes', 'Excepción en starfi_verify_waba_payment', [
             'id_orden' => $idOrden,
-            'error'    => $e->getMessage(),
+            'detail'   => $e->getMessage(),
         ]);
         return ['status' => 'error', 'message' => 'No se pudo actualizar el estado de verificación.'];
     }
 }
 
 /**
- * [FAC-03] Motor Unificado de Conciliación Híbrida por Sede (100% mysqli_prepare()).
+ * Motor Unificado de Conciliación Híbrida por Sede (100% mysqli_prepare()).
  */
 function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
     $id_sede = intval($id_sede);
@@ -909,21 +906,13 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
     $desde_dt = date('Y-m-d', strtotime($fecha_desde)) . " 00:00:00";
     $hasta_dt = date('Y-m-d', strtotime($fecha_hasta)) . " 23:59:59";
 
-    // 1. Obtener todas las líneas de WhatsApp asociadas a la sede con mysqli_prepare()
     $lineas = [];
     $waba_ids = [];
     $phone_numbers_clean = [];
     $phone_ids = [];
 
-    $colsLinCheck = @$con->query("SHOW COLUMNS FROM `lineas_whatsapp`");
-    $hasMetaTelId = false;
-    if ($colsLinCheck) {
-        while ($cl = $colsLinCheck->fetch_assoc()) {
-            if (($cl['Field'] ?? '') === 'meta_telefono_id') {
-                $hasMetaTelId = true;
-            }
-        }
-    }
+    $colsLin = starfi_waba_table_columns($con, 'lineas_whatsapp');
+    $hasMetaTelId = isset($colsLin['meta_telefono_id']);
 
     $sqlLin = $hasMetaTelId
         ? "SELECT id, numero_telefono, meta_app_id, meta_telefono_id, meta_token, id_negocio, estado FROM lineas_whatsapp WHERE id_sede = ? ORDER BY (estado = 'ACTIVO') DESC, id ASC"
@@ -961,7 +950,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
 
     $primary_waba_id = array_key_first($waba_ids);
 
-    // 2. Obtener Tarifa de la sede desde waba_tarifas_sede
     $tipo_tarifa  = 'PORCENTAJE';
     $valor_tarifa = 10.00;
     $limite_fact  = 0.00;
@@ -1008,7 +996,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         }
     }
 
-    // 3. Consultar Meta API por cada WABA vinculada (con timeouts <= 8s)
     $costo_meta_api_por_cat = [
         'MARKETING'      => 0.0,
         'UTILITY'        => 0.0,
@@ -1097,12 +1084,11 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         $stmtShared->close();
     }
 
-    // 4. Estructura base de categorías para conciliación híbrida
     $cat_details = [
-        'MARKETING'      => ['nombre' => 'Mensajes de Marketing (Campañas y Difusión)',  'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
-        'UTILITY'        => ['nombre' => 'Mensajes de Utilidad (Notificaciones)',        'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
-        'AUTHENTICATION' => ['nombre' => 'Mensajes de Autenticación',                    'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
-        'SERVICE'        => ['nombre' => 'Mensajes de Servicio y Atención (Bandeja/Bot)','volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+        'MARKETING'      => ['nombre' => 'Mensajes de Marketing (Campañas y Difusión)',   'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+        'UTILITY'        => ['nombre' => 'Mensajes de Utilidad (Notificaciones)',         'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+        'AUTHENTICATION' => ['nombre' => 'Mensajes de Autenticación',                     'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
+        'SERVICE'        => ['nombre' => 'Mensajes de Servicio y Atención (Bandeja/Bot)', 'volumen' => 0, 'costo' => 0.0, 'pagados' => 0, 'gratuitos' => 0],
     ];
     $costo_local_por_cat = [
         'MARKETING'      => 0.0,
@@ -1111,7 +1097,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         'SERVICE'        => 0.0,
     ];
 
-    // 5. Cruce con campanas_difusion_destinatarios + campanas_difusion vía mysqli_prepare()
     $camp_ids_active = [];
     $hasCampDest = starfi_waba_table_exists($con, 'campanas_difusion_destinatarios');
     $colsCamp    = $hasCampDest ? starfi_waba_table_columns($con, 'campanas_difusion') : [];
@@ -1175,7 +1160,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         }
     }
 
-    // 6. Cruce con mensajes_y_eventos vía mysqli_prepare()
     $exclude_camp_wamid_sql = "";
     $msgTypes  = "iss";
     $msgParams = [$id_sede, $desde_dt, $hasta_dt];
@@ -1249,7 +1233,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         $stmtMsg->close();
     }
 
-    // 7. Conciliar Costo Base Meta y Volumen Total
     $costo_meta_total    = 0.0;
     $volumen_local_total = 0;
 
@@ -1269,7 +1252,6 @@ function conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta) {
         $cat_details['MARKETING']['pagados'] = $mensajes_totales;
     }
 
-    // 8. Aplicar tarifa de waba_tarifas_sede
     if ($tipo_tarifa === 'PORCENTAJE') {
         $costo_final = $costo_meta_total * (1 + ($valor_tarifa / 100));
         $margen      = $costo_final - $costo_meta_total;
@@ -1325,8 +1307,8 @@ function starfi_notify_waba_order(mysqli $con, int $id_orden, int $id_sede, stri
     $montoFmt      = number_format($costo_final, 2, '.', '');
 
     $msg = $is_reminder
-        ? "Hola $gerenteNombre, le recordamos la orden de cobro *#$id_orden* para *$nombreSede* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $montoFmt USD\n\nPor favor coordine el pago correspondiente."
-        : "Hola $gerenteNombre, se ha generado la orden de cobro *#$id_orden* para *$nombreSede* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $montoFmt USD\n\nPor favor coordine el pago correspondiente.";
+        ? "Hola $gerenteNombre, le recordamos la orden de cobro *#$id_orden* para *$nombreSede* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $montoFmt USD\n\nPor favor coordine el pago en el módulo Órdenes WABA (modules/waba_ordenes/waba_ordenes.php)."
+        : "Hola $gerenteNombre, se ha generado la orden de cobro *#$id_orden* para *$nombreSede* por el consumo de WhatsApp API.\n\n*Periodo:* $fecha_desde al $fecha_hasta\n*Monto Total:* $montoFmt USD\n\nPor favor coordine el pago en el módulo Órdenes WABA (modules/waba_ordenes/waba_ordenes.php).";
 
     if (in_array($prefNotif, ['WHATSAPP', 'AMBOS'], true) && $gerenteTel !== '') {
         $stmtL = $con->prepare("SELECT meta_app_id, meta_token, id_negocio FROM lineas_whatsapp WHERE id_sede = ? AND estado = 'ACTIVO' LIMIT 1");
@@ -1409,7 +1391,7 @@ function starfi_notify_waba_order(mysqli $con, int $id_orden, int $id_sede, stri
         $asunto = ($is_reminder ? 'Recordatorio de Estado de Cuenta WhatsApp API - ' : 'Estado de Cuenta WhatsApp API - ') . $nombreSede;
         $codigoDoc = "NC-" . date('Y') . "-" . str_pad((string)$id_orden, 4, '0', STR_PAD_LEFT);
         $htmlMsg = "
-        <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;'>
+        <div style='font-family: Gotham, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;'>
             <div style='background-color: #2b6cb0; color: white; padding: 20px; text-align: center;'>
                 <h2 style='margin: 0;'>" . htmlspecialchars($tituloEmail, ENT_QUOTES, 'UTF-8') . "</h2>
                 <p style='margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;'>Infraestructura API WhatsApp</p>
@@ -1422,7 +1404,7 @@ function starfi_notify_waba_order(mysqli $con, int $id_orden, int $id_sede, stri
                     <p style='margin: 0 0 10px 0;'><strong>Periodo:</strong> " . htmlspecialchars($fecha_desde, ENT_QUOTES, 'UTF-8') . " al " . htmlspecialchars($fecha_hasta, ENT_QUOTES, 'UTF-8') . "</p>
                     <p style='margin: 0; font-size: 18px;'><strong>Monto a Pagar: <span style='color: #c53030;'>\$" . htmlspecialchars($montoFmt, ENT_QUOTES, 'UTF-8') . " USD</span></strong></p>
                 </div>
-                <p style='color: #4a5568; font-size: 14px; line-height: 1.5;'>Por favor coordine el pago correspondiente y registre su comprobante en el panel de órdenes del CRM.</p>
+                <p style='color: #4a5568; font-size: 14px; line-height: 1.5;'>Por favor coordine el pago correspondiente y registre su comprobante en el módulo de Órdenes WABA (<code>modules/waba_ordenes/waba_ordenes.php</code>).</p>
             </div>
         </div>";
 
@@ -1436,59 +1418,138 @@ function starfi_notify_waba_order(mysqli $con, int $id_orden, int $id_sede, stri
 }
 
 /**
- * [FAC-03] Emisión centralizada de Orden de Cobro por Sede (100% mysqli_prepare() + registrar_auditoria()).
+ * [QA-BUG-CRM3-05 / CHK-SEC-05]
+ * Emisión centralizada de Orden de Cobro por Sede con bloqueo transaccional SELECT ... FOR UPDATE
+ * contra duplicidad/solapamiento de periodos (100% mysqli_prepare() + registrar_auditoria()).
  */
 function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pendiente_id = null) {
     ensureWabaBillingSchema($con);
 
     $id_sede = intval($id_sede);
-    if ($id_sede <= 0 || empty($fecha_desde) || empty($fecha_hasta)) {
+    $fecha_desde_clean = trim((string)$fecha_desde);
+    $fecha_hasta_clean = trim((string)$fecha_hasta);
+
+    if ($id_sede <= 0 || $fecha_desde_clean === '' || $fecha_hasta_clean === '') {
         return ['status' => 'error', 'message' => 'Faltan parámetros para emitir la orden'];
     }
-
-    $conciliacion = conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta);
-    if ($conciliacion['status'] !== 'success') {
-        return $conciliacion;
+    $tsDesde = strtotime($fecha_desde_clean);
+    $tsHasta = strtotime($fecha_hasta_clean);
+    if (!$tsDesde || !$tsHasta || $tsDesde > $tsHasta) {
+        return ['status' => 'error', 'message' => 'Rango de fechas inválido para la emisión de la orden'];
     }
-
-    $waba_id          = (string)$conciliacion['waba_id'];
-    $mensajes_totales = intval($conciliacion['mensajes_totales']);
-    $costo_meta       = floatval($conciliacion['costo_meta']);
-    $margen           = floatval($conciliacion['margen']);
-    $costo_final      = floatval($conciliacion['costo_final']);
-    $cat_details      = $conciliacion['cat_details'];
+    $fecha_desde = date('Y-m-d', $tsDesde);
+    $fecha_hasta = date('Y-m-d', $tsHasta);
 
     $colsOrd = starfi_waba_table_columns($con, 'waba_ordenes_cobro');
     $colsDet = starfi_waba_table_columns($con, 'waba_ordenes_detalles');
 
-    $outerTx = function_exists('starfi_tx_is_active') && starfi_tx_is_active($con);
-    if (!$outerTx) {
+    $own_tx = !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con));
+    if ($own_tx) {
         $con->begin_transaction();
         if (function_exists('starfi_tx_set_active')) {
             starfi_tx_set_active($con, true);
         }
     } else {
-        @$con->query("SAVEPOINT sp_waba_emitir_orden");
+        @$con->query("SAVEPOINT sp_emitir_orden");
     }
 
+    $rollbackCurrentScope = static function () use ($con, $own_tx): void {
+        if ($own_tx) {
+            @$con->rollback();
+            if (function_exists('starfi_tx_set_active')) {
+                starfi_tx_set_active($con, false);
+            }
+        } else {
+            @$con->query("ROLLBACK TO SAVEPOINT sp_emitir_orden");
+        }
+    };
+
     try {
-        $id_padre = !empty($orden_pendiente_id) ? intval($orden_pendiente_id) : 0;
+        // 1. Bloqueo pesimista SELECT ... FOR UPDATE para impedir órdenes duplicadas o solapadas en la misma sede
+        if ($orden_pendiente_id === null || intval($orden_pendiente_id) <= 0) {
+            $sqlOverlap = isset($colsOrd['codigo_orden'])
+                ? "SELECT id, codigo_orden FROM waba_ordenes_cobro WHERE id_sede = ? AND estado NOT IN ('FUSIONADO', 'ANULADA') AND fecha_desde <= ? AND fecha_hasta >= ? LIMIT 1 FOR UPDATE"
+                : "SELECT id, CONCAT('NC-', id) AS codigo_orden FROM waba_ordenes_cobro WHERE id_sede = ? AND estado NOT IN ('FUSIONADO', 'ANULADA') AND fecha_desde <= ? AND fecha_hasta >= ? LIMIT 1 FOR UPDATE";
+            $stmtLockOverlap = $con->prepare($sqlOverlap);
+            if (!$stmtLockOverlap) {
+                throw new RuntimeException('No se pudo preparar validación anti-solapamiento de periodo.');
+            }
+            $stmtLockOverlap->bind_param("iss", $id_sede, $fecha_hasta, $fecha_desde);
+            $stmtLockOverlap->execute();
+            $resOverlap = $stmtLockOverlap->get_result();
+            $dupRow = ($resOverlap && $resOverlap->num_rows > 0) ? $resOverlap->fetch_assoc() : null;
+            $stmtLockOverlap->close();
+
+            if ($dupRow) {
+                $rollbackCurrentScope();
+                $dupCode = !empty($dupRow['codigo_orden']) ? $dupRow['codigo_orden'] : ('#' . intval($dupRow['id']));
+                return [
+                    'status'               => 'error',
+                    'code'                 => 'DUPLICATE_PERIOD_ORDER',
+                    'duplicate'            => true,
+                    'overlapping_order_id' => intval($dupRow['id']),
+                    'message'              => 'Ya existe una orden de cobro activa (' . $dupCode . ') que solapa el periodo seleccionado para esta sede.',
+                ];
+            }
+        }
+
+        // 2. Conciliar consumo híbrido de la sede
+        $conciliacion = conciliar_consumo_sede($con, $id_sede, $fecha_desde, $fecha_hasta);
+        if (($conciliacion['status'] ?? '') !== 'success') {
+            $rollbackCurrentScope();
+            return $conciliacion;
+        }
+
+        $waba_id          = (string)$conciliacion['waba_id'];
+        $mensajes_totales = intval($conciliacion['mensajes_totales']);
+        $costo_meta       = floatval($conciliacion['costo_meta']);
+        $margen           = floatval($conciliacion['margen']);
+        $costo_final      = floatval($conciliacion['costo_final']);
+        $cat_details      = $conciliacion['cat_details'];
+
+        $id_padre = ($orden_pendiente_id !== null && intval($orden_pendiente_id) > 0) ? intval($orden_pendiente_id) : 0;
         $padreAnterior = null;
         if ($id_padre > 0) {
-            $stmtPrev = $con->prepare("SELECT id, estado, monto_total FROM waba_ordenes_cobro WHERE id = ? LIMIT 1 FOR UPDATE");
+            $stmtPrev = $con->prepare("SELECT id, estado, monto_total FROM waba_ordenes_cobro WHERE id = ? AND id_sede = ? LIMIT 1 FOR UPDATE");
             if ($stmtPrev) {
-                $stmtPrev->bind_param("i", $id_padre);
+                $stmtPrev->bind_param("ii", $id_padre, $id_sede);
                 $stmtPrev->execute();
                 $resPrev = $stmtPrev->get_result();
                 $padreAnterior = ($resPrev && $resPrev->num_rows > 0) ? $resPrev->fetch_assoc() : null;
                 $stmtPrev->close();
             }
 
-            $stmtFus = $con->prepare("UPDATE waba_ordenes_cobro SET estado = 'FUSIONADO' WHERE id = ?");
-            if ($stmtFus) {
-                $stmtFus->bind_param("i", $id_padre);
-                $stmtFus->execute();
-                $stmtFus->close();
+            if ($padreAnterior) {
+                $stmtFus = $con->prepare("UPDATE waba_ordenes_cobro SET estado = 'FUSIONADO' WHERE id = ?");
+                if ($stmtFus) {
+                    $stmtFus->bind_param("i", $id_padre);
+                    $stmtFus->execute();
+                    $stmtFus->close();
+                }
+            }
+
+            // Verificar que no exista otra orden activa distinta a la fusionada que solape el nuevo rango
+            $sqlOverlapFus = isset($colsOrd['codigo_orden'])
+                ? "SELECT id, codigo_orden FROM waba_ordenes_cobro WHERE id_sede = ? AND id != ? AND estado NOT IN ('FUSIONADO', 'ANULADA') AND fecha_desde <= ? AND fecha_hasta >= ? LIMIT 1 FOR UPDATE"
+                : "SELECT id, CONCAT('NC-', id) AS codigo_orden FROM waba_ordenes_cobro WHERE id_sede = ? AND id != ? AND estado NOT IN ('FUSIONADO', 'ANULADA') AND fecha_desde <= ? AND fecha_hasta >= ? LIMIT 1 FOR UPDATE";
+            $stmtLockFus = $con->prepare($sqlOverlapFus);
+            if ($stmtLockFus) {
+                $stmtLockFus->bind_param("iiss", $id_sede, $id_padre, $fecha_hasta, $fecha_desde);
+                $stmtLockFus->execute();
+                $resDupFus = $stmtLockFus->get_result();
+                $dupFusRow = ($resDupFus && $resDupFus->num_rows > 0) ? $resDupFus->fetch_assoc() : null;
+                $stmtLockFus->close();
+                if ($dupFusRow) {
+                    $rollbackCurrentScope();
+                    $dupCode = !empty($dupFusRow['codigo_orden']) ? $dupFusRow['codigo_orden'] : ('#' . intval($dupFusRow['id']));
+                    return [
+                        'status'               => 'error',
+                        'code'                 => 'DUPLICATE_PERIOD_ORDER',
+                        'duplicate'            => true,
+                        'overlapping_order_id' => intval($dupFusRow['id']),
+                        'message'              => 'Ya existe una orden de cobro activa (' . $dupCode . ') que solapa el periodo seleccionado para esta sede.',
+                    ];
+                }
             }
         }
 
@@ -1547,14 +1608,14 @@ function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pe
         $colsSql      = '`' . implode('`, `', $insCols) . '`';
         $stmt = $con->prepare("INSERT INTO `waba_ordenes_cobro` ($colsSql) VALUES ($placeholders)");
         if (!$stmt) {
-            starfi_log_exception('waba_billing', 'Error preparando INSERT waba_ordenes_cobro', ['errno' => $con->errno]);
+            starfi_log_exception('waba_ordenes', 'Error preparando INSERT waba_ordenes_cobro', ['errno' => $con->errno]);
             throw new RuntimeException('No se pudo preparar el registro de la orden.');
         }
         $stmt->bind_param($insTypes, ...$insParams);
         if (!$stmt->execute()) {
-            $sqlErr = $stmt->error;
+            $sqlErrno = $stmt->errno;
             $stmt->close();
-            starfi_log_exception('waba_billing', 'Error insertando orden en emitir_orden_sede', ['id_sede' => $id_sede, 'sql_error' => $sqlErr]);
+            starfi_log_exception('waba_ordenes', 'Error insertando orden en emitir_orden_sede', ['id_sede' => $id_sede, 'errno' => $sqlErrno]);
             throw new RuntimeException('No se pudo registrar la orden en base de datos.');
         }
         $new_order_id = intval($stmt->insert_id);
@@ -1570,7 +1631,6 @@ function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pe
             }
         }
 
-        // Insertar desglose por categoría en waba_ordenes_detalles vía mysqli_prepare()
         $hasCostoBase = isset($colsDet['costo_base']);
         $hasSubtotal  = isset($colsDet['subtotal_usd']);
         if ($hasCostoBase && $hasSubtotal) {
@@ -1616,7 +1676,7 @@ function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pe
         }
 
         registrar_auditoria(
-            'waba_billing',
+            'waba_ordenes',
             'EMITIR_ORDEN_COBRO',
             "Orden de cobro #$new_order_id ($codigoFinal) emitida para sede #$id_sede",
             $padreAnterior ? ['orden_padre_fusionada' => $padreAnterior] : null,
@@ -1637,17 +1697,16 @@ function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pe
             $id_sede
         );
 
-        if (!$outerTx) {
+        if ($own_tx) {
             $con->commit();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, false);
             }
         } else {
-            @$con->query("RELEASE SAVEPOINT sp_waba_emitir_orden");
+            @$con->query("RELEASE SAVEPOINT sp_emitir_orden");
         }
 
-        // Notificar solo fuera de transacciones de prueba para no disparar tráfico externo en tests
-        if (!$outerTx) {
+        if ($own_tx) {
             $notificado = starfi_notify_waba_order($con, $new_order_id, $id_sede, $fecha_desde, $fecha_hasta, $costo_final, $waba_id, false);
             if ($notificado === 1 && isset($colsOrd['notificacion_enviada'])) {
                 $stmtNot = $con->prepare("UPDATE `waba_ordenes_cobro` SET `notificacion_enviada` = 1 WHERE `id` = ?");
@@ -1666,23 +1725,16 @@ function emitir_orden_sede($con, $id_sede, $fecha_desde, $fecha_hasta, $orden_pe
             'monto_total'  => round($costo_final, 2),
         ];
     } catch (Throwable $e) {
-        if (!$outerTx) {
-            @$con->rollback();
-            if (function_exists('starfi_tx_set_active')) {
-                starfi_tx_set_active($con, false);
-            }
-        } else {
-            @$con->query("ROLLBACK TO SAVEPOINT sp_waba_emitir_orden");
-        }
-        starfi_log_exception('waba_billing', 'Excepción en emitir_orden_sede', [
+        $rollbackCurrentScope();
+        starfi_log_exception('waba_ordenes', 'Excepción en emitir_orden_sede', [
             'id_sede' => $id_sede,
-            'error'   => $e->getMessage(),
+            'detail'  => $e->getMessage(),
         ]);
         return ['status' => 'error', 'message' => 'No se pudo generar la orden de cobro en base de datos.'];
     }
 }
 
-// Si el archivo es requerido en modo librería (ej. cron_waba_billing.php o test_sprint2_qa.php), detenemos aquí
+// Modo librería para cron_waba_billing.php y suites QA
 if (defined('WABA_BILLING_LIB_ONLY') && WABA_BILLING_LIB_ONLY === true) {
     return;
 }
@@ -1690,14 +1742,17 @@ if (defined('WABA_BILLING_LIB_ONLY') && WABA_BILLING_LIB_ONLY === true) {
 // =========================================================================
 // CONTROLADOR HTTP / AJAX
 // =========================================================================
-@ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
 requireAuth();
-requirePermission('waba_ordenes');
-header('Content-Type: application/json; charset=utf-8');
+
+if (!hasPermission('waba_ordenes') && !hasPermission('whatsapp_analytics')) {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Acceso denegado.']);
+    exit;
+}
 
 $agente = getAgenteInfo();
-$es_master = (($agente['rol'] ?? '') === 'MASTER' || intval($agente['id'] ?? 0) === 1);
+$es_master = (strtoupper(trim((string)($agente['rol'] ?? ''))) === 'MASTER' || intval($agente['id'] ?? 0) === 1);
 $id_sede_agente = intval($agente['id_sede'] ?? 0);
 $id_usuario_actual = intval($agente['id'] ?? 0);
 
@@ -1705,6 +1760,7 @@ session_write_close();
 
 $con = getDbConnection();
 if (!$con) {
+    http_response_code(500);
     echo json_encode(['status' => 'error', 'message' => 'Error de conexión a la base de datos']);
     exit;
 }
@@ -1713,12 +1769,50 @@ ensureWabaBillingSchema($con);
 
 $action = trim((string)($_POST['action'] ?? ''));
 
+// Bloqueo explícito de instalación de cron vía HTTP (QA-BUG-CRM3-01)
+if ($action === 'install_cron') {
+    http_response_code(403);
+    registrar_auditoria(
+        'waba_ordenes',
+        'BLOQUEO_INSTALL_CRON_HTTP',
+        'Intento bloqueado de instalar tarea programada vía HTTP; restringido exclusivamente a CLI.',
+        null,
+        ['action' => 'install_cron', 'cli_script' => 'modules/waba_ordenes/test_ia/install_cron_waba.php'],
+        $con,
+        $id_usuario_actual,
+        $id_sede_agente > 0 ? $id_sede_agente : null
+    );
+    echo json_encode([
+        'status'  => 'error',
+        'code'    => 'CLI_ONLY',
+        'message' => 'Por seguridad, el registro de tareas programadas está deshabilitado vía HTTP. Ejecute por consola del servidor: php modules/waba_ordenes/test_ia/install_cron_waba.php',
+    ]);
+    exit;
+}
+
+// Acciones de gestión directa de órdenes requieren permiso waba_ordenes
+$ordenes_module_actions = [
+    'get_orders',
+    'get_order_details',
+    'report_payment',
+    'register_payment',
+    'mark_paid',
+    'verify_payment',
+    'resend_notification',
+    'delete_order',
+];
+if (in_array($action, $ordenes_module_actions, true) && !hasPermission('waba_ordenes')) {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Acceso denegado: su rol no posee autorización para el módulo waba_ordenes.']);
+    exit;
+}
+
 $master_only_actions = [
-    'install_cron',
     'get_sede_config',
     'save_sede_config',
     'check_last_order',
     'generate_order',
+    'emitir_orden',
     'generate_massive_orders',
     'resend_notification',
     'delete_order',
@@ -1728,44 +1822,6 @@ $master_only_actions = [
 if (in_array($action, $master_only_actions, true) && !$es_master) {
     http_response_code(403);
     echo json_encode(['status' => 'error', 'message' => 'Acceso denegado. Esta acción es exclusiva del rol MASTER.']);
-    exit;
-}
-
-if ($action === 'install_cron') {
-    $php_bin = PHP_BINARY;
-    $script_path = realpath(__DIR__ . '/../../cron_waba_billing.php');
-    $task_name = "Starfi_Waba_Billing_Cron";
-
-    if (!$script_path) {
-        echo json_encode(['status' => 'error', 'message' => 'No se encontró el script cron_waba_billing.php.']);
-        exit;
-    }
-
-    $cmd = "schtasks /create /tn \"$task_name\" /tr \"$php_bin -f $script_path\" /sc daily /st 01:00 /f 2>&1";
-    $output = (string)@shell_exec($cmd);
-    $okCron = (
-        stripos($output, 'success') !== false ||
-        stripos($output, 'correcto') !== false ||
-        stripos($output, 'éxito') !== false
-    );
-
-    registrar_auditoria(
-        'waba_billing',
-        'INSTALAR_CRON',
-        'Configuración de tarea programada diaria Starfi_Waba_Billing_Cron',
-        null,
-        ['task_name' => $task_name, 'instalado' => $okCron],
-        $con,
-        $id_usuario_actual,
-        $id_sede_agente
-    );
-
-    if ($okCron) {
-        echo json_encode(['status' => 'success', 'message' => 'Tarea programada instalada correctamente.']);
-    } else {
-        starfi_log_exception('waba_billing', 'Fallo instalando tarea schtasks', ['output' => $output]);
-        echo json_encode(['status' => 'error', 'message' => 'No se pudo registrar la tarea programada en el sistema operativo.']);
-    }
     exit;
 }
 
@@ -1818,7 +1874,6 @@ if ($action === 'save_sede_config') {
     $limite_facturacion = floatval($_POST['limite_facturacion'] ?? 0.00);
     $notas              = trim((string)($_POST['notas'] ?? ''));
 
-    // Capturar estado anterior para auditoría
     $prevSede = null;
     $stmtPs = $con->prepare("SELECT gerente_nombre, gerente_telefono, gerente_email, pref_not_cobro FROM sedes WHERE id = ? LIMIT 1");
     if ($stmtPs) {
@@ -1861,7 +1916,7 @@ if ($action === 'save_sede_config') {
     }
 
     registrar_auditoria(
-        'waba_billing',
+        'waba_ordenes',
         'ACTUALIZAR_TARIFA_SEDE',
         "Configuración de tarifa y contacto de cobro actualizada para sede #$id_sede",
         ['sede' => $prevSede, 'tarifa' => $prevTarifa],
@@ -1895,7 +1950,7 @@ if ($action === 'check_last_order') {
     $tiene_pendiente = false;
     $pendiente_id = null;
 
-    $stmt = $con->prepare("SELECT id, estado, fecha_desde, fecha_hasta FROM waba_ordenes_cobro WHERE id_sede = ? ORDER BY id DESC LIMIT 1");
+    $stmt = $con->prepare("SELECT id, estado, fecha_desde, fecha_hasta FROM waba_ordenes_cobro WHERE id_sede = ? AND estado NOT IN ('FUSIONADO', 'ANULADA') ORDER BY id DESC LIMIT 1");
     if ($stmt) {
         $stmt->bind_param("i", $id_sede);
         $stmt->execute();
@@ -1922,7 +1977,7 @@ if ($action === 'check_last_order') {
     exit;
 }
 
-if ($action === 'generate_order') {
+if ($action === 'generate_order' || $action === 'emitir_orden') {
     $id_sede = intval($_POST['id_sede'] ?? 0);
     $fecha_desde = trim((string)($_POST['fecha_desde'] ?? ''));
     $fecha_hasta = trim((string)($_POST['fecha_hasta'] ?? ''));
@@ -1950,31 +2005,39 @@ if ($action === 'generate_massive_orders') {
     foreach ($sedes as $id_sede) {
         $id = intval($id_sede);
         $res = emitir_orden_sede($con, $id, $fecha_desde, $fecha_hasta, null);
-        if ($res['status'] === 'success') {
+        if (($res['status'] ?? '') === 'success') {
             $exitos++;
         } else {
             $errores++;
-            $mensajes_error[] = "Sede $id: " . htmlspecialchars((string)($res['message'] ?? 'Error'), ENT_QUOTES, 'UTF-8');
+            $mensajes_error[] = "Sede $id: " . (string)($res['message'] ?? 'Error');
         }
     }
 
     registrar_auditoria(
-        'waba_billing',
+        'waba_ordenes',
         'EMISION_MASIVA_ORDENES',
         "Emisión masiva ejecutada ($exitos exitosas, $errores fallidas)",
         null,
         ['fecha_desde' => $fecha_desde, 'fecha_hasta' => $fecha_hasta, 'exitos' => $exitos, 'errores' => $errores],
         $con,
         $id_usuario_actual,
-        $id_sede_agente
+        $id_sede_agente > 0 ? $id_sede_agente : null
     );
 
     if ($exitos > 0 && $errores === 0) {
-        echo json_encode(['status' => 'success', 'message' => "Se generaron $exitos órdenes exitosamente."]);
+        echo json_encode(['status' => 'success', 'message' => "Se generaron $exitos órdenes exitosamente.", 'warnings' => []]);
     } elseif ($exitos > 0 && $errores > 0) {
-        echo json_encode(['status' => 'success', 'message' => "Se generaron $exitos órdenes, pero hubo $errores advertencias.<br>" . implode("<br>", $mensajes_error)]);
+        echo json_encode([
+            'status'   => 'success',
+            'message'  => "Se generaron $exitos órdenes con $errores observaciones.",
+            'warnings' => $mensajes_error,
+        ]);
     } else {
-        echo json_encode(['status' => 'error', 'message' => "No se pudieron generar las órdenes:<br>" . implode("<br>", $mensajes_error)]);
+        echo json_encode([
+            'status'   => 'error',
+            'message'  => "No se pudieron generar las órdenes solicitadas.",
+            'warnings' => $mensajes_error,
+        ]);
     }
     exit;
 }
@@ -2322,7 +2385,7 @@ if ($action === 'resend_notification') {
             }
         }
         registrar_auditoria(
-            'waba_billing',
+            'waba_ordenes',
             'REENVIAR_NOTIFICACION_ORDEN',
             "Notificación de cobro reenviada para orden #$id_orden",
             ['id_orden' => $id_orden, 'notificacion_enviada' => $prevNotif],
@@ -2376,7 +2439,7 @@ if ($action === 'delete_order') {
         }
 
         registrar_auditoria(
-            'waba_billing',
+            'waba_ordenes',
             'ELIMINAR_ORDEN_COBRO',
             "Orden de cobro #$id_orden eliminada permanentemente",
             starfi_normalize_waba_order_row($ordPrev),
@@ -2390,7 +2453,7 @@ if ($action === 'delete_order') {
         echo json_encode(['status' => 'success', 'message' => 'Orden eliminada correctamente.']);
     } catch (Throwable $e) {
         @$con->rollback();
-        starfi_log_exception('waba_billing', 'Error eliminando orden WABA', ['id_orden' => $id_orden, 'error' => $e->getMessage()]);
+        starfi_log_exception('waba_ordenes', 'Error eliminando orden WABA', ['id_orden' => $id_orden, 'detail' => $e->getMessage()]);
         echo json_encode(['status' => 'error', 'message' => 'No se pudo eliminar la orden de cobro.']);
     }
     exit;

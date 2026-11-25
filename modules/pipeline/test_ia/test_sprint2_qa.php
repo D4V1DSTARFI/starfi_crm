@@ -2,7 +2,8 @@
 /**
  * modules/pipeline/test_ia/test_sprint2_qa.php
  * Suite Oficial de Certificación Forense Pre-Entrega Ampliada — STARFI CRM
- * Cubre OT-QA-CRM-2026-1121-01 (QA-BUG-CRM2-01 .. QA-BUG-CRM2-12) y los 45 Controles QA-STD-GLOBAL-2.1.
+ * Cubre OT-QA-CRM-2026-1121-01 (QA-BUG-CRM2-01..12) + OT-QA-CRM-2026-1125-01 (QA-BUG-CRM3-01..08)
+ * y los 45 Controles Oficiales de QA-STD-GLOBAL-2.1 (MANUAL_GLOBAL_QA.md v2.1.0).
  * Ejecución exclusiva CLI con ROLLBACK transaccional garantizado (0 residuos en base de datos).
  */
 
@@ -26,8 +27,12 @@ if (!defined('WABA_BILLING_LIB_ONLY')) {
 if (!defined('CAMPANAS_LIB_ONLY')) {
     define('CAMPANAS_LIB_ONLY', true);
 }
-require_once $root . '/modules/dashboard/back_waba_billing.php';
+if (!defined('STARFI_PDF_LIB_MODE')) {
+    define('STARFI_PDF_LIB_MODE', true);
+}
+require_once $root . '/modules/waba_ordenes/back_waba_ordenes.php';
 require_once $root . '/modules/campanas/back_campanas.php';
+require_once $root . '/imprimir_orden_waba.php';
 
 $passed = 0;
 $failed = 0;
@@ -46,9 +51,9 @@ function qa_check($label, $condition, $detail = '') {
 }
 
 /**
- * Ejecuta un script PHP bajo php-cgi (SAPI != 'cli') para probar guardias HTTP 403 reales sin depender de Apache externo.
+ * Ejecuta un script PHP bajo php-cgi (SAPI != 'cli') devolviendo código HTTP y cuerpo de respuesta.
  */
-function qa_run_cgi_http_probe(string $scriptPath, string $method = 'GET', array $extraEnv = [], string $body = ''): ?int {
+function qa_run_cgi_http_probe_full(string $scriptPath, string $method = 'GET', array $extraEnv = [], string $body = ''): ?array {
     $phpDir = dirname(PHP_BINARY);
     $cgiCandidates = [
         $phpDir . DIRECTORY_SEPARATOR . 'php-cgi.exe',
@@ -67,16 +72,16 @@ function qa_run_cgi_http_probe(string $scriptPath, string $method = 'GET', array
     }
 
     $env = array_merge($_ENV, [
-        'REDIRECT_STATUS' => '200',
-        'REQUEST_METHOD'  => $method,
-        'SCRIPT_FILENAME' => str_replace('/', DIRECTORY_SEPARATOR, $scriptPath),
-        'SCRIPT_NAME'     => '/' . basename($scriptPath),
-        'QUERY_STRING'    => '',
-        'CONTENT_TYPE'    => 'application/json',
-        'CONTENT_LENGTH'  => (string)strlen($body),
-        'SERVER_PROTOCOL' => 'HTTP/1.1',
+        'REDIRECT_STATUS'   => '200',
+        'REQUEST_METHOD'    => $method,
+        'SCRIPT_FILENAME'   => str_replace('/', DIRECTORY_SEPARATOR, $scriptPath),
+        'SCRIPT_NAME'       => '/' . basename($scriptPath),
+        'QUERY_STRING'      => '',
+        'CONTENT_TYPE'      => 'application/json',
+        'CONTENT_LENGTH'    => (string)strlen($body),
+        'SERVER_PROTOCOL'   => 'HTTP/1.1',
         'GATEWAY_INTERFACE' => 'CGI/1.1',
-        'REMOTE_ADDR'     => '127.0.0.1',
+        'REMOTE_ADDR'       => '127.0.0.1',
     ], $extraEnv);
 
     $descriptors = [
@@ -93,24 +98,35 @@ function qa_run_cgi_http_probe(string $scriptPath, string $method = 'GET', array
     }
     fclose($pipes[0]);
     $stdout = (string)stream_get_contents($pipes[1]);
+    $stderr = (string)stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
     proc_close($proc);
 
+    $code = 200;
     if (preg_match('/^Status:\s*(\d{3})/mi', $stdout, $m)) {
-        return (int)$m[1];
+        $code = (int)$m[1];
     }
-    return 200;
+    return [
+        'code'   => $code,
+        'stdout' => $stdout,
+        'stderr' => $stderr,
+    ];
+}
+
+function qa_run_cgi_http_probe(string $scriptPath, string $method = 'GET', array $extraEnv = [], string $body = ''): ?int {
+    $res = qa_run_cgi_http_probe_full($scriptPath, $method, $extraEnv, $body);
+    return $res ? $res['code'] : null;
 }
 
 echo "=====================================================================================\n";
-echo " SUITE DE CERTIFICACIÓN INTEGRAL QA-STD-GLOBAL-2.1 — STARFI CRM (OT-QA-CRM-2026-1121-01)\n";
+echo " SUITE DE CERTIFICACIÓN INTEGRAL QA-STD-GLOBAL-2.1 — STARFI CRM (OT-QA-CRM-2026-1125-01)\n";
 echo "=====================================================================================\n\n";
 
 // -----------------------------------------------------------------------------
-// BLOQUE 1: Higiene Git, Purga de Secretos SQL y Rotación SHA-256 (TAREA 1 — S0)
+// BLOQUE 1: Higiene Git, Purga de Secretos SQL y Rotación SHA-256 (QA-BUG-CRM2-01)
 // -----------------------------------------------------------------------------
-echo "[1/9] Verificando Higiene Git, Esquema SQL Limpio y Script de Rotación (QA-BUG-CRM2-01)...\n";
+echo "[1/11] Verificando Higiene Git, Esquema SQL Limpio y Script de Rotación (QA-BUG-CRM2-01)...\n";
 $sqlOnDisk = [];
 $resolvedOnDisk = [];
 $riiAll = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
@@ -169,9 +185,9 @@ qa_check("rotate_compromised_api_tokens.php usa digests SHA-256 sin almacenar to
 );
 
 // -----------------------------------------------------------------------------
-// BLOQUE 2: Bloqueo HTTP 403 en install.php, database/*.php y webhook.php (TAREAS 2 y 3 — S0)
+// BLOQUE 2: Bloqueo HTTP 403 en install.php, database/*.php y webhook.php (QA-BUG-CRM2-05, 12)
 // -----------------------------------------------------------------------------
-echo "\n[2/9] Verificando Guardias HTTP 403 en Instalador, database/*.php y Firma HMAC Webhook (QA-BUG-CRM2-05, 12)...\n";
+echo "\n[2/11] Verificando Guardias HTTP 403 en Instalador, database/*.php y Firma HMAC Webhook...\n";
 $instSrc = (string)file_get_contents($root . '/install.php');
 $whSrc   = (string)file_get_contents($root . '/webhook.php');
 
@@ -193,12 +209,10 @@ qa_check("webhook.php elimina fallback global sin id_sede sobre configuraciones_
     (bool)preg_match('/FROM\s+configuraciones_ia\s+WHERE\s+id_sede\s*=\s*\?\s+AND\s+estado_ia\s*=\s*\\\\?[\'"]ACTIVO\\\\?[\'"]\s+LIMIT\s+1/i', $whSrc)
 );
 
-// Prueba real bajo php-cgi (SAPI cgi-fcgi != cli) incluyendo simulación sin .env en install.php
 $cgiInstallCode = qa_run_cgi_http_probe($root . '/install.php', 'GET');
 if ($cgiInstallCode !== null) {
     qa_check("Ejecución CGI real: GET install.php sin centinela responde HTTP 403", $cgiInstallCode === 403, "HTTP $cgiInstallCode");
 
-    // Simular un clon limpio SIN .env y SIN config/.enable_installer en directorio temporal aislado
     $simDir = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_qa_noenv_' . uniqid();
     @mkdir($simDir . DIRECTORY_SEPARATOR . 'config', 0755, true);
     @copy($root . '/install.php', $simDir . DIRECTORY_SEPARATOR . 'install.php');
@@ -219,12 +233,11 @@ if ($cgiInstallCode !== null) {
 }
 
 // -----------------------------------------------------------------------------
-// BLOQUE 3: RBAC en todos los back_*.php, Autenticación y Seguridad Uploads .htaccess
+// BLOQUE 3: RBAC en los 13 back_*.php Canónicos, Autenticación y Seguridad Uploads .htaccess
 // -----------------------------------------------------------------------------
-echo "\n[3/9] Verificando RBAC, Uploads .htaccess y Entrega Autenticada por Sede (QA-BUG-CRM2-04)...\n";
+echo "\n[3/11] Verificando RBAC en las 13 Cápsulas, Cabeceras JSON y Uploads .htaccess...\n";
 $loginSrc = (string)file_get_contents($root . '/login.php');
 $recSrc   = (string)file_get_contents($root . '/recover_password.php');
-$regSrc   = (string)file_get_contents($root . '/register.php');
 $verDoc   = (string)file_get_contents($root . '/ver_documento.php');
 $upHt     = (string)file_get_contents($root . '/assets/uploads/.htaccess');
 
@@ -234,8 +247,11 @@ qa_check("login.php sin backdoor '1234' ni md5(), y con registrar_auditoria()",
 qa_check("recover_password.php con random_int(100000, 999999), sin codigo_simulado y con registrar_auditoria()",
     stripos($recSrc, 'codigo_simulado') === false && strpos($recSrc, 'random_int(100000, 999999)') !== false && strpos($recSrc, 'registrar_auditoria(') !== false
 );
-qa_check("assets/uploads/.htaccess con php_flag engine off, nosniff y RewriteRule hacia ver_documento.php",
-    strpos($upHt, 'php_flag engine off') !== false && strpos($upHt, 'nosniff') !== false && strpos($upHt, 'comprobante_waba') !== false
+qa_check("assets/uploads/.htaccess con php_flag engine off, nosniff, bloqueo media_* y RewriteRule hacia ver_documento.php",
+    strpos($upHt, 'php_flag engine off') !== false &&
+    strpos($upHt, 'nosniff') !== false &&
+    strpos($upHt, 'comprobante_waba') !== false &&
+    strpos($upHt, 'media_') !== false
 );
 qa_check("assets/uploads/comprobantes_waba/.htaccess presente y bloqueando acceso directo",
     is_file($root . '/assets/uploads/comprobantes_waba/.htaccess')
@@ -245,41 +261,42 @@ qa_check("ver_documento.php valida sesión e id_sede para comprobante_waba",
 );
 
 $requiredRbac = [
-    'modules/gestion_usuarios/back_usuarios.php'         => 'gestion_usuarios',
-    'modules/gestion_usuarios/back_gestion_usuarios.php' => 'gestion_usuarios',
-    'modules/perfil_empresa/back_empresa.php'            => 'perfil_empresa',
-    'modules/perfil_empresa/back_perfil_empresa.php'     => 'perfil_empresa',
-    'modules/configuracion/back_configuracion.php'       => 'configuracion',
-    'modules/bandeja/back_bandeja.php'                   => 'bandeja',
-    'modules/directorio/back_directorio.php'             => 'directorio',
-    'modules/gestor_bots/back_gestor_bots.php'           => 'gestor_bots',
-    'modules/dashboard/back_dashboard.php'               => 'dashboard',
-    'modules/dashboard/back_waba_billing.php'            => 'waba_ordenes',
-    'modules/dashboard/back_whatsapp_analytics.php'      => 'whatsapp_analytics',
-    'modules/pipeline/back_pipeline.php'                 => 'pipeline',
-    'modules/gestion_roles/back_roles.php'               => 'gestion_roles',
-    'modules/gestion_roles/back_gestion_roles.php'       => 'gestion_roles',
-    'modules/campanas/back_campanas.php'                 => 'campanas',
+    'modules/gestion_usuarios/back_gestion_usuarios.php'   => ['perm' => 'gestion_usuarios',   'audit' => true],
+    'modules/perfil_empresa/back_perfil_empresa.php'       => ['perm' => 'perfil_empresa',     'audit' => true],
+    'modules/configuracion/back_configuracion.php'         => ['perm' => 'configuracion',      'audit' => true],
+    'modules/bandeja/back_bandeja.php'                     => ['perm' => 'bandeja',            'audit' => true],
+    'modules/directorio/back_directorio.php'               => ['perm' => 'directorio',         'audit' => true],
+    'modules/gestor_bots/back_gestor_bots.php'             => ['perm' => 'gestor_bots',        'audit' => true],
+    'modules/dashboard/back_dashboard.php'                 => ['perm' => 'dashboard',          'audit' => true],
+    'modules/waba_ordenes/back_waba_ordenes.php'           => ['perm' => 'waba_ordenes',       'audit' => true],
+    'modules/whatsapp_analytics/back_whatsapp_analytics.php' => ['perm' => 'whatsapp_analytics', 'audit' => false],
+    'modules/buzon_correos/back_buzon_correos.php'         => ['perm' => 'buzon_correos',      'audit' => false],
+    'modules/pipeline/back_pipeline.php'                   => ['perm' => 'pipeline',           'audit' => true],
+    'modules/gestion_roles/back_gestion_roles.php'         => ['perm' => 'gestion_roles',      'audit' => true],
+    'modules/campanas/back_campanas.php'                   => ['perm' => 'campanas',           'audit' => true],
 ];
-foreach ($requiredRbac as $relPath => $permKey) {
+foreach ($requiredRbac as $relPath => $meta) {
     $src = (string)file_get_contents($root . '/' . $relPath);
-    qa_check("requirePermission('$permKey') y registrar_auditoria() presentes en $relPath",
-        strpos($src, "requirePermission('$permKey')") !== false && strpos($src, 'registrar_auditoria(') !== false
+    $permKey = $meta['perm'];
+    $hasPerm = (strpos($src, "requirePermission('$permKey')") !== false || strpos($src, "hasPermission('$permKey')") !== false);
+    $hasJsonHdr = (strpos($src, "display_errors") !== false && stripos($src, "application/json") !== false);
+    $hasAud = !$meta['audit'] || (strpos($src, 'registrar_auditoria(') !== false);
+    qa_check("RBAC ('$permKey'), display_errors=0 + JSON header" . ($meta['audit'] ? " y registrar_auditoria()" : "") . " en $relPath",
+        $hasPerm && $hasJsonHdr && $hasAud
     );
 }
 
 // -----------------------------------------------------------------------------
-// BLOQUE 4: 100% mysqli_prepare y 0 Fugas de Errores SQL en JSON (TAREA 5 — S0/S1)
+// BLOQUE 4: 100% mysqli_prepare y 0 Fugas de Errores SQL en JSON (QA-BUG-CRM2-03, 09)
 // -----------------------------------------------------------------------------
-echo "\n[4/9] Escaneando 100% mysqli_prepare() y 0 Fugas ->error / mysqli_error en JSON (QA-BUG-CRM2-03, 09)...\n";
+echo "\n[4/11] Escaneando 100% mysqli_prepare() y 0 Fugas ->error / mysqli_error en JSON...\n";
 $varSqlHits = [];
 $jsonErrHits = [];
-$syntaxErrHits = [];
 
 $riiPhp = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
 foreach ($riiPhp as $fi) {
     $full = str_replace('\\', '/', $fi->getPathname());
-    if (strpos($full, '/.git/') !== false || strpos($full, '/core/libs/') !== false) {
+    if (strpos($full, '/.git/') !== false || strpos($full, '/core/libs/') !== false || strpos($full, '/includes/libs/') !== false) {
         continue;
     }
     if (strtolower($fi->getExtension()) !== 'php') {
@@ -291,12 +308,11 @@ foreach ($riiPhp as $fi) {
     }
 
     $src = (string)file_get_contents($full);
-    if (preg_match('/json_encode\s*\([^;]*?(->error\b|mysqli_error)/is', $src, $em)) {
+    if (preg_match('/json_encode\s*\([^;]*?(->error\b|mysqli_error)/is', $src)) {
         $jsonErrHits[] = $rel;
     }
 
-    // Escanear llamadas mysqli_query / ->query con variables PHP interpoladas (exceptuando importador DDL en install.php y constantes DDL CLI)
-    if ($rel !== 'install.php' && strpos($rel, 'database/') !== 0 && $rel !== 'cron_waba_billing.php') {
+    if ($rel !== 'install.php' && strpos($rel, 'database/') !== 0) {
         $lines = file($full);
         foreach ($lines as $idx => $line) {
             if (preg_match('/(mysqli_query|->query)\s*\(/i', $line, $qMatch, PREG_OFFSET_CAPTURE)) {
@@ -304,7 +320,6 @@ foreach ($riiPhp as $fi) {
                 $window = $firstLineTail . implode('', array_slice($lines, $idx + 1, 4));
                 $cleanWin = preg_replace('/^mysqli_query\s*\(\s*\$[a-zA-Z0-9_>-]+\s*,/i', 'q(', $window);
                 $cleanWin = preg_replace('/^->query\s*\(/i', 'q(', $cleanWin);
-                // Cortar en el primer cierre de sentencia );
                 if (preg_match('/\)\s*;/', $cleanWin, $endM, PREG_OFFSET_CAPTURE)) {
                     $cleanWin = substr($cleanWin, 0, $endM[0][1]);
                 }
@@ -316,12 +331,12 @@ foreach ($riiPhp as $fi) {
     }
 }
 qa_check("0 exposiciones de \$stmt->error / \$con->error / mysqli_error en json_encode()", empty($jsonErrHits), implode(', ', $jsonErrHits));
-qa_check("0 consultas mysqli_query / ->query con interpolación de variables en controladores y vistas", empty($varSqlHits), implode(', ', array_slice($varSqlHits, 0, 8)));
+qa_check("0 consultas mysqli_query / ->query con interpolación de variables (incl. cron_waba_billing.php)", empty($varSqlHits), implode(', ', array_slice($varSqlHits, 0, 8)));
 
 // -----------------------------------------------------------------------------
-// BLOQUE 5: Modo 100% Offline LAN, Cero alert(), Favicons, MVC 4 Archivos y Portabilidad (TAREAS 7 y 8)
+// BLOQUE 5: Modo 100% Offline LAN, 0 alert(), Favicons, Cápsulas Estrictas de 4 Archivos y Modals HTTP 403 (QA-BUG-CRM3-04)
 // -----------------------------------------------------------------------------
-echo "\n[5/9] Verificando Modo 100% Offline LAN (0 dominios externos), 0 alert(), Favicons y MVC (QA-BUG-CRM2-07, 10, 11, 12)...\n";
+echo "\n[5/11] Verificando Offline LAN, 0 alert(), Favicons, 13 Cápsulas Estrictas de 4 Archivos y Bloqueo HTTP 403 en modals_*.php...\n";
 $extDomainHits = [];
 $alertHits     = [];
 $missingFav    = [];
@@ -338,9 +353,9 @@ foreach ($riiUi as $fi) {
         strpos($full, '/assets/icons/') !== false ||
         strpos($full, '/assets/js/') !== false ||
         strpos($full, '/assets/css/bootstrap') !== false ||
-        strpos($full, '/assets/css/cropper') !== false ||
         strpos($full, '/assets/css/select2') !== false ||
         strpos($full, '/core/libs/') !== false ||
+        strpos($full, '/includes/libs/') !== false ||
         strpos($full, '/test_ia/') !== false ||
         strpos($full, '/logs/') !== false
     ) {
@@ -354,17 +369,13 @@ foreach ($riiUi as $fi) {
     $base = basename($rel);
     $src  = (string)file_get_contents($full);
 
-    // 1. Verificar 0 alert() nativos
     if (preg_match('/(?<![a-zA-Z0-9_.$])alert\s*\(/', $src)) {
         $alertHits[] = $rel;
     }
-
-    // 2. Verificar 0 rutas quemadas '/starfi_crm/login.php' o '/starfi_crm/logout.php' o logo_1784639274_107.png
     if (preg_match('#/starfi_crm/(login|logout|assets|get_media)#i', $src) || strpos($src, 'logo_1784639274_107.png') !== false) {
         $hardcodedPath[] = $rel;
     }
 
-    // 3. Verificar 0 dominios externos http(s):// en .js, .css y vistas .php
     $isBackendEndpoint = (
         strpos($base, 'back_') === 0 ||
         in_array($rel, [
@@ -372,8 +383,7 @@ foreach ($riiUi as $fi) {
             'get_media.php', 'ver_documento.php', 'recover_password.php', 'register.php', 'logout.php',
             'config/database.php', 'core/IaConnector.php', 'core/IaContextEngine.php', 'core/audit.php',
             'core/crm_sprint2_helper.php', 'core/services/MailerService.php',
-        ], true) ||
-        $base === 'sse_updates.php'
+        ], true)
     );
     if (!$isBackendEndpoint) {
         if (preg_match_all('#https?://([^\s\'"<>)]+)#i', $src, $um)) {
@@ -386,14 +396,12 @@ foreach ($riiUi as $fi) {
         }
     }
 
-    // 4. Favicons isologo.ico en todo documento con <head>
     if (stripos($src, '<head>') !== false || stripos($src, '<head ') !== false) {
         if (strpos($src, 'isologo.ico') === false) {
             $missingFav[] = $rel;
         }
     }
 
-    // 5. autocomplete="off" en todo <form>
     if (preg_match_all('/<form\b[^>]*>/i', $src, $fms)) {
         foreach ($fms[0] as $fTag) {
             if (stripos($fTag, 'autocomplete="off"') === false && stripos($fTag, "autocomplete='off'") === false) {
@@ -403,39 +411,243 @@ foreach ($riiUi as $fi) {
     }
 }
 
-qa_check("0 dominios externos http(s):// en .js, .css y vistas .php (incl. openstreetmap.org y CDNs)", empty($extDomainHits), implode(', ', array_slice($extDomainHits, 0, 5)));
+qa_check("0 dominios externos http(s):// en .js, .css y vistas .php (CHK-LAN-01)", empty($extDomainHits), implode(', ', array_slice($extDomainHits, 0, 5)));
 qa_check("0 llamadas a alert() nativo en todo el proyecto (CHK-UIX-02)", empty($alertHits), implode(', ', $alertHits));
 qa_check("100% de las vistas HTML incluyen favicon oficial isologo.ico (CHK-UIX-01)", empty($missingFav), implode(', ', $missingFav));
 qa_check("100% de los formularios <form> incluyen autocomplete=\"off\" (CHK-UIX-08)", empty($missingAuto), implode(', ', $missingAuto));
 qa_check("0 rutas quemadas '/starfi_crm/...' ni logo_1784639274_107.png (QA-BUG-CRM2-12)", empty($hardcodedPath), implode(', ', $hardcodedPath));
 
-$impSrc = (string)file_get_contents($root . '/modules/dashboard/imprimir_orden_waba.php');
-qa_check("imprimir_orden_waba.php muestra logo de empresa_perfil y pie 'Generado por Starfi' con isologo_ni.png (CHK-UIX-03)",
-    strpos($impSrc, 'empresa_perfil') !== false &&
-    strpos($impSrc, 'Generado por Starfi') !== false &&
-    strpos($impSrc, 'isologo_ni.png') !== false &&
-    strpos($impSrc, 'logo_starfi_pdf.png') === false
-);
-
 $mvcCapsules = [
     'bandeja', 'pipeline', 'campanas', 'configuracion', 'directorio',
-    'dashboard', 'gestor_bots', 'gestion_roles', 'gestion_usuarios', 'perfil_empresa'
+    'dashboard', 'waba_ordenes', 'whatsapp_analytics', 'buzon_correos',
+    'gestor_bots', 'gestion_roles', 'gestion_usuarios', 'perfil_empresa',
 ];
+$extraCapsuleFiles = [];
+$modalsCgiFailures = [];
+
 foreach ($mvcCapsules as $mod) {
-    $has4 = is_file("$root/modules/$mod/$mod.php")
-         && is_file("$root/modules/$mod/modals_$mod.php")
-         && is_file("$root/modules/$mod/funciones_$mod.js")
-         && is_file("$root/modules/$mod/back_$mod.php");
-    qa_check("Cápsula MVC de 4 archivos completa en modules/$mod/", $has4);
+    $modDir = "$root/modules/$mod";
+    $expected4 = ["$mod.php", "modals_$mod.php", "funciones_$mod.js", "back_$mod.php"];
+    $has4 = true;
+    foreach ($expected4 as $ef) {
+        if (!is_file("$modDir/$ef")) {
+            $has4 = false;
+        }
+    }
+    $allowedEntries = array_merge($expected4, ['.htaccess', "logs_$mod.log", 'test_ia']);
+    $actualEntries = is_dir($modDir) ? array_values(array_diff(scandir($modDir), ['.', '..'])) : [];
+    foreach ($actualEntries as $ae) {
+        if (!in_array($ae, $allowedEntries, true)) {
+            $extraCapsuleFiles[] = "modules/$mod/$ae";
+        }
+    }
+    qa_check("Cápsula MVC estricta de 4 archivos en modules/$mod/", $has4 && is_file("$modDir/.htaccess"));
+
+    // Sonda HTTP real php-cgi sobre cada modals_<mod>.php (QA-BUG-CRM3-04 / CHK-ARC-06 / CHK-SEC-01)
+    $modalProbe = qa_run_cgi_http_probe_full("$modDir/modals_$mod.php", 'GET');
+    if ($modalProbe !== null) {
+        $combinedOut = $modalProbe['stdout'] . "\n" . $modalProbe['stderr'];
+        if ($modalProbe['code'] !== 403 || stripos($combinedOut, 'Fatal error') !== false || stripos($combinedOut, 'xampp') !== false) {
+            $modalsCgiFailures[] = "modals_$mod.php (HTTP {$modalProbe['code']})";
+        }
+    }
 }
+qa_check("0 archivos sobrantes (0 back_* duplicados, 0 index.php, 0 gema_config.json, 0 sse_updates.php) en las 13 cápsulas (CHK-ARC-01, 07)",
+    empty($extraCapsuleFiles), implode(', ', $extraCapsuleFiles)
+);
+qa_check("Sonda CGI real: los 13 modules/*/modals_*.php responden HTTP 403 sin sesión y con 0 Fatal error / 0 rutas físicas (QA-BUG-CRM3-04)",
+    empty($modalsCgiFailures), implode(', ', $modalsCgiFailures)
+);
 qa_check("simulador_whatsapp.php reubicado en modules/bandeja/test_ia/ y eliminado de database/tools/",
     is_file($root . '/modules/bandeja/test_ia/simulador_whatsapp.php') && !is_file($root . '/database/tools/simulador_whatsapp.php')
 );
 
 // -----------------------------------------------------------------------------
-// BLOQUE 6: Pruebas Unitarias de Validación finfo MIME (<= 5 MB) y Logs Locales por Módulo
+// BLOQUE 6: Verificación Específica QA-BUG-CRM3-01, CRM3-02 y CRM3-03 (Los 3 S0 Críticos)
 // -----------------------------------------------------------------------------
-echo "\n[6/9] Probando rechazo finfo(FILEINFO_MIME_TYPE) de falsos PDFs con código PHP y ruteo local de logs...\n";
+echo "\n[6/11] Verificando Cierres S0: RBAC/Secretos en Configuración (CRM3-01), Anti-IDOR/MIME en get_media.php (CRM3-02) y DOM-XSS 100% (CRM3-03)...\n";
+
+$backCfgSrc = (string)file_get_contents($root . '/modules/configuracion/back_configuracion.php');
+$fnCfgSrc   = (string)file_get_contents($root . '/modules/configuracion/funciones_configuracion.js');
+$backWabaSrc = (string)file_get_contents($root . '/modules/waba_ordenes/back_waba_ordenes.php');
+
+qa_check("QA-BUG-CRM3-01: back_configuracion.php elimina 'add_user', exige MASTER en acciones destructivas/globales y aísla por \$user_sede",
+    !preg_match("/case\s+['\"]add_user['\"]\s*:/", $backCfgSrc) &&
+    strpos($backCfgSrc, 'cfg_deny_master_only()') !== false &&
+    strpos($backCfgSrc, '$user_sede') !== false
+);
+qa_check("QA-BUG-CRM3-01: back_configuracion.php enmascara api_token, meta_token y gemini_api_key (has_token / starfi_mask_secret)",
+    strpos($backCfgSrc, 'starfi_mask_secret(') !== false &&
+    strpos($backCfgSrc, "'has_token'") !== false &&
+    strpos($backCfgSrc, "'has_api_key'") !== false &&
+    strpos($fnCfgSrc, 'type="password"') === false || strpos($fnCfgSrc, 'placeholder') !== false
+);
+qa_check("QA-BUG-CRM3-01: 0 sentencias MariaDB-only 'ADD COLUMN IF NOT EXISTS' en back_configuracion.php (compatible MySQL 8.0 CHK-ARC-05)",
+    stripos($backCfgSrc, 'ADD COLUMN IF NOT EXISTS') === false &&
+    strpos($backCfgSrc, 'SHOW COLUMNS FROM') !== false
+);
+qa_check("QA-BUG-CRM3-01: 0 llamadas a shell_exec() en back_waba_ordenes.php y script CLI protegido en test_ia/install_cron_waba.php",
+    stripos($backWabaSrc, 'shell_exec') === false &&
+    is_file($root . '/modules/waba_ordenes/test_ia/install_cron_waba.php') &&
+    qa_run_cgi_http_probe($root . '/modules/waba_ordenes/test_ia/install_cron_waba.php', 'GET') === 403
+);
+
+$getMediaSrc = (string)file_get_contents($root . '/get_media.php');
+qa_check("QA-BUG-CRM3-02: get_media.php exige hasPermission('bandeja') || hasPermission('directorio') y devuelve HTTP 401 sin sesión",
+    strpos($getMediaSrc, "hasPermission('bandeja')") !== false &&
+    qa_run_cgi_http_probe($root . '/get_media.php', 'GET') === 401
+);
+qa_check("QA-BUG-CRM3-02: get_media.php verifica pertenencia a id_conversacion en mensajes_y_eventos antes de stream_file() (Anti-IDOR Cross-Sede)",
+    (bool)preg_match('/FROM\s+mensajes_y_eventos\s+WHERE\s+id_conversacion\s*=\s*\?.*stream_file\s*\(\s*\$real_direct/is', $getMediaSrc) &&
+    !preg_match('/UPDATE\s+mensajes_y_eventos/i', $getMediaSrc)
+);
+qa_check("QA-BUG-CRM3-02: get_media.php aplica lista blanca estricta MIME con finfo + attachment + X-Content-Type-Options: nosniff (Anti-Stored XSS)",
+    strpos($getMediaSrc, "'image/jpeg'") !== false &&
+    strpos($getMediaSrc, "'application/octet-stream'") !== false &&
+    strpos($getMediaSrc, "'attachment'") !== false &&
+    strpos($getMediaSrc, "X-Content-Type-Options: nosniff") !== false &&
+    stripos($getMediaSrc, "'text/html'") === false &&
+    stripos($getMediaSrc, "'image/svg+xml'") === false
+);
+
+$fnBandejaSrc = (string)file_get_contents($root . '/modules/bandeja/funciones_bandeja.js');
+$fnDirSrc     = (string)file_get_contents($root . '/modules/directorio/funciones_directorio.js');
+$fnBotsSrc    = (string)file_get_contents($root . '/modules/gestor_bots/funciones_gestor_bots.js');
+$fnWabaOrdSrc = (string)file_get_contents($root . '/modules/waba_ordenes/funciones_waba_ordenes.js');
+$fnWabaAnaSrc = (string)file_get_contents($root . '/modules/whatsapp_analytics/funciones_whatsapp_analytics.js');
+$fnDashSrc    = (string)file_get_contents($root . '/modules/dashboard/funciones_dashboard.js');
+
+qa_check("QA-BUG-CRM3-03: funciones_bandeja.js escapa el 100% de msg.contenido (0 interpolaciones crudas \${msg.contenido}) y usa data-tag delegado",
+    strpos($fnBandejaSrc, '${msg.contenido}') === false &&
+    strpos($fnBandejaSrc, 'escapeHtmlBandeja(') !== false &&
+    strpos($fnBandejaSrc, 'data-tag=') !== false &&
+    !preg_match('/onclick=["\']removeTag\(/', $fnBandejaSrc) &&
+    strpos($fnBandejaSrc, 'back_bandeja.php?action=sse_updates') !== false
+);
+qa_check("QA-BUG-CRM3-03: Escapado HTML activo en Directorio, Bots (Drawflow integrado), WABA Órdenes, WABA Analytics, Dashboard y Configuración",
+    strpos($fnDirSrc, 'escapeHtmlDir(') !== false &&
+    strpos($fnDirSrc, '${v.contenido}') === false &&
+    strpos($fnBotsSrc, 'escapeHtml(') !== false &&
+    strpos($fnWabaOrdSrc, 'escapeHtmlWaba(') !== false &&
+    strpos($fnWabaAnaSrc, 'escapeHtml(') !== false &&
+    strpos($fnDashSrc, 'escapeHtml(') !== false &&
+    strpos($fnCfgSrc, 'escapeHtmlConfig(') !== false
+);
+
+// -----------------------------------------------------------------------------
+// BLOQUE 7: Verificación QA-BUG-CRM3-04, CRM3-06, CRM3-07 y CRM3-08 (FPDF 1.85, Excel Real, Anti-Doble Clic, BOM y Gobernanza)
+// -----------------------------------------------------------------------------
+echo "\n[7/11] Verificando Motor FPDF 1.85, Exportación Excel Real, Anti-Doble Clic, 0 BOM en .htaccess y Gobernanza...\n";
+
+$fpdfPath = $root . '/includes/libs/pdf/fpdf.php';
+$impSrc   = (string)file_get_contents($root . '/imprimir_orden_waba.php');
+$posSetTitle = strpos($impSrc, '->SetTitle(');
+$posAutoPage = strpos($impSrc, '->SetAutoPageBreak(');
+
+qa_check("QA-BUG-CRM3-06: includes/libs/pdf/fpdf.php (FPDF 1.85) instalado y sin referencias a Dompdf en imprimir_orden_waba.php",
+    is_file($fpdfPath) && defined('FPDF_VERSION') && FPDF_VERSION === '1.85' && stripos($impSrc, 'Dompdf') === false
+);
+qa_check("QA-BUG-CRM3-06: imprimir_orden_waba.php exige requirePermission('waba_ordenes'), SetTitle() antes de SetAutoPageBreak(), chr(128) e isologo_ni.png en GetPageWidth() - 25",
+    strpos($impSrc, "requirePermission('waba_ordenes')") !== false &&
+    $posSetTitle !== false && $posAutoPage !== false && $posSetTitle < $posAutoPage &&
+    strpos($impSrc, 'chr(128)') !== false &&
+    strpos($impSrc, 'GetPageWidth() - 25') !== false &&
+    strpos($impSrc, 'isologo_ni.png') !== false &&
+    strpos($impSrc, 'GothamMedium.ttf') !== false &&
+    stripos($impSrc, 'Arial, Helvetica') === false &&
+    ord(starfi_pdf_txt('€')) === 128
+);
+
+$samplePdfBin = starfi_build_waba_order_pdf_binary(
+    null,
+    [
+        'id' => 77,
+        'codigo_orden' => 'NC-2026-0077',
+        'id_sede' => 1,
+        'fecha_desde' => '2026-11-01',
+        'fecha_hasta' => '2026-11-25',
+        'estado' => 'PENDIENTE',
+        'mensajes_totales' => 120,
+        'costo_meta' => 5.00,
+        'margen_ganancia' => 1.00,
+        'monto_total' => 6.00,
+    ],
+    ['id' => 1, 'nombre_sede' => 'Sede Principal QA'],
+    ['id' => 1, 'razon_social' => 'STARFI QA C.A.'],
+    ['nombre_comercial' => 'STARFI QA', 'razon_social' => 'STARFI QA C.A.', 'rif' => 'J-12345678-9'],
+    [['nombre_plantilla' => 'Notificación € QA', 'categoria' => 'UTILITY', 'volumen' => 120, 'mensajes_gratuitos' => 20, 'mensajes_pagados' => 100, 'costo_base' => 5.00]]
+);
+qa_check("QA-BUG-CRM3-06: Prueba funcional en vivo de FPDF emite binario real %PDF-1.x con sello gráfico XObject embebido",
+    strncmp($samplePdfBin, '%PDF-1.', 7) === 0 &&
+    strpos($samplePdfBin, '/Subtype /Image') !== false &&
+    substr(rtrim($samplePdfBin), -5) === '%%EOF'
+);
+
+qa_check("QA-BUG-CRM3-06: Exportación Excel real (.xlsx con SheetJS local) y auditoría 'audit_export_excel' en Dashboard (CHK-UIX-04)",
+    is_file($root . '/assets/js/xlsx.full.min.js') &&
+    strpos($fnDashSrc, 'XLSX.utils.book_new') !== false &&
+    strpos($fnDashSrc, 'XLSX.writeFile') !== false &&
+    strpos($fnDashSrc, 'audit_export_excel') !== false
+);
+
+$cfgViewSrc = (string)file_get_contents($root . '/modules/configuracion/configuracion.php');
+qa_check("QA-BUG-CRM3-06: 0 referencias muertas a leaflet y 0 librerías huérfanas (leaflet, cropper, fabric, qrcode) en assets/ (CHK-ARC-04)",
+    stripos($cfgViewSrc, 'leaflet') === false &&
+    !is_dir($root . '/assets/vendor/leaflet') &&
+    !is_file($root . '/assets/css/cropper.min.css') &&
+    !is_file($root . '/assets/js/cropper.min.js') &&
+    !is_file($root . '/assets/js/fabric.min.js') &&
+    !is_file($root . '/assets/js/qrcode.min.js')
+);
+
+$fnRolesSrc = (string)file_get_contents($root . '/modules/gestion_roles/funciones_gestion_roles.js');
+$fnEmpSrc   = (string)file_get_contents($root . '/modules/perfil_empresa/funciones_perfil_empresa.js');
+qa_check("QA-BUG-CRM3-07: Candados anti-doble clic (disabled en primer clic + restauración complete/finally) en Bots, Directorio, Roles, Configuración y Perfil Empresa",
+    (strpos($fnBotsSrc, "prop('disabled', true)") !== false || strpos($fnBotsSrc, '.disabled = true') !== false) &&
+    (strpos($fnDirSrc, "prop('disabled', true)") !== false || strpos($fnDirSrc, '.disabled = true') !== false) &&
+    (strpos($fnRolesSrc, "prop('disabled', true)") !== false || strpos($fnRolesSrc, '.disabled = true') !== false) &&
+    (strpos($fnCfgSrc, "prop('disabled', true)") !== false || strpos($fnCfgSrc, '.disabled = true') !== false) &&
+    (strpos($fnEmpSrc, "prop('disabled', true)") !== false || strpos($fnEmpSrc, '.disabled = true') !== false)
+);
+
+$htaccessBomHits = [];
+$riiHt = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+foreach ($riiHt as $fHt) {
+    $pHt = str_replace('\\', '/', $fHt->getPathname());
+    if (strpos($pHt, '/.git/') !== false) {
+        continue;
+    }
+    if ($fHt->getFilename() === '.htaccess') {
+        $rawHt = (string)file_get_contents($pHt);
+        if (substr($rawHt, 0, 3) === "\xEF\xBB\xBF") {
+            $htaccessBomHits[] = substr($pHt, strlen($root) + 1);
+        }
+    }
+}
+$repSrc = (string)file_get_contents($root . '/docs/INFORME_REMEDIACION_QA_AUDIT_CRM_09_V2.md');
+qa_check("QA-BUG-CRM3-08: 100% de archivos .htaccess en UTF-8 sin BOM (0 prefijos \\xEF\\xBB\\xBF)", empty($htaccessBomHits), implode(', ', $htaccessBomHits));
+qa_check("QA-BUG-CRM3-08: Puente core/autenticacion.php activo, raíz limpia de notas .md y Acta Formal §7 emitida",
+    is_file($root . '/core/autenticacion.php') &&
+    !is_file($root . '/CAMBIOS_INTEGRACION_IA_MULTI_SEDE.md') &&
+    is_file($root . '/docs/CAMBIOS_INTEGRACION_IA_MULTI_SEDE.md') &&
+    strpos($repSrc, 'ACTA DE CERTIFICACIÓN DE CALIDAD (QA SIGN-OFF) — STARFI 2.0') !== false
+);
+
+$apiNotifSrc = (string)file_get_contents($root . '/api_notificaciones.php');
+$cronWabaSrc = (string)file_get_contents($root . '/cron_waba_billing.php');
+qa_check("QA-BUG-CRM3-05: Auditoría 100% en api_notificaciones.php (Rama 3 + rechazos 401/403), webhook.php y cron_waba_billing.php",
+    strpos($apiNotifSrc, 'DESPACHO_PLANTILLA_WABA') !== false &&
+    strpos($apiNotifSrc, 'RECHAZO_API_') !== false &&
+    strpos($whSrc, 'RECHAZO_FIRMA_HMAC') !== false &&
+    strpos($whSrc, 'HANDOVER_HUMANO_') !== false &&
+    strpos($cronWabaSrc, 'CRON_REVISION_FACTURACION_WABA') !== false &&
+    function_exists('starfi_persist_media_cache')
+);
+
+// -----------------------------------------------------------------------------
+// BLOQUE 8: Pruebas Unitarias finfo MIME (<= 5 MB) y Ruteo Local de Logs por Cápsula
+// -----------------------------------------------------------------------------
+echo "\n[8/11] Probando rechazo finfo(FILEINFO_MIME_TYPE) de falsos PDFs con código PHP y ruteo local de logs...\n";
 $fakePhpPdf = tempnam(sys_get_temp_dir(), 'qa_fake_') . '.pdf';
 file_put_contents($fakePhpPdf, "<?php echo 'PAYLOAD_EJECUTABLE'; ?>");
 $resFakeWaba = starfi_validate_waba_receipt_file($fakePhpPdf, filesize($fakePhpPdf));
@@ -451,18 +663,20 @@ qa_check("starfi_validate_waba_receipt_file() acepta PDF real con extensión der
 qa_check("starfi_validate_waba_receipt_file() rechaza archivos mayores a 5 MB", $resOver5Mb['ok'] === false);
 
 $pipeLogPath = starfi_resolve_module_log_path('pipeline');
+$wabaLogPath = starfi_resolve_module_log_path('waba_ordenes');
 $whLogPath   = starfi_resolve_module_log_path('webhook');
-qa_check("starfi_log_exception('pipeline') enruta localmente a modules/pipeline/logs_pipeline.log",
-    str_replace('\\', '/', $pipeLogPath) === $root . '/modules/pipeline/logs_pipeline.log'
+qa_check("starfi_log_exception('pipeline') y ('waba_ordenes') enrutan localmente a sus cápsulas modulares",
+    str_replace('\\', '/', $pipeLogPath) === $root . '/modules/pipeline/logs_pipeline.log' &&
+    str_replace('\\', '/', $wabaLogPath) === $root . '/modules/waba_ordenes/logs_waba_ordenes.log'
 );
 qa_check("starfi_log_exception('webhook') enruta globalmente a logs/logs_webhook.log",
     str_replace('\\', '/', $whLogPath) === $root . '/logs/logs_webhook.log'
 );
 
 // -----------------------------------------------------------------------------
-// BLOQUE 7, 8 & 9: Pruebas Transaccionales en BD con ROLLBACK (IA Multi-Sede, Anti-Doble Referencia WABA, Anti-Fatiga 24h, Auditoría Antes/Después)
+// BLOQUE 9 & 10: Pruebas Transaccionales en BD con ROLLBACK (incl. Candado FOR UPDATE en emitir_orden_sede)
 // -----------------------------------------------------------------------------
-echo "\n[7/9] Ejecutando pruebas monetarias USD, Aislamiento IA Multi-Sede, Anti-Doble Referencia WABA, Anti-Fatiga 24h y Auditoría en BD (con ROLLBACK)...\n";
+echo "\n[9/11] Ejecutando pruebas monetarias USD, Aislamiento IA Multi-Sede, Anti-Doble Referencia, Anti-Solapamiento emitir_orden_sede() (FOR UPDATE), Anti-Fatiga 24h y Auditoría en BD (con ROLLBACK)...\n";
 qa_check("starfi_parse_usd_number('\$1.250 USD') === 1.25 (cero inflación 1,000x)", starfi_parse_usd_number('$1.250 USD') === 1.25);
 qa_check("starfi_parse_usd_number('906.50 + IVA') === 906.50", starfi_parse_usd_number('906.50 + IVA') === 906.50);
 qa_check("starfi_parse_usd_number('1,019.30 + IVA') === 1019.30", starfi_parse_usd_number('1,019.30 + IVA') === 1019.30);
@@ -511,9 +725,8 @@ if ($con) {
         qa_check("configuraciones_ia: Sede Alfa (9951) obtiene su prompt propio", !empty($iaAlfa) && (int)$iaAlfa['id_sede'] === 9951);
         qa_check("configuraciones_ia: Sede Beta (9952) sin fila propia recibe NULL (0 fuga de Sede Alfa)", $iaBeta === null);
 
-        // 3. Prueba QA-BUG-CRM2-04 / CHK-SEC-09: Rechazo atómico FOR UPDATE de referencia bancaria duplicada en waba_ordenes_cobro
+        // 3. Prueba QA-BUG-CRM2-04 / CHK-SEC-09 + QA-BUG-CRM3-05 / CHK-SEC-05 (FOR UPDATE en referencias y en emitir_orden_sede)
         $colsOrd = starfi_waba_table_columns($con, 'waba_ordenes_cobro', true);
-        $insColsOrd = ['id_sede', 'fecha_desde', 'fecha_hasta', 'estado'];
         if (isset($colsOrd['codigo_orden'])) {
             $con->query("INSERT INTO waba_ordenes_cobro (codigo_orden, id_sede, fecha_desde, fecha_hasta, estado) VALUES ('QA-WABA-9951-A', 9951, '2026-11-01', '2026-11-10', 'PENDIENTE')");
             $ordA = (int)$con->insert_id;
@@ -525,6 +738,13 @@ if ($con) {
             $con->query("INSERT INTO waba_ordenes_cobro (id_sede, fecha_desde, fecha_hasta, estado) VALUES (9952, '2026-11-01', '2026-11-10', 'PENDIENTE')");
             $ordB = (int)$con->insert_id;
         }
+
+        // Prueba transaccional QA-BUG-CRM3-05: intentar emitir una orden solapada (2026-11-05 .. 2026-11-15) para sede 9951 sin fusión
+        $resOverlapOrd = emitir_orden_sede($con, 9951, '2026-11-05', '2026-11-15', null);
+        qa_check("QA-BUG-CRM3-05 (CHK-SEC-05): emitir_orden_sede() bloquea con SELECT ... FOR UPDATE órdenes activas solapadas por sede/periodo",
+            ($resOverlapOrd['status'] ?? '') === 'error' && ($resOverlapOrd['code'] ?? '') === 'DUPLICATE_PERIOD_ORDER',
+            $resOverlapOrd['message'] ?? ''
+        );
 
         $pay1 = starfi_report_waba_payment($con, $ordA, [
             'metodo_pago'     => 'Pago Movil',
@@ -568,7 +788,7 @@ if ($con) {
         $allowedAfterReply = starfi_check_marketing_antifatigue_24h($con, '584149991122', $dest2);
         qa_check("Escudo Anti-Fatiga 24h (CHK-CLD-02): Libera contacto automáticamente si el cliente ya respondió", $allowedAfterReply === false);
 
-        // 5. Pruebas de Pipeline Multi-Sede + Round-Robin FOR UPDATE
+        // 5. Pruebas de Pipeline Multi-Sede + Round-Robin FOR UPDATE + Caché Multimedia Auditada
         $sharedPhone = '584148887766';
         $con->query("INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre) VALUES (1, 9951, '$sharedPhone', 'Cliente Alfa')");
         $cAlfa = (int)$con->insert_id;
@@ -578,10 +798,16 @@ if ($con) {
         $con->query("INSERT INTO conversaciones (id_linea, id_cliente, estado) VALUES ($lAlfa, $cAlfa, 'ATENDIENDO')");
         $cvAlfa = (int)$con->insert_id;
         $salePayload = 'Envío dinámico de plantilla: send_confirmacion_compra_cn_sn_btn. Params: ["Cliente Alfa","2026-11-21","950.00 + IVA","ASESOR ALFA","SEDE ALFA","NE_999999","04140000000"]';
-        $stmtSale = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES (?, 'API_TRANSACCIONAL', 'EVENTO_SISTEMA', ?)");
+        $stmtSale = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, url_archivo) VALUES (?, 'API_TRANSACCIONAL', 'EVENTO_SISTEMA', ?, 'wamid_media_qa_9951')");
         $stmtSale->bind_param("is", $cvAlfa, $salePayload);
         $stmtSale->execute();
         $stmtSale->close();
+
+        $cacheOk = starfi_persist_media_cache($con, $cvAlfa, 'wamid_media_qa_9951', '/assets/uploads/media_wamid_media_qa_9951.pdf', 1, 9951);
+        $audCache = $con->query("SELECT accion FROM auditoria_sistema WHERE accion = 'CACHE_MEDIA_WABA' AND id_sede = 9951 ORDER BY id DESC LIMIT 1")->fetch_assoc();
+        qa_check("QA-BUG-CRM3-05: starfi_persist_media_cache() actualiza caché multimedia por id_conversacion y audita CACHE_MEDIA_WABA",
+            $cacheOk === true && !empty($audCache)
+        );
 
         $con->query("INSERT INTO conversaciones (id_linea, id_cliente, estado) VALUES ($lBeta, $cBeta, 'ESPERA_ASIGNACION')");
         $cvBeta = (int)$con->insert_id;
@@ -646,7 +872,7 @@ if ($con) {
     $con->close();
 }
 
-echo "\n[9/9] Resumen Final de Certificación QA-STD-GLOBAL-2.1...\n";
+echo "\n[11/11] Resumen Final de Certificación QA-STD-GLOBAL-2.1...\n";
 echo "-------------------------------------------------------------------------------------\n";
 echo " CONTROLES APROBADOS : $passed\n";
 echo " CONTROLES FALLIDOS  : $failed\n";

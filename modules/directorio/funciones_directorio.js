@@ -1,6 +1,7 @@
 // modules/directorio/funciones_directorio.js
 
 let currentClientId = null;
+let currentProfileTags = [];
 let allClients = [];
 let filteredClients = [];
 let allSedes = [];
@@ -10,12 +11,32 @@ const pageSize = 10;
 let currentSortCol = 'fecha';
 let currentSortAsc = false;
 
+// Guards anti-doble-clic (QA-BUG-CRM3-07)
+let isSavingProfile = false;
+let isCreatingProfile = false;
+let isDeletingProfile = false;
+let isSavingTagOrNote = false;
+
 // Estado Difusión Masiva
 let bcMode = 'directorio'; // 'directorio' | 'manual' | 'prueba'
 let bcLineas = [];
 let bcTemplates = [];
 let bcIsRunning = false;
 let bcShouldStop = false;
+
+function escapeHtmlDir(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, function (m) {
+        return {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        }[m];
+    });
+}
+const escapeHtml = escapeHtmlDir;
 
 function getDirectorioAvatarSvg(name, bg, fg) {
     let clean = String(name || 'CL').trim();
@@ -44,6 +65,25 @@ function getDirectorioAvatarSvg(name, bg, fg) {
     return '../../docs/identidad_visual/logos/isologo.png';
 }
 
+function renderProfileTagsUI(disabled) {
+    const container = $('#profTagsContainer');
+    if (container.length === 0) return;
+    container.empty();
+
+    currentProfileTags.forEach((tag, idx) => {
+        const removeBtn = disabled
+            ? ''
+            : `<button type="button" class="btn-close btn-close-sm ms-1" style="font-size: 0.55rem;" data-tag-idx="${Number(idx)}" aria-label="Quitar"></button>`;
+        container.append(
+            `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill d-inline-flex align-items-center gap-1">${escapeHtmlDir(tag)}${removeBtn}</span>`
+        );
+    });
+
+    container.append(
+        `<button type="button" id="btnAddProfileTag" class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill" style="cursor: pointer;" onclick="addProfileTag(this)">+ Añadir Etiqueta</button>`
+    );
+}
+
 $(document).ready(function () {
     const toggleBtn = document.getElementById('toggleSidebar');
     if (toggleBtn) {
@@ -55,6 +95,15 @@ $(document).ready(function () {
 
     loadSedes();
     loadClients();
+
+    // Delegación segura para quitar etiqueta sin interpolar strings en onclick
+    $(document).on('click', '#profTagsContainer button[data-tag-idx]', function (e) {
+        e.preventDefault();
+        const idx = parseInt($(this).attr('data-tag-idx'), 10);
+        if (!isNaN(idx)) {
+            removeProfileTag(idx, this);
+        }
+    });
 
     // Botón Abrir Centro de Difusión Inteligente
     $('#btnOpenBroadcast').on('click', function () {
@@ -74,9 +123,9 @@ $(document).ready(function () {
         const checked = $(this).is(':checked');
         filteredClients.forEach(c => {
             if (checked) {
-                selectedClientIds.add(parseInt(c.id));
+                selectedClientIds.add(parseInt(c.id, 10));
             } else {
-                selectedClientIds.delete(parseInt(c.id));
+                selectedClientIds.delete(parseInt(c.id, 10));
             }
         });
         renderTablePage();
@@ -132,7 +181,8 @@ $(document).ready(function () {
 
     // Botón Nuevo Cliente
     $('#btnAddClient').on('click', function () {
-        currentClientId = null; // Modo creación
+        currentClientId = null;
+        currentProfileTags = [];
 
         $('#profTitleId').text('NUEVO CLIENTE');
         $('#profTitleName').text('Crear Ficha');
@@ -144,9 +194,10 @@ $(document).ready(function () {
         $('#profPhone').prop('disabled', false).val('');
         $('#profAddress').val('').prop('disabled', false);
         $('#profNotes').val('').prop('disabled', false);
+        renderProfileTagsUI(false);
 
         $('#btnEditProfile').hide();
-        $('#btnSaveProfile').html('<i class="fa-solid fa-user-plus me-2"></i>Crear Cliente').show();
+        $('#btnSaveProfile').html('<i class="fa-solid fa-user-plus me-2"></i>Crear Cliente').prop('disabled', false).show();
 
         $('#profileConversationsFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-comments"></i></div><h5>Sin conversaciones</h5><p>Este cliente aún no tiene conversaciones registradas.</p></div>');
         $('#profileSalesFeed').html('<div class="empty-timeline"><div><i class="fa-solid fa-receipt"></i></div><h5>Sin ventas</h5><p>Este cliente aún no registra ventas ni compras.</p></div>');
@@ -157,13 +208,14 @@ $(document).ready(function () {
     // Botón Editar Perfil
     $('#btnEditProfile').on('click', function () {
         $('#profName, #profSede, #profPrefix, #profPhone, #profAddress, #profNotes').prop('disabled', false);
+        renderProfileTagsUI(false);
         $(this).hide();
-        $('#btnSaveProfile').html('<i class="fa-solid fa-floppy-disk me-2"></i>Guardar Cambios').show();
+        $('#btnSaveProfile').html('<i class="fa-solid fa-floppy-disk me-2"></i>Guardar Cambios').prop('disabled', false).show();
         $('#profName').focus();
     });
 
     $('#btnSaveProfile').on('click', function () {
-        saveProfile();
+        saveProfile(this);
     });
 
     // Búsqueda en tiempo real
@@ -218,7 +270,7 @@ function loadSedes() {
         data: { action: 'get_sedes' },
         success: function (res) {
             if (res.status === 'success') {
-                allSedes = res.data;
+                allSedes = res.data || [];
                 let select = $('#profSede');
                 let filterSelect = $('#filterDirSede');
                 select.empty();
@@ -232,8 +284,10 @@ function loadSedes() {
                 }
 
                 allSedes.forEach(s => {
-                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
-                    filterSelect.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                    const sid = escapeHtmlDir(s.id);
+                    const sname = escapeHtmlDir(s.nombre_sede);
+                    select.append(`<option value="${sid}">${sname}</option>`);
+                    filterSelect.append(`<option value="${sid}">${sname}</option>`);
                 });
 
                 if (!res.is_master && allSedes.length > 0) {
@@ -252,7 +306,7 @@ function loadClients() {
         data: { action: 'load_clients' },
         success: function (res) {
             if (res.status === 'success') {
-                allClients = res.data;
+                allClients = res.data || [];
                 applyFiltersAndRender();
                 updateSelectionUI();
             }
@@ -261,7 +315,7 @@ function loadClients() {
 }
 
 function applyFiltersAndRender() {
-    let query = $('#searchClient').val().toLowerCase().trim();
+    let query = ($('#searchClient').val() || '').toLowerCase().trim();
     let sedeFilter = $('#filterDirSede').val();
 
     // 1. Filtrar
@@ -324,7 +378,7 @@ function renderTablePage() {
         tbody.append('<tr><td colspan="7" class="text-center text-muted p-5"><i class="fa-solid fa-users-slash fs-2 mb-3 d-block"></i>No se encontraron clientes.</td></tr>');
     } else {
         paginatedItems.forEach(c => {
-            let cid = parseInt(c.id);
+            let cid = parseInt(c.id, 10) || 0;
             let isChecked = selectedClientIds.has(cid) ? 'checked' : '';
             let displayName = c.nombre || 'Cliente sin nombre';
 
@@ -335,37 +389,40 @@ function renderTablePage() {
             let dateObj = new Date(c.fecha_registro);
             let formattedDate = isNaN(dateObj.getTime()) ? '-' : dateObj.toLocaleDateString();
 
-            let sedeName = c.nombre_sede ? `<span class="fw-bold" style="color:#4a5568;">${c.nombre_sede}</span>` : '<span class="text-muted fst-italic">General</span>';
+            let sedeName = c.nombre_sede
+                ? `<span class="fw-bold" style="color:#4a5568;">${escapeHtmlDir(c.nombre_sede)}</span>`
+                : '<span class="text-muted fst-italic">General</span>';
 
             let tagsHtml = '<span class="tag text-muted small">Sin tags</span>';
             if (c.etiquetas) {
                 try {
                     let parsedTags = JSON.parse(c.etiquetas);
                     if (Array.isArray(parsedTags) && parsedTags.length > 0) {
-                        tagsHtml = parsedTags.map(t => `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary me-1">${t}</span>`).join('');
+                        tagsHtml = parsedTags.map(t => `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary me-1">${escapeHtmlDir(t)}</span>`).join('');
                     }
                 } catch (e) { }
             }
 
+            let avatarSrc = escapeHtmlDir(getDirectorioAvatarSvg(displayName, '#F3F4F6', '#37414A'));
             let tr = `
-                <tr onclick="loadProfile(${c.id}, this)">
+                <tr data-client-id="${cid}" onclick="loadProfile(${cid}, this)">
                     <td style="text-align: center;" onclick="event.stopPropagation();">
-                        <input type="checkbox" class="form-check-input chk-client-row" data-id="${c.id}" ${isChecked} onchange="toggleClientSelection(${c.id}, this.checked)">
+                        <input type="checkbox" class="form-check-input chk-client-row" data-id="${cid}" ${isChecked} onchange="toggleClientSelection(${cid}, this.checked)">
                     </td>
                     <td>
                         <div class="client-cell">
-                            <img src="${getDirectorioAvatarSvg(displayName, '#F3F4F6', '#37414A')}" alt="Avatar">
+                            <img src="${avatarSrc}" alt="Avatar">
                             <div class="client-cell-info">
-                                <h6>${displayName}</h6>
-                                <small>ID: CLI-${c.id}</small>
+                                <h6>${escapeHtmlDir(displayName)}</h6>
+                                <small>ID: CLI-${cid}</small>
                             </div>
                         </div>
                     </td>
-                    <td>+${c.numero_whatsapp}</td>
+                    <td>+${escapeHtmlDir(c.numero_whatsapp)}</td>
                     <td>${sedeName}</td>
                     <td>${statusBadge}</td>
                     <td>${tagsHtml}</td>
-                    <td class="text-muted">${formattedDate}</td>
+                    <td class="text-muted">${escapeHtmlDir(formattedDate)}</td>
                 </tr>
             `;
             tbody.append(tr);
@@ -381,7 +438,7 @@ function renderTablePage() {
 }
 
 window.toggleClientSelection = function (id, checked) {
-    const cid = parseInt(id);
+    const cid = parseInt(id, 10);
     if (checked) {
         selectedClientIds.add(cid);
     } else {
@@ -392,7 +449,7 @@ window.toggleClientSelection = function (id, checked) {
 };
 
 function updateSelectionUI() {
-    const count = selectedClientIds.size;
+    const count = Number(selectedClientIds.size) || 0;
     if (count > 0) {
         $('#selectedCountPill').text(count).show();
         $('#selectionSummaryText').html(`<strong class="text-primary">${count} contacto(s)</strong> seleccionado(s) para difusión`);
@@ -437,9 +494,12 @@ window.loadBroadcastConfig = function () {
                     sedeSel.append('<option value="">⚠️ Sin líneas de WhatsApp activas</option>');
                 } else {
                     bcLineas.forEach(l => {
-                        sedeSel.append(`<option value="${l.id_sede}" data-nombre="${l.nombre_sede}" data-phone="${l.numero_telefono}">${l.nombre_sede} (+${l.numero_telefono})</option>`);
+                        const lid = escapeHtmlDir(l.id_sede);
+                        const lnom = escapeHtmlDir(l.nombre_sede);
+                        const ltel = escapeHtmlDir(l.numero_telefono);
+                        sedeSel.append(`<option value="${lid}" data-nombre="${lnom}" data-phone="${ltel}">${lnom} (+${ltel})</option>`);
                     });
-                    if (prevVal && sedeSel.find(`option[value="${prevVal}"]`).length > 0) {
+                    if (prevVal) {
                         sedeSel.val(prevVal);
                     }
                 }
@@ -448,7 +508,9 @@ window.loadBroadcastConfig = function () {
                 let tplSel = $('#bcTemplateSelect');
                 tplSel.empty();
                 bcTemplates.forEach(t => {
-                    tplSel.append(`<option value="${t.name}" data-lang="${t.language || 'es'}">${t.name} (${t.language || 'es'})</option>`);
+                    const tName = escapeHtmlDir(t.name);
+                    const tLang = escapeHtmlDir(t.language || 'es');
+                    tplSel.append(`<option value="${tName}" data-lang="${tLang}">${tName} (${tLang})</option>`);
                 });
                 tplSel.val('starfi_difusion_directa');
 
@@ -465,7 +527,7 @@ window.loadBroadcastConfig = function () {
 window.setBroadcastRecipientMode = function (mode) {
     bcMode = mode;
     $('.mode-pill-btn').removeClass('active');
-    $(`.mode-pill-btn[data-mode="${mode}"]`).addClass('active');
+    $('.mode-pill-btn').filter(function () { return $(this).attr('data-mode') === String(mode); }).addClass('active');
 
     $('#bcBoxDirectorio, #bcBoxManual, #bcBoxPrueba').hide();
     if (mode === 'directorio') $('#bcBoxDirectorio').fadeIn(150);
@@ -499,7 +561,7 @@ function sanitizePreviewParam(text, stripDot) {
 
 function updateBroadcastPreview() {
     let selectedOption = $('#bcSedeSelect option:selected');
-    let sedeNombre = selectedOption.data('nombre') || 'Carpintero Express';
+    let sedeNombre = selectedOption.attr('data-nombre') || 'Carpintero Express';
     $('#waHeaderTitle').text(sedeNombre);
     $('#bcPreviewSedeBadge').text(sedeNombre);
 
@@ -509,7 +571,7 @@ function updateBroadcastPreview() {
 
     $('#bcParam2Counter').text(`${p2.length} caracteres`);
 
-    let previewHtml = `👋¡Hola <strong>${sampleName}</strong>!\nHoy queremos ${p2}.\nRecuerda que en ${p3}.\n📲 <strong>Responde a este mensaje para obtener más información</strong>👇`;
+    let previewHtml = `👋¡Hola <strong>${escapeHtmlDir(sampleName)}</strong>!\nHoy queremos ${escapeHtmlDir(p2)}.\nRecuerda que en ${escapeHtmlDir(p3)}.\n📲 <strong>Responde a este mensaje para obtener más información</strong>👇`;
     $('#waPreviewBodyText').html(previewHtml);
 }
 
@@ -552,11 +614,9 @@ function getTargetRecipientsList() {
             let name = defaultName;
             let phonePart = trimmed;
 
-            // Soportar "Nombre, Telefono" o "Nombre; Telefono" o "Nombre \t Telefono"
             if (trimmed.includes(',') || trimmed.includes(';') || trimmed.includes('\t')) {
                 let parts = trimmed.split(/[,;\t]+/);
                 if (parts.length >= 2) {
-                    // Detectar cuál columna tiene el teléfono
                     let p0 = normalizePhoneJS(parts[0]);
                     let p1 = normalizePhoneJS(parts[1]);
                     if (isValidVzlaPhoneJS(p1)) {
@@ -585,7 +645,7 @@ function getTargetRecipientsList() {
 
     allClients.forEach(c => {
         if (c.estado && c.estado !== 'ACTIVO') return;
-        let cid = parseInt(c.id);
+        let cid = parseInt(c.id, 10);
 
         if (scope === 'selected' && !selectedClientIds.has(cid)) return;
         if (scope === 'sede' && String(c.id_sede || '') !== String(targetSede || '')) return;
@@ -615,6 +675,7 @@ function updateBroadcastRecipientCounters() {
 
 function appendBroadcastLog(htmlLine) {
     const logBox = $('#bcLiveLog');
+    if (logBox.length === 0) return;
     logBox.append(`<div>${htmlLine}</div>`);
     logBox.scrollTop(logBox[0].scrollHeight);
 }
@@ -624,7 +685,7 @@ async function startBroadcastExecution() {
 
     const idSede = $('#bcSedeSelect').val();
     const templateName = $('#bcTemplateSelect').val() || 'starfi_difusion_directa';
-    const langCode = $('#bcTemplateSelect option:selected').data('lang') || 'es';
+    const langCode = $('#bcTemplateSelect option:selected').attr('data-lang') || 'es';
     const param2 = sanitizePreviewParam($('#bcParam2').val(), true);
     const param3 = sanitizePreviewParam($('#bcParam3').val(), true);
     const campaignName = $('#bcCampaignName').val().trim() || ('Difusión ' + new Date().toLocaleDateString());
@@ -646,7 +707,7 @@ async function startBroadcastExecution() {
 
     const confirmRes = await Swal.fire({
         title: '¿Iniciar Difusión Oficial?',
-        html: `Se enviará la plantilla <b>${templateName}</b> a <b>${recipients.length} destinatario(s)</b> desde la sede seleccionada.`,
+        html: `Se enviará la plantilla <b>${escapeHtmlDir(templateName)}</b> a <b>${Number(recipients.length)} destinatario(s)</b> desde la sede seleccionada.`,
         icon: 'question',
         showCancelButton: true,
         confirmButtonText: '🚀 Sí, enviar ahora',
@@ -667,101 +728,104 @@ async function startBroadcastExecution() {
     $('#bcMetricFailed').text('0');
     $('#bcLiveLog').empty();
 
-    appendBroadcastLog(`<span class="text-info">[INICIO] Preparando envío a ${recipients.length} contacto(s)...</span>`);
-
-    // 1. Registrar campaña en BD
-    let campaignId = 0;
     try {
-        const campRes = await $.ajax({
-            url: 'back_directorio.php',
-            type: 'POST',
-            dataType: 'json',
-            data: {
-                action: 'create_broadcast_campaign',
-                id_sede: idSede,
-                nombre_campana: campaignName,
-                template_name: templateName,
-                param_2: param2,
-                param_3: param3,
-                total_destinatarios: recipients.length
-            }
-        });
-        if (campRes.status === 'success') {
-            campaignId = campRes.campaign_id;
-        }
-    } catch (e) { }
+        appendBroadcastLog(`<span class="text-info">[INICIO] Preparando envío a ${Number(recipients.length)} contacto(s)...</span>`);
 
-    let sentCount = 0;
-    let failedCount = 0;
-
-    // 2. Despachar uno por uno con pausa controlada (350ms)
-    for (let i = 0; i < recipients.length; i++) {
-        if (bcShouldStop) {
-            appendBroadcastLog(`<span class="text-warning">[DETENIDO] Envío pausado por el usuario en el registro ${i + 1}/${recipients.length}.</span>`);
-            break;
-        }
-
-        const item = recipients[i];
+        let campaignId = 0;
         try {
-            const res = await $.ajax({
+            const campRes = await $.ajax({
                 url: 'back_directorio.php',
                 type: 'POST',
                 dataType: 'json',
                 data: {
-                    action: 'send_broadcast_item',
-                    campaign_id: campaignId,
+                    action: 'create_broadcast_campaign',
                     id_sede: idSede,
+                    nombre_campana: campaignName,
                     template_name: templateName,
-                    language_code: langCode,
-                    nombre: item.nombre,
-                    telefono: item.telefono,
                     param_2: param2,
-                    param_3: param3
+                    param_3: param3,
+                    total_destinatarios: recipients.length
                 }
             });
+            if (campRes.status === 'success') {
+                campaignId = campRes.campaign_id;
+            }
+        } catch (e) { }
 
-            if (res.status === 'success') {
-                sentCount++;
-                $('#bcMetricSent').text(sentCount);
-                appendBroadcastLog(`<span class="text-success">✔ [${i + 1}/${recipients.length}] +${item.telefono} (${item.nombre}) — Entregado a Meta</span>`);
-            } else {
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (let i = 0; i < recipients.length; i++) {
+            if (bcShouldStop) {
+                appendBroadcastLog(`<span class="text-warning">[DETENIDO] Envío pausado por el usuario en el registro ${i + 1}/${recipients.length}.</span>`);
+                break;
+            }
+
+            const item = recipients[i];
+            const safeTel = escapeHtmlDir(item.telefono);
+            const safeNom = escapeHtmlDir(item.nombre);
+            try {
+                const res = await $.ajax({
+                    url: 'back_directorio.php',
+                    type: 'POST',
+                    dataType: 'json',
+                    data: {
+                        action: 'send_broadcast_item',
+                        campaign_id: campaignId,
+                        id_sede: idSede,
+                        template_name: templateName,
+                        language_code: langCode,
+                        nombre: item.nombre,
+                        telefono: item.telefono,
+                        param_2: param2,
+                        param_3: param3
+                    }
+                });
+
+                if (res.status === 'success') {
+                    sentCount++;
+                    $('#bcMetricSent').text(sentCount);
+                    appendBroadcastLog(`<span class="text-success">✔ [${i + 1}/${recipients.length}] +${safeTel} (${safeNom}) — Entregado a Meta</span>`);
+                } else {
+                    failedCount++;
+                    $('#bcMetricFailed').text(failedCount);
+                    appendBroadcastLog(`<span class="text-danger">✖ [${i + 1}/${recipients.length}] +${safeTel} (${safeNom}) — ${escapeHtmlDir(res.message || 'Fallo')}</span>`);
+                }
+            } catch (err) {
                 failedCount++;
                 $('#bcMetricFailed').text(failedCount);
-                appendBroadcastLog(`<span class="text-danger">✖ [${i + 1}/${recipients.length}] +${item.telefono} (${item.nombre}) — ${res.message || 'Fallo'}</span>`);
+                appendBroadcastLog(`<span class="text-danger">✖ [${i + 1}/${recipients.length}] +${safeTel} — Error de red/servidor</span>`);
             }
-        } catch (err) {
-            failedCount++;
-            $('#bcMetricFailed').text(failedCount);
-            appendBroadcastLog(`<span class="text-danger">✖ [${i + 1}/${recipients.length}] +${item.telefono} — Error de red/servidor</span>`);
+
+            const pct = Math.round(((i + 1) / recipients.length) * 100);
+            $('#bcProgressBar').css('width', `${pct}%`);
+
+            if (i < recipients.length - 1 && !bcShouldStop) {
+                await new Promise(r => setTimeout(r, 350));
+            }
         }
 
-        const pct = Math.round(((i + 1) / recipients.length) * 100);
-        $('#bcProgressBar').css('width', `${pct}%`);
-
-        if (i < recipients.length - 1 && !bcShouldStop) {
-            await new Promise(r => setTimeout(r, 350));
+        if (campaignId > 0) {
+            $.post('back_directorio.php', {
+                action: 'finish_broadcast_campaign',
+                campaign_id: campaignId,
+                estado: bcShouldStop ? 'CANCELADA' : 'COMPLETADA'
+            });
         }
+
+        $('#bcStatusLabel')
+            .removeClass('bg-primary bg-warning text-dark')
+            .addClass(bcShouldStop ? 'bg-warning text-dark' : 'bg-success')
+            .text(bcShouldStop ? 'Campaña Detenida' : '¡Campaña Completada!');
+
+        appendBroadcastLog(`<span class="text-warning fw-bold">[RESUMEN FINAL] Enviados: ${sentCount} | Fallidos: ${failedCount}</span>`);
+        loadClients();
+        loadBroadcastConfig();
+    } finally {
+        bcIsRunning = false;
+        $('#btnStartBroadcast').prop('disabled', false);
+        $('#btnStopBroadcast').hide();
     }
-
-    if (campaignId > 0) {
-        $.post('back_directorio.php', {
-            action: 'finish_broadcast_campaign',
-            campaign_id: campaignId,
-            estado: bcShouldStop ? 'CANCELADA' : 'COMPLETADA'
-        });
-    }
-
-    bcIsRunning = false;
-    $('#btnStartBroadcast').prop('disabled', false);
-    $('#btnStopBroadcast').hide();
-    $('#bcStatusLabel')
-        .removeClass('bg-primary bg-warning text-dark')
-        .addClass(bcShouldStop ? 'bg-warning text-dark' : 'bg-success')
-        .text(bcShouldStop ? 'Campaña Detenida' : '¡Campaña Completada!');
-
-    appendBroadcastLog(`<span class="text-warning fw-bold">[RESUMEN FINAL] Enviados: ${sentCount} | Fallidos: ${failedCount}</span>`);
-    loadClients();
-    loadBroadcastConfig();
 }
 
 function renderBroadcastHistory(campanas) {
@@ -777,17 +841,20 @@ function renderBroadcastHistory(campanas) {
         if (c.estado === 'EN_PROCESO') badge = '<span class="badge bg-primary">En Proceso</span>';
         if (c.estado === 'CANCELADA') badge = '<span class="badge bg-warning text-dark">Cancelada</span>';
 
+        const sedeLabel = c.nombre_sede ? c.nombre_sede : ('Sede #' + (Number(c.id_sede) || 0));
+        const safeCuerpo = escapeHtmlDir(c.param_cuerpo);
+
         tbody.append(`
             <tr>
-                <td class="fw-bold">#${c.id}</td>
-                <td class="small text-muted">${c.fecha_creacion}</td>
-                <td class="fw-semibold">${c.nombre_campana}</td>
-                <td><span class="badge bg-light text-dark border">${c.nombre_sede || 'Sede #' + c.id_sede}</span></td>
-                <td><code>${c.template_name}</code></td>
-                <td class="small text-truncate" style="max-width: 240px;" title="${c.param_cuerpo}">${c.param_cuerpo}</td>
-                <td class="text-center fw-bold">${c.total_destinatarios}</td>
-                <td class="text-center text-success fw-bold">${c.enviados}</td>
-                <td class="text-center text-danger fw-bold">${c.fallidos}</td>
+                <td class="fw-bold">#${Number(c.id) || 0}</td>
+                <td class="small text-muted">${escapeHtmlDir(c.fecha_creacion)}</td>
+                <td class="fw-semibold">${escapeHtmlDir(c.nombre_campana)}</td>
+                <td><span class="badge bg-light text-dark border">${escapeHtmlDir(sedeLabel)}</span></td>
+                <td><code>${escapeHtmlDir(c.template_name)}</code></td>
+                <td class="small text-truncate" style="max-width: 240px;" title="${safeCuerpo}">${safeCuerpo}</td>
+                <td class="text-center fw-bold">${Number(c.total_destinatarios) || 0}</td>
+                <td class="text-center text-success fw-bold">${Number(c.enviados) || 0}</td>
+                <td class="text-center text-danger fw-bold">${Number(c.fallidos) || 0}</td>
                 <td>${badge}</td>
             </tr>
         `);
@@ -809,29 +876,45 @@ function loadProfile(id, rowElement) {
             if (res.status === 'success') {
                 const client = res.data.client;
 
-                $('#profTitleName').text(client.nombre);
-                $('#profTitleId').text(`ID: CLI-${client.id}`);
+                $('#profTitleName').text(client.nombre || '');
+                $('#profTitleId').text(`ID: CLI-${Number(client.id) || 0}`);
                 $('#profAvatarImg').attr('src', getDirectorioAvatarSvg(client.nombre, '#E85B14', '#FFFFFF'));
 
-                $('#profName').val(client.nombre).prop('disabled', true);
+                $('#profName').val(client.nombre || '').prop('disabled', true);
                 $('#profSede').val(client.id_sede || '').prop('disabled', true);
                 $('#profAddress').val(client.direccion || '').prop('disabled', true);
                 $('#profNotes').val(client.notas_internas || '').prop('disabled', true);
 
-                let phoneStr = client.numero_whatsapp || '';
+                currentProfileTags = [];
+                if (client.etiquetas) {
+                    try {
+                        const parsed = JSON.parse(client.etiquetas);
+                        if (Array.isArray(parsed)) {
+                            currentProfileTags = parsed.map(x => String(x));
+                        }
+                    } catch (e) { }
+                }
+                renderProfileTagsUI(true);
+
+                let phoneStr = String(client.numero_whatsapp || '');
                 let prefix = phoneStr.substring(0, 5);
                 let num = phoneStr.substring(5);
 
-                if ($(`#profPrefix option[value='${prefix}']`).length === 0) {
-                    $('#profPrefix').append(`<option value="${prefix}">${prefix}</option>`);
+                let hasPrefix = false;
+                $('#profPrefix option').each(function () {
+                    if ($(this).val() === prefix) hasPrefix = true;
+                });
+                if (prefix && !hasPrefix) {
+                    const safePref = escapeHtmlDir(prefix);
+                    $('#profPrefix').append(`<option value="${safePref}">${safePref}</option>`);
                 }
                 $('#profPrefix').val(prefix).prop('disabled', true);
                 $('#profPhone').val(num).prop('disabled', true);
 
                 $('#btnEditProfile').show();
-                $('#btnSaveProfile').hide();
+                $('#btnSaveProfile').prop('disabled', false).hide();
 
-                // 1. Render Historial de Conversaciones
+                // 1. Render Historial de Conversaciones (100% escapado contra DOM-XSS)
                 let convFeed = $('#profileConversationsFeed');
                 convFeed.empty();
 
@@ -842,21 +925,21 @@ function loadProfile(id, rowElement) {
                     convs.forEach(c => {
                         let dateStr = c.fecha_inicio ? new Date(c.fecha_inicio).toLocaleString() : 'Sin fecha';
                         let badgeClass = c.estado === 'CERRADO' ? 'bg-secondary' : (c.estado === 'EN_CURSO' || c.estado === 'ATENDIENDO' ? 'bg-success' : 'bg-warning text-dark');
-                        let resultadoHtml = c.resultado_comercial ? `<span class="badge bg-primary ms-2">${c.resultado_comercial}</span>` : '';
+                        let resultadoHtml = c.resultado_comercial ? `<span class="badge bg-primary ms-2">${escapeHtmlDir(c.resultado_comercial)}</span>` : '';
                         let msgPreview = c.ultimo_mensaje ? c.ultimo_mensaje : 'Sin mensajes';
 
                         let item = `
                             <div class="timeline-item">
                                 <div class="timeline-icon icon-agent"><i class="fa-solid fa-comments"></i></div>
                                 <div class="timeline-content">
-                                    <span class="timeline-time">${dateStr}</span>
+                                    <span class="timeline-time">${escapeHtmlDir(dateStr)}</span>
                                     <div class="d-flex align-items-center gap-1 mb-1">
-                                        <span class="badge ${badgeClass}">${c.estado}</span>
+                                        <span class="badge ${badgeClass}">${escapeHtmlDir(c.estado)}</span>
                                         ${resultadoHtml}
                                     </div>
-                                    <p class="timeline-text fw-bold text-starfi-dark mb-1">Asesor: ${c.agente_nombre}</p>
-                                    <p class="timeline-text text-muted mb-2">${msgPreview}</p>
-                                    <a href="../bandeja/bandeja.php?chat=${c.id}" class="btn btn-sm btn-outline-primary py-1 px-2" style="font-size: 0.8rem; border-radius: 6px;">
+                                    <p class="timeline-text fw-bold text-starfi-dark mb-1">Asesor: ${escapeHtmlDir(c.agente_nombre)}</p>
+                                    <p class="timeline-text text-muted mb-2">${escapeHtmlDir(msgPreview)}</p>
+                                    <a href="../bandeja/bandeja.php?chat=${encodeURIComponent(c.id)}" class="btn btn-sm btn-outline-primary py-1 px-2" style="font-size: 0.8rem; border-radius: 6px;">
                                         <i class="fa-solid fa-arrow-up-right-from-square me-1"></i>Ir al Chat
                                     </a>
                                 </div>
@@ -866,7 +949,7 @@ function loadProfile(id, rowElement) {
                     });
                 }
 
-                // 2. Render Historial de Ventas
+                // 2. Render Historial de Ventas (100% escapado contra DOM-XSS)
                 let salesFeed = $('#profileSalesFeed');
                 salesFeed.empty();
 
@@ -883,9 +966,9 @@ function loadProfile(id, rowElement) {
                             <div class="timeline-item">
                                 <div class="timeline-icon ${iconClass}" style="background-color: rgba(16, 185, 129, 0.1); color: #10B981;"><i class="fa-solid ${iconFa}"></i></div>
                                 <div class="timeline-content">
-                                    <span class="timeline-time">${dateStr}</span>
-                                    <p class="timeline-text fw-bold text-success mb-1">${v.origen || 'VENTA'}</p>
-                                    <p class="timeline-text text-muted">${v.contenido}</p>
+                                    <span class="timeline-time">${escapeHtmlDir(dateStr)}</span>
+                                    <p class="timeline-text fw-bold text-success mb-1">${escapeHtmlDir(v.origen || 'VENTA')}</p>
+                                    <p class="timeline-text text-muted">${escapeHtmlDir(v.contenido)}</p>
                                 </div>
                             </div>
                         `;
@@ -901,7 +984,9 @@ function loadProfile(id, rowElement) {
     });
 }
 
-function saveProfile() {
+function saveProfile(btnEl) {
+    if (isSavingProfile || isCreatingProfile) return;
+
     const nombre = $('#profName').val().trim();
     const direccion = $('#profAddress').val().trim();
     const notas = $('#profNotes').val().trim();
@@ -914,6 +999,10 @@ function saveProfile() {
         return;
     }
 
+    const $btn = btnEl ? $(btnEl) : $('#btnSaveProfile');
+    isSavingProfile = true;
+    $btn.prop('disabled', true);
+
     const full_whatsapp = prefix + phone;
     let action = currentClientId ? 'save_profile' : 'create_profile';
     let data = {
@@ -922,6 +1011,7 @@ function saveProfile() {
         numero_whatsapp: full_whatsapp,
         direccion: direccion,
         notas: notas,
+        etiquetas: JSON.stringify(currentProfileTags),
         id_sede: id_sede
     };
 
@@ -936,7 +1026,9 @@ function saveProfile() {
             dataType: 'json',
             data: { action: 'check_duplicate', numero_whatsapp: data.numero_whatsapp, id_sede: data.id_sede },
             success: function (res) {
-                if (res.status === 'exists') {
+                if (res && res.status === 'exists') {
+                    isSavingProfile = false;
+                    $btn.prop('disabled', false);
                     Swal.fire({
                         title: 'Número ya registrado',
                         text: `El número ${data.numero_whatsapp} ya pertenece al cliente "${res.client.nombre}". ¿Deseas abrir su ficha para editarlo?`,
@@ -952,23 +1044,48 @@ function saveProfile() {
                         }
                     });
                 } else {
-                    executeSaveProfile(data);
+                    executeSaveProfile(data, $btn, true);
                 }
+            },
+            error: function () {
+                isSavingProfile = false;
+                $btn.prop('disabled', false);
+                Swal.fire('Error', 'Error de red al verificar duplicados.', 'error');
             }
         });
     } else {
-        executeSaveProfile(data);
+        executeSaveProfile(data, $btn, true);
     }
 }
 
-function executeSaveProfile(data) {
+function createProfile(btnEl) {
+    if (isCreatingProfile || isSavingProfile) return;
+    currentClientId = null;
+    isCreatingProfile = true;
+    const $btn = btnEl ? $(btnEl) : $('#btnSaveProfile');
+    $btn.prop('disabled', true);
+    try {
+        isCreatingProfile = false;
+        saveProfile($btn[0]);
+    } catch (e) {
+        isCreatingProfile = false;
+        $btn.prop('disabled', false);
+    }
+}
+
+function executeSaveProfile(data, btnRef, fromSaveGuard) {
+    if (!fromSaveGuard && isSavingProfile) return;
+    const $btn = btnRef ? $(btnRef) : $('#btnSaveProfile');
+    isSavingProfile = true;
+    $btn.prop('disabled', true);
+
     $.ajax({
         url: 'back_directorio.php',
         type: 'POST',
         dataType: 'json',
         data: data,
         success: function (res) {
-            if (res.status === 'success') {
+            if (res && res.status === 'success') {
                 Swal.fire({
                     icon: 'success',
                     title: '¡Guardado!',
@@ -979,8 +1096,153 @@ function executeSaveProfile(data) {
                 $('#profileModal').modal('hide');
                 loadClients();
             } else {
-                Swal.fire('Error', res.message, 'error');
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar la ficha.', 'error');
             }
+        },
+        error: function () {
+            Swal.fire('Error', 'Fallo de conexión al guardar la ficha.', 'error');
+        },
+        complete: function () {
+            isSavingProfile = false;
+            isCreatingProfile = false;
+            $btn.prop('disabled', false);
+        }
+    });
+}
+
+window.deleteProfile = function (id, btnEl) {
+    if (isDeletingProfile) return;
+    const cid = parseInt(id, 10);
+    if (!cid) return;
+
+    Swal.fire({
+        title: '¿Eliminar contacto?',
+        text: 'Esta acción eliminará el contacto del directorio.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonText: 'Cancelar',
+        confirmButtonText: 'Sí, eliminar'
+    }).then((result) => {
+        if (!result.isConfirmed || isDeletingProfile) return;
+        isDeletingProfile = true;
+        const $btn = btnEl ? $(btnEl) : $();
+        $btn.prop('disabled', true);
+
+        $.ajax({
+            url: 'back_directorio.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'delete_profile', id: cid },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Eliminado', res.message || 'Cliente eliminado correctamente.', 'success');
+                    $('#profileModal').modal('hide');
+                    loadClients();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo eliminar el cliente.', 'error');
+                }
+            },
+            error: function () {
+                Swal.fire('Error', 'Error de red al eliminar el cliente.', 'error');
+            },
+            complete: function () {
+                isDeletingProfile = false;
+                $btn.prop('disabled', false);
+            }
+        });
+    });
+};
+
+window.addProfileTag = function (btnEl) {
+    if (isSavingTagOrNote) return;
+    const $btn = btnEl ? $(btnEl) : $('#btnAddProfileTag');
+    $btn.prop('disabled', true);
+
+    Swal.fire({
+        title: 'Añadir Etiqueta',
+        input: 'text',
+        inputPlaceholder: 'Ej: VIP, Mayorista, Frecuente...',
+        showCancelButton: true,
+        confirmButtonText: 'Guardar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#E85B14',
+        inputValidator: (val) => {
+            if (!val || !val.trim()) return 'Escribe una etiqueta válida.';
+        }
+    }).then((res) => {
+        if (!res.isConfirmed) {
+            $btn.prop('disabled', false);
+            return;
+        }
+        const newTag = res.value.trim();
+        if (!currentProfileTags.includes(newTag)) {
+            currentProfileTags.push(newTag);
+        }
+        const isLockedView = $('#profName').is(':disabled');
+        renderProfileTagsUI(isLockedView);
+
+        if (!currentClientId) {
+            $btn.prop('disabled', false);
+            return;
+        }
+        persistProfileTagsAndNotes($btn);
+    });
+};
+
+window.removeProfileTag = function (idx, btnEl) {
+    if (isSavingTagOrNote) return;
+    const $btn = btnEl ? $(btnEl) : $();
+    $btn.prop('disabled', true);
+    currentProfileTags.splice(idx, 1);
+    const isLockedView = $('#profName').is(':disabled');
+    renderProfileTagsUI(isLockedView);
+
+    if (!currentClientId) {
+        $btn.prop('disabled', false);
+        return;
+    }
+    persistProfileTagsAndNotes($btn);
+};
+
+window.saveProfileNotes = function (btnEl) {
+    if (isSavingTagOrNote || !currentClientId) return;
+    const $btn = btnEl ? $(btnEl) : $('#btnSaveProfile');
+    persistProfileTagsAndNotes($btn);
+};
+
+function persistProfileTagsAndNotes($btn) {
+    if (isSavingTagOrNote || !currentClientId) return;
+    isSavingTagOrNote = true;
+    if ($btn && $btn.length) $btn.prop('disabled', true);
+
+    $.ajax({
+        url: 'back_directorio.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            action: 'save_profile',
+            id: currentClientId,
+            nombre: $('#profName').val().trim(),
+            numero_whatsapp: ($('#profPrefix').val() || '') + ($('#profPhone').val() || '').trim(),
+            direccion: $('#profAddress').val().trim(),
+            notas: $('#profNotes').val().trim(),
+            etiquetas: JSON.stringify(currentProfileTags),
+            id_sede: $('#profSede').val()
+        },
+        success: function (res) {
+            if (res && res.status === 'success') {
+                loadClients();
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudieron actualizar las etiquetas/notas.', 'error');
+            }
+        },
+        error: function () {
+            Swal.fire('Error', 'Fallo de red al guardar etiquetas/notas.', 'error');
+        },
+        complete: function () {
+            isSavingTagOrNote = false;
+            if ($btn && $btn.length) $btn.prop('disabled', false);
         }
     });
 }

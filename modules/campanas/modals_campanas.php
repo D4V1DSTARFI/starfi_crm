@@ -1,7 +1,4 @@
-<?php
-// modules/campanas/modals_campanas.php
-// Modales Corporativos del Ecosistema de Campañas de Difusión Masiva | STARFI CRM
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
     <!-- MODAL 1: CONFIGURACIÓN DE LÍMITE Y RITMO DIARIO POR SEDE -->
     <div class="modal fade" id="modalFlujoSede" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">

@@ -600,7 +600,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 6. Métricas y Facturación WhatsApp -->
             <?php if (hasPermission('whatsapp_analytics')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/dashboard/whatsapp_analytics.php" class="module-card">
+                <a href="modules/whatsapp_analytics/whatsapp_analytics.php" class="module-card">
                     <div>
                         <div class="icon-container"
                             style="background-color: rgba(16, 185, 129, 0.1); color: var(--sla-green);">
@@ -620,7 +620,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 7. Panel de Órdenes de Cobro -->
             <?php if (hasPermission('waba_ordenes')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/dashboard/waba_ordenes.php" class="module-card">
+                <a href="modules/waba_ordenes/waba_ordenes.php" class="module-card">
                     <div>
                         <div class="icon-container" style="background-color: rgba(220, 53, 69, 0.1); color: var(--danger-color, #dc3545);">
                             <i class="bi bi-receipt"></i>
@@ -638,7 +638,7 @@ if (!$db_online && $is_master_emergency) {
             <!-- 8. Buzón de Salida SMTP -->
             <?php if (hasPermission('buzon_correos')): ?>
             <div class="col-12 col-md-6 col-lg-4">
-                <a href="modules/dashboard/buzon_correos.php" class="module-card">
+                <a href="modules/buzon_correos/buzon_correos.php" class="module-card">
                     <div>
                         <div class="icon-container" style="background-color: rgba(13, 110, 253, 0.1); color: var(--primary-color);">
                             <i class="bi bi-envelope-paper"></i>

@@ -1,8 +1,4 @@
-<?php
-/**
- * Modales del Módulo Gestor de Bots - STARFI CRM
- */
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
 <!-- Modal Vendedores -->
 <div class="modal fade" id="modalContactos" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -61,7 +57,7 @@
                             <option value="INACTIVO">Inactivo</option>
                         </select>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100 rounded-pill py-2 fw-bold">Guardar Vendedor</button>
+                    <button type="submit" id="btnSaveContacto" class="btn btn-primary w-100 rounded-pill py-2 fw-bold">Guardar Vendedor</button>
                 </form>
             </div>
         </div>
@@ -190,7 +186,7 @@
             </div>
             <div class="modal-footer border-0 p-4 pt-0">
                 <button type="button" class="btn btn-light fw-bold" style="border-radius: 10px; padding: 10px 20px;" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-starfi-primary px-4 fw-bold shadow-sm" style="border-radius: 10px; padding: 10px 20px;" onclick="saveBotRule()">Guardar Regla Mágica</button>
+                <button type="button" id="btnSaveBotRule" class="btn btn-starfi-primary px-4 fw-bold shadow-sm" style="border-radius: 10px; padding: 10px 20px;" onclick="saveBotRule(this)">Guardar Regla Mágica</button>
             </div>
         </div>
     </div>

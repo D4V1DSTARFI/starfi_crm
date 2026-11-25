@@ -221,9 +221,16 @@ function hasPermission($modulo) {
             if ($modulo === 'dashboard_main') {
                 return true;
             }
+
+            $es_master_estricto = ($id === 1 || strtoupper(trim((string)($row['rol_nombre'] ?? ''))) === 'MASTER');
+
+            // El buzón global de correos SMTP es exclusivo del rol MASTER (QA-BUG-CRM3-04)
+            if ($modulo === 'buzon_correos') {
+                return $es_master_estricto;
+            }
             
             // MASTER puro o ID=1 activo tiene bypass global
-            if ($id === 1 || $row['rol_nombre'] === 'MASTER') {
+            if ($es_master_estricto) {
                 return true;
             }
             
@@ -351,6 +358,9 @@ function renderSidebar($active = '') {
         'gestion_usuarios' => ['link' => '../gestion_usuarios/gestion_usuarios.php', 'icon' => 'fa-solid fa-users', 'label' => 'Gestión Usuarios'],
         'gestion_roles' => ['link' => '../gestion_roles/gestion_roles.php', 'icon' => 'fa-solid fa-user-shield', 'label' => 'Roles y Permisos'],
         'dashboard' => ['link' => '../dashboard/dashboard.php', 'icon' => 'fa-solid fa-chart-line', 'label' => 'Métricas y KPIs'],
+        'whatsapp_analytics' => ['link' => '../whatsapp_analytics/whatsapp_analytics.php', 'icon' => 'fa-brands fa-whatsapp', 'label' => 'Facturación WABA'],
+        'waba_ordenes' => ['link' => '../waba_ordenes/waba_ordenes.php', 'icon' => 'fa-solid fa-file-invoice-dollar', 'label' => 'Órdenes WABA'],
+        'buzon_correos' => ['link' => '../buzon_correos/buzon_correos.php', 'icon' => 'fa-solid fa-envelope-open-text', 'label' => 'Buzón SMTP'],
         'gestor_bots' => ['link' => '../gestor_bots/gestor_bots.php', 'icon' => 'fa-solid fa-robot', 'label' => 'Gestor de Bots'],
         'configuracion' => ['link' => '../configuracion/configuracion.php', 'icon' => 'fa-solid fa-gear', 'label' => 'Configuración']
     ];

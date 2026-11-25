@@ -135,7 +135,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <p class="text-muted mb-0" style="font-size: 0.95rem;">Configure la visibilidad y accesibilidad a los distintos módulos del CRM según el Rol de Usuario.</p>
                     </div>
                     <div>
-                        <button class="btn btn-primary d-flex align-items-center gap-2 fw-semibold px-4 py-2" style="border-radius: 30px; background-color: var(--primary); border-color: var(--primary);" onclick="createNewRole()">
+                        <button id="btnCreateNewRole" class="btn btn-primary d-flex align-items-center gap-2 fw-semibold px-4 py-2" style="border-radius: 30px; background-color: var(--primary); border-color: var(--primary);" onclick="createNewRole(this)">
                             <i class="fa-solid fa-plus"></i> Crear Nuevo Rol
                         </button>
                     </div>
@@ -156,7 +156,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </main>
     </div>
 
-    <?php require __DIR__ . '/modals_gestion_roles.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_gestion_roles.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>

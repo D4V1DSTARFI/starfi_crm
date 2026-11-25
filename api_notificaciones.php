@@ -36,6 +36,23 @@ function starfi_api_log_error($msg) {
     starfi_log_exception('api_notificaciones', $msg);
 }
 
+function starfi_audit_api_denial($codigo_http, $motivo, $con = null, $id_sede = null) {
+    registrar_auditoria(
+        'api_notificaciones',
+        'RECHAZO_API_' . intval($codigo_http),
+        $motivo,
+        null,
+        [
+            'http_code' => intval($codigo_http),
+            'accion' => (string)($_POST['accion'] ?? 'send_template'),
+            'telefono' => (string)($_POST['telefono'] ?? ''),
+        ],
+        $con,
+        null,
+        $id_sede
+    );
+}
+
 function starfi_extract_bearer_or_token(array $json_body = []) {
     $auth_hdr = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
     if ($auth_hdr === '' && function_exists('apache_request_headers')) {
@@ -92,6 +109,7 @@ $api_token_validado = starfi_extract_bearer_or_token($raw_json);
 // =========================================================================
 if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     if ($api_token_validado === '') {
+        starfi_audit_api_denial(401, 'Intento de sync_linea sin api_token válido de 64 caracteres.');
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'No autorizado: se requiere un api_token válido de 64 caracteres.']);
         exit;
@@ -118,12 +136,14 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
     $stmt_sede->close();
 
     if (!$row_sede) {
+        starfi_audit_api_denial(401, 'Intento de sync_linea con api_token no reconocido.', $con);
         $con->close();
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'Token inválido o no reconocido.']);
         exit;
     }
     if (strtoupper(trim((string)($row_sede['estado'] ?? ''))) !== 'ACTIVO') {
+        starfi_audit_api_denial(403, 'Intento de sync_linea sobre sede inactiva #' . intval($row_sede['id']), $con, intval($row_sede['id']));
         $con->close();
         http_response_code(403);
         echo json_encode(['status' => 'error', 'message' => 'La sede asociada al token se encuentra pausada o inactiva.']);
@@ -204,6 +224,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'sync_linea') {
 // =========================================================================
 if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
     if ($api_token_validado === '') {
+        starfi_audit_api_denial(401, 'Intento de get_info sin api_token válido de 64 caracteres.');
         http_response_code(401);
         echo json_encode(['status' => 'error', 'message' => 'No autorizado: se requiere un api_token válido de 64 caracteres.']);
         exit;
@@ -217,7 +238,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
     }
 
     $stmt = $con->prepare("
-        SELECT l.meta_app_id AS instance_id, l.numero_telefono AS phone_number, s.nombre_sede, s.estado AS estado_sede, l.estado
+        SELECT s.id AS id_sede, l.meta_app_id AS instance_id, l.numero_telefono AS phone_number, s.nombre_sede, s.estado AS estado_sede, l.estado
         FROM sedes s
         LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id
         WHERE s.api_token = ?
@@ -229,6 +250,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
         $res = $stmt->get_result();
         if ($res && ($data = $res->fetch_assoc())) {
             if (strtoupper(trim((string)($data['estado_sede'] ?? ''))) !== 'ACTIVO') {
+                starfi_audit_api_denial(403, 'Intento de get_info sobre sede inactiva #' . intval($data['id_sede'] ?? 0), $con, intval($data['id_sede'] ?? 0));
                 http_response_code(403);
                 echo json_encode(['status' => 'error', 'message' => 'La sede asociada al token se encuentra inactiva.']);
             } else {
@@ -243,6 +265,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
                 ]);
             }
         } else {
+            starfi_audit_api_denial(401, 'Intento de get_info con api_token inválido.', $con);
             http_response_code(401);
             echo json_encode(['status' => 'error', 'message' => 'Token inválido o Sede no encontrada.']);
         }
@@ -259,6 +282,7 @@ if (isset($_POST['accion']) && $_POST['accion'] === 'get_info') {
 // RAMA 3: DESPACHO TRANSACCIONAL DE PLANTILLAS OFICIALES META
 // =========================================================================
 if ($api_token_validado === '') {
+    starfi_audit_api_denial(401, 'Solicitud de despacho transaccional rechazada por ausencia de api_token de 64 caracteres.');
     http_response_code(401);
     echo json_encode([
         'status' => 'error',
@@ -357,6 +381,7 @@ $row_auth = $res_tok ? $res_tok->fetch_assoc() : null;
 $stmt_token->close();
 
 if (!$row_auth) {
+    starfi_audit_api_denial(401, 'Despacho transaccional rechazado: api_token inválido.', $con);
     $con->close();
     http_response_code(401);
     echo json_encode(['status' => 'error', 'message' => 'No autorizado: api_token inválido.']);
@@ -364,6 +389,7 @@ if (!$row_auth) {
 }
 
 if (strtoupper(trim((string)($row_auth['estado_sede'] ?? ''))) !== 'ACTIVO') {
+    starfi_audit_api_denial(403, 'Despacho transaccional denegado: sede inactiva #' . intval($row_auth['crm_id_sede'] ?? 0), $con, intval($row_auth['crm_id_sede'] ?? 0));
     $con->close();
     http_response_code(403);
     echo json_encode(['status' => 'error', 'message' => 'Envío denegado: la sede autenticada se encuentra pausada o inactiva.']);
@@ -380,6 +406,7 @@ $id_empresa = intval($row_auth['id_empresa'] ?? 1);
 $crm_id_sede = intval($row_auth['crm_id_sede'] ?? 0);
 
 if (strtoupper(trim((string)($row_auth['estado_linea'] ?? ''))) !== 'ACTIVO' || $token === '' || $telefonoID === '') {
+    starfi_audit_api_denial(403, 'Despacho transaccional denegado: línea WhatsApp inactiva o no configurada en sede #' . $crm_id_sede, $con, $crm_id_sede);
     $con->close();
     http_response_code(403);
     echo json_encode([
@@ -797,6 +824,24 @@ if ($id_linea > 0) {
         }
     }
 }
+
+registrar_auditoria(
+    'api_notificaciones',
+    'DESPACHO_PLANTILLA_WABA',
+    "Despacho transaccional de plantilla '{$template_name}' a {$telefono_receptor} ({$status_bd}) en sede #{$crm_id_sede}",
+    null,
+    [
+        'id_sede' => $crm_id_sede,
+        'id_linea' => $id_linea,
+        'template' => $template_name,
+        'telefono_receptor' => $telefono_receptor,
+        'status_bd' => $status_bd,
+        'http_code' => $status_code,
+    ],
+    $con,
+    null,
+    $crm_id_sede
+);
 
 $con->close();
 $response['meta_response'] = $estado;

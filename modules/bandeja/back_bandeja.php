@@ -13,22 +13,193 @@ $agente_id = intval($_SESSION['agente_id'] ?? ($agente_info_global['id'] ?? 0));
 // Liberar bloqueo de sesión inmediatamente para que load_chats, get_agents y sse_updates corran en paralelo sin bloquearse
 session_write_close();
 
+// Endpoint integrado SSE (Server-Sent Events) con aislamiento Multi-Sede y 100% mysqli_prepare
+if (($_GET['action'] ?? '') === 'sse_updates') {
+    header('Content-Type: text/event-stream; charset=utf-8');
+    header('Cache-Control: no-cache');
+    header('Connection: keep-alive');
+    header('X-Accel-Buffering: no');
+
+    $rol_sse = strtoupper(trim((string)($agente_info_global['rol'] ?? '')));
+    $is_master_sse = ($agente_id === 1 || $rol_sse === 'MASTER');
+    $is_admin_sse = (!$is_master_sse && in_array($rol_sse, ['ADMINISTRADOR', 'ADMIN', 'GERENTE'], true));
+    $user_sede_sse = intval($agente_info_global['id_sede'] ?? 0);
+
+    if (!$con || (!$is_master_sse && $user_sede_sse <= 0)) {
+        echo "data: {\"type\": \"reconnect\"}\n\n";
+        @ob_flush();
+        @flush();
+        exit;
+    }
+
+    $fetchGlobalMaxMsgId = function () use ($con) {
+        $stmtMax = $con->prepare("SELECT IFNULL(MAX(id), 0) AS max_id FROM mensajes_y_eventos");
+        $maxVal = 0;
+        if ($stmtMax && $stmtMax->execute()) {
+            $rMax = $stmtMax->get_result();
+            if ($rMax && ($rowMax = $rMax->fetch_assoc())) {
+                $maxVal = intval($rowMax['max_id']);
+            }
+        }
+        if ($stmtMax) {
+            $stmtMax->close();
+        }
+        return $maxVal;
+    };
+
+    $last_msg_id = $fetchGlobalMaxMsgId();
+    $status_floor_id = max(0, $last_msg_id - 400);
+
+    $computeStatusSignature = function () use ($con, $status_floor_id, $is_master_sse, $is_admin_sse, $user_sede_sse, $agente_id) {
+        $base_select = "
+            SELECT COUNT(*) AS cnt,
+                   COALESCE(BIT_XOR(CRC32(CONCAT_WS('|', m.id, IFNULL(m.estado_envio, ''), IFNULL(m.error_detalle, ''), IFNULL(c.estado, ''), IFNULL(c.id_agente, 0)))), 0) AS sig_xor,
+                   COALESCE(SUM(CRC32(CONCAT_WS('|', m.id, IFNULL(m.estado_envio, ''), IFNULL(m.error_detalle, ''), IFNULL(c.estado, ''), IFNULL(c.id_agente, 0)))), 0) AS sig_sum
+            FROM mensajes_y_eventos m
+            JOIN conversaciones c ON m.id_conversacion = c.id
+            JOIN lineas_whatsapp l ON c.id_linea = l.id
+        ";
+        if ($is_master_sse) {
+            $stmt_sig = $con->prepare($base_select . " WHERE m.id > ?");
+            if ($stmt_sig) {
+                $stmt_sig->bind_param("i", $status_floor_id);
+            }
+        } elseif ($is_admin_sse) {
+            $stmt_sig = $con->prepare($base_select . " WHERE m.id > ? AND l.id_sede = ?");
+            if ($stmt_sig) {
+                $stmt_sig->bind_param("ii", $status_floor_id, $user_sede_sse);
+            }
+        } else {
+            $stmt_sig = $con->prepare($base_select . " WHERE m.id > ? AND l.id_sede = ? AND (c.id_agente = ? OR c.estado = 'ESPERA_ASIGNACION')");
+            if ($stmt_sig) {
+                $stmt_sig->bind_param("iii", $status_floor_id, $user_sede_sse, $agente_id);
+            }
+        }
+
+        if (isset($stmt_sig) && $stmt_sig && $stmt_sig->execute()) {
+            $res_sig = $stmt_sig->get_result();
+            if ($res_sig && ($row_sig = $res_sig->fetch_assoc())) {
+                $stmt_sig->close();
+                return $row_sig['cnt'] . ':' . $row_sig['sig_xor'] . ':' . $row_sig['sig_sum'];
+            }
+            $stmt_sig->close();
+        }
+        return '0:0:0';
+    };
+
+    $last_status_sig = $computeStatusSignature();
+    $max_loops = 20;
+
+    for ($i = 0; $i < $max_loops; $i++) {
+        if (connection_aborted()) {
+            break;
+        }
+
+        if (($i === 0 || $i === 10) && $agente_id > 1) {
+            starfi_touch_agent_presence($con, $agente_id, true);
+        }
+
+        $has_new_msg = false;
+        $base_new = "
+            SELECT MAX(m.id) AS nuevo_max_id
+            FROM mensajes_y_eventos m
+            JOIN conversaciones c ON m.id_conversacion = c.id
+            JOIN lineas_whatsapp l ON c.id_linea = l.id
+        ";
+        if ($is_master_sse) {
+            $stmt_new = $con->prepare($base_new . " WHERE m.id > ?");
+            if ($stmt_new) {
+                $stmt_new->bind_param("i", $last_msg_id);
+            }
+        } elseif ($is_admin_sse) {
+            $stmt_new = $con->prepare($base_new . " WHERE m.id > ? AND l.id_sede = ?");
+            if ($stmt_new) {
+                $stmt_new->bind_param("ii", $last_msg_id, $user_sede_sse);
+            }
+        } else {
+            $stmt_new = $con->prepare($base_new . " WHERE m.id > ? AND l.id_sede = ? AND (c.id_agente = ? OR c.estado = 'ESPERA_ASIGNACION')");
+            if ($stmt_new) {
+                $stmt_new->bind_param("iii", $last_msg_id, $user_sede_sse, $agente_id);
+            }
+        }
+
+        $row_new = null;
+        if (isset($stmt_new) && $stmt_new && $stmt_new->execute()) {
+            $res_n = $stmt_new->get_result();
+            $row_new = $res_n ? $res_n->fetch_assoc() : null;
+            $stmt_new->close();
+        }
+
+        if ($row_new && !empty($row_new['nuevo_max_id'])) {
+            $last_msg_id = intval($row_new['nuevo_max_id']);
+            $has_new_msg = true;
+        } else {
+            $last_msg_id = max($last_msg_id, $fetchGlobalMaxMsgId());
+        }
+
+        $current_status_sig = $computeStatusSignature();
+
+        if ($has_new_msg) {
+            $last_status_sig = $current_status_sig;
+            echo "data: {\"type\": \"update\", \"reason\": \"new_message\"}\n\n";
+            @ob_flush();
+            @flush();
+        } elseif ($current_status_sig !== $last_status_sig) {
+            $last_status_sig = $current_status_sig;
+            echo "data: {\"type\": \"update\", \"reason\": \"status_change\"}\n\n";
+            @ob_flush();
+            @flush();
+        }
+
+        echo ": ping\n\n";
+        @ob_flush();
+        @flush();
+
+        sleep(3);
+    }
+
+    echo "data: {\"type\": \"reconnect\"}\n\n";
+    @ob_flush();
+    @flush();
+    exit;
+}
+
 starfi_ensure_sprint2_schema($con);
 
-// Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez por esquema de BD
+// Ejecutar migraciones ligeras, indexación y TRIGGER de sincronización una sola vez por esquema de BD (fuera de transacciones activas)
 $bandeja_db_hash = starfi_db_schema_hash($con);
 $migration_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_bandeja_migrated_v5_' . $bandeja_db_hash . '.flag';
-if (!file_exists($migration_flag)) {
-    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
-    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
-    @mysqli_query($con, "ALTER TABLE conversaciones ADD COLUMN ultimo_msg_id INT NOT NULL DEFAULT 0");
-    @mysqli_query($con, "ALTER TABLE conversaciones ADD INDEX idx_ultimo_msg (ultimo_msg_id, id)");
-    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
-    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD COLUMN categoria_meta VARCHAR(50) DEFAULT NULL");
-    @mysqli_query($con, "ALTER TABLE mensajes_y_eventos ADD INDEX idx_conv_origen (id_conversacion, origen)");
-    @mysqli_query($con, "UPDATE conversaciones c JOIN (SELECT id_conversacion, MAX(id) AS max_id FROM mensajes_y_eventos GROUP BY id_conversacion) m ON c.id = m.id_conversacion SET c.ultimo_msg_id = m.max_id WHERE c.ultimo_msg_id < m.max_id");
-    @mysqli_query($con, "DROP TRIGGER IF EXISTS trg_mensajes_ultimo_msg_ai");
-    @mysqli_query($con, "CREATE TRIGGER trg_mensajes_ultimo_msg_ai AFTER INSERT ON mensajes_y_eventos FOR EACH ROW UPDATE conversaciones SET ultimo_msg_id = GREATEST(IFNULL(ultimo_msg_id, 0), NEW.id) WHERE id = NEW.id_conversacion");
+if (!file_exists($migration_flag) && !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con))) {
+    $colsConv = [];
+    $rColsConv = @$con->query("SHOW COLUMNS FROM conversaciones");
+    if ($rColsConv) {
+        while ($cc = $rColsConv->fetch_assoc()) {
+            $colsConv[$cc['Field']] = true;
+        }
+        if (!isset($colsConv['resultado_comercial'])) {
+            @$con->query("ALTER TABLE conversaciones ADD COLUMN resultado_comercial VARCHAR(100) DEFAULT NULL");
+        }
+        if (!isset($colsConv['fecha_cierre_venta'])) {
+            @$con->query("ALTER TABLE conversaciones ADD COLUMN fecha_cierre_venta DATETIME DEFAULT NULL");
+        }
+        if (!isset($colsConv['ultimo_msg_id'])) {
+            @$con->query("ALTER TABLE conversaciones ADD COLUMN ultimo_msg_id INT NOT NULL DEFAULT 0");
+            @$con->query("ALTER TABLE conversaciones ADD INDEX idx_ultimo_msg (ultimo_msg_id, id)");
+        }
+    }
+    $colsMsg = [];
+    $rColsMsg = @$con->query("SHOW COLUMNS FROM mensajes_y_eventos");
+    if ($rColsMsg) {
+        while ($cm = $rColsMsg->fetch_assoc()) {
+            $colsMsg[$cm['Field']] = true;
+        }
+        if (!isset($colsMsg['error_detalle'])) {
+            @$con->query("ALTER TABLE mensajes_y_eventos ADD COLUMN error_detalle TEXT DEFAULT NULL");
+        }
+        if (!isset($colsMsg['categoria_meta'])) {
+            @$con->query("ALTER TABLE mensajes_y_eventos ADD COLUMN categoria_meta VARCHAR(50) DEFAULT NULL");
+        }
+    }
     @file_put_contents($migration_flag, date('Y-m-d H:i:s'));
 }
 
@@ -109,9 +280,13 @@ function bandeja_fetch_in_ints($con, $sql_with_in_tokens, $int_groups) {
 function get_conversacion_window_24h($con, $conversacion_id) {
     $cid = intval($conversacion_id);
     $now_epoch = time();
-    $res_now = $con->query("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
-    if ($res_now && ($rn = $res_now->fetch_assoc())) {
-        $now_epoch = intval($rn['now_ep']);
+    $stmt_now = $con->prepare("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
+    if ($stmt_now && $stmt_now->execute()) {
+        $res_now = $stmt_now->get_result();
+        if ($res_now && ($rn = $res_now->fetch_assoc())) {
+            $now_epoch = intval($rn['now_ep']);
+        }
+        $stmt_now->close();
     }
     $last_cli_epoch = 0;
     if ($cid > 0) {
@@ -299,7 +474,7 @@ function authorize_cliente_access($con, $cliente_id, $agente_info) {
     }
     $ag_id = intval($agente_info['id'] ?? 0);
     $rol_raw = strtoupper(trim($agente_info['rol'] ?? ''));
-    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI' || ($rol_raw === 'ADMIN' && intval($agente_info['id_sede'] ?? 0) === 0));
+    $is_master = ($ag_id === 1 || $rol_raw === 'MASTER');
     if ($is_master) {
         return true;
     }
@@ -359,11 +534,35 @@ $action = $_POST['action'] ?? '';
 
 switch ($action) {
     case 'get_respuestas_rapidas':
-        $res = $con->query("SELECT titulo, mensaje FROM respuestas_rapidas WHERE estado = 'ACTIVO' ORDER BY id DESC");
+        $rol_qr = strtoupper(trim((string)($agente_info_global['rol'] ?? '')));
+        $is_master_qr = (intval($agente_info_global['id'] ?? 0) === 1 || $rol_qr === 'MASTER');
+        $user_sede_qr = intval($agente_info_global['id_sede'] ?? 0);
         $data = [];
-        if($res){
-            while ($row = $res->fetch_assoc()) {
-                $data[] = $row;
+        if ($is_master_qr) {
+            $stmtQr = $con->prepare("SELECT titulo, mensaje FROM respuestas_rapidas WHERE estado = ? ORDER BY id DESC");
+            if ($stmtQr) {
+                $stAct = 'ACTIVO';
+                $stmtQr->bind_param("s", $stAct);
+                if ($stmtQr->execute()) {
+                    $resQr = $stmtQr->get_result();
+                    while ($resQr && ($row = $resQr->fetch_assoc())) {
+                        $data[] = $row;
+                    }
+                }
+                $stmtQr->close();
+            }
+        } elseif ($user_sede_qr > 0) {
+            $stmtQr = $con->prepare("SELECT titulo, mensaje FROM respuestas_rapidas WHERE estado = ? AND id_sede = ? ORDER BY id DESC");
+            if ($stmtQr) {
+                $stAct = 'ACTIVO';
+                $stmtQr->bind_param("si", $stAct, $user_sede_qr);
+                if ($stmtQr->execute()) {
+                    $resQr = $stmtQr->get_result();
+                    while ($resQr && ($row = $resQr->fetch_assoc())) {
+                        $data[] = $row;
+                    }
+                }
+                $stmtQr->close();
             }
         }
         echo json_encode(['status' => 'success', 'data' => $data]);
@@ -607,9 +806,13 @@ switch ($action) {
 
         // Reloj del servidor en epoch para sincronización exacta de Ventana Meta 24h ([COM-01]) y Semáforo SLA ([COM-04])
         $server_now_epoch = time();
-        $resNow = $con->query("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
-        if ($resNow && ($rn = $resNow->fetch_assoc())) {
-            $server_now_epoch = intval($rn['now_ep']);
+        $stmtNowEp = $con->prepare("SELECT UNIX_TIMESTAMP(NOW()) AS now_ep");
+        if ($stmtNowEp && $stmtNowEp->execute()) {
+            $resNow = $stmtNowEp->get_result();
+            if ($resNow && ($rn = $resNow->fetch_assoc())) {
+                $server_now_epoch = intval($rn['now_ep']);
+            }
+            $stmtNowEp->close();
         }
 
         // FASE 2: Enriquecer ÚNICAMENTE las 20 conversaciones de la página actual (evita escanear miles de filas)
@@ -1810,7 +2013,11 @@ switch ($action) {
         $is_master_tags = (intval($agente_info_global['id'] ?? 0) === 1 || $rol_tags === 'MASTER' || $rol_tags === 'MASTER CI');
         $user_sede_tags = intval($agente_info_global['id_sede'] ?? 0);
         if ($is_master_tags) {
-            $res = $con->query("SELECT etiquetas FROM clientes_contactos WHERE etiquetas IS NOT NULL AND etiquetas != ''");
+            $stmtTags = $con->prepare("SELECT etiquetas FROM clientes_contactos WHERE etiquetas IS NOT NULL AND etiquetas != ''");
+            $res = false;
+            if ($stmtTags && $stmtTags->execute()) {
+                $res = $stmtTags->get_result();
+            }
         } else {
             $stmtTags = $con->prepare("
                 SELECT DISTINCT cl.etiquetas

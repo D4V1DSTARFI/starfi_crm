@@ -1,16 +1,57 @@
+// modules/perfil_empresa/funciones_perfil_empresa.js
+
 let currentSede = 1;
 let currentPerfiles = [];
 let selectedEmpresaData = null;
 
+// Guards anti-doble-clic (QA-BUG-CRM3-07)
+let isSavingPerfil = false;
+let isDeletingPerfil = false;
+let isSavingFirmante = false;
+let isDeletingFirmante = false;
+let isSavingRegistro = false;
+let isDeletingRegistro = false;
+let isSavingExpediente = false;
+let isDeletingExpediente = false;
+
 document.addEventListener('DOMContentLoaded', () => {
     verGestionTablas(1);
+
+    const fPerfil = document.getElementById('formPerfilEmpresa');
+    if (fPerfil) {
+        fPerfil.addEventListener('submit', (e) => {
+            e.preventDefault();
+            savePerfilEmpresa(document.getElementById('btnSavePerfilEmpresa'));
+        });
+    }
+    const fFirmante = document.getElementById('formFirmante');
+    if (fFirmante) {
+        fFirmante.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveFirmante(document.getElementById('btnSaveFirmante'));
+        });
+    }
+    const fRegistro = document.getElementById('formRegistro');
+    if (fRegistro) {
+        fRegistro.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveRegistro(document.getElementById('btnSaveRegistro'));
+        });
+    }
+    const fExpediente = document.getElementById('formExpediente');
+    if (fExpediente) {
+        fExpediente.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveExpediente(document.getElementById('btnSaveExpediente'));
+        });
+    }
 });
 
 function loadPerfiles() {
-    fetch('back_empresa.php?action=get_perfiles')
+    fetch('back_perfil_empresa.php?action=get_perfiles')
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 currentPerfiles = data.data || [];
                 renderTablaPrincipal();
             } else {
@@ -25,7 +66,7 @@ function loadPerfiles() {
 
 function renderTablaPrincipal() {
     const tbody = document.getElementById('tablaPerfilesBody');
-    const search = document.getElementById('searchEmpresa').value.toLowerCase().trim();
+    const search = (document.getElementById('searchEmpresa').value || '').toLowerCase().trim();
 
     const filtered = currentPerfiles.filter(p => {
         const rs = (p.razon_social || '').toLowerCase();
@@ -46,6 +87,7 @@ function renderTablaPrincipal() {
 
     let html = '';
     filtered.forEach((p, idx) => {
+        const pid = Number(p.id) || 0;
         const rifCompleto = `${escapeHtml(p.letra)}-${escapeHtml(p.rif)}`;
         const condicionText = (p.condicion === '[ESPECIAL]') ? 'ESPECIAL' : 'ORDINARIO';
 
@@ -54,7 +96,7 @@ function renderTablaPrincipal() {
                 <td class="fw-bold text-muted">${idx + 1}</td>
                 <td>
                     <div class="d-flex align-items-center gap-3">
-                        ${p.logo_empresa ? `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" class="rounded border" style="width:40px; height:40px; object-fit:contain;">` : `<div class="rounded-circle bg-light d-flex align-items-center justify-content-center text-primary" style="width:40px; height:40px;"><i class="fa-solid fa-building fs-5"></i></div>`}
+                        ${p.logo_empresa ? `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" class="rounded border" style="width:40px; height:40px; object-fit:contain;" alt="Logo">` : `<div class="rounded-circle bg-light d-flex align-items-center justify-content-center text-primary" style="width:40px; height:40px;"><i class="fa-solid fa-building fs-5"></i></div>`}
                         <div>
                             <div class="fw-bold text-dark mb-0">${escapeHtml(p.razon_social)}</div>
                             <span class="text-muted small">${escapeHtml(p.email || 'Sin correo')}</span>
@@ -66,13 +108,13 @@ function renderTablaPrincipal() {
                 <td class="fw-medium text-dark">${escapeHtml(p.firmante_principal || 'Sin asignar')}</td>
                 <td class="text-end">
                     <div class="d-flex align-items-center justify-content-end gap-2">
-                        <button class="btn btn-starfi-primary btn-sm px-3 py-1.5 fw-semibold d-flex align-items-center gap-1.5" onclick="verGestionTablas(${Number(p.id)})">
+                        <button type="button" class="btn btn-starfi-primary btn-sm px-3 py-1.5 fw-semibold d-flex align-items-center gap-1.5" onclick="verGestionTablas(${pid})">
                             <i class="fa-solid fa-layer-group"></i> Gestionar Tablas
                         </button>
-                        <button class="btn btn-light btn-sm text-secondary border px-2.5 py-1.5 rounded-2" onclick="editPerfilEmpresaDirecto(${Number(p.id)})" title="Editar Datos">
+                        <button type="button" class="btn btn-light btn-sm text-secondary border px-2.5 py-1.5 rounded-2" onclick="editPerfilEmpresaDirecto(${pid})" title="Editar Datos">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="btn btn-outline-danger btn-sm px-2.5 py-1.5 rounded-2" onclick="deletePerfilEmpresa(${Number(p.id)})" title="Eliminar Empresa">
+                        <button type="button" class="btn btn-outline-danger btn-sm px-2.5 py-1.5 rounded-2" onclick="deletePerfilEmpresa(${pid}, this)" title="Eliminar Empresa">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </div>
@@ -92,16 +134,16 @@ function loadPerfilDetalle(idEmpresa) {
 }
 
 function verGestionTablas(idEmpresa) {
-    fetch(`back_empresa.php?action=get_detalle_empresa&id_empresa=${encodeURIComponent(idEmpresa)}`)
+    fetch(`back_perfil_empresa.php?action=get_detalle_empresa&id_empresa=${encodeURIComponent(idEmpresa)}`)
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 selectedEmpresaData = data;
                 const p = data.perfil;
                 currentSede = p.id_sede || currentSede;
 
-                document.getElementById('headerRazonSocial').innerText = p.razon_social;
-                document.getElementById('headerRif').innerText = `RIF: ${p.letra}-${p.rif}`;
+                document.getElementById('headerRazonSocial').innerText = p.razon_social || '';
+                document.getElementById('headerRif').innerText = `RIF: ${p.letra || ''}-${p.rif || ''}`;
                 document.getElementById('headerCondicion').innerText = (p.condicion === '[ESPECIAL]') ? 'CONTRIBUYENTE ESPECIAL' : 'ORDINARIO';
                 document.getElementById('headerCorreo').innerText = p.email || 'Sin Correo';
                 document.getElementById('headerTelefono').innerText = p.telefono || 'Sin Teléfono';
@@ -110,18 +152,20 @@ function verGestionTablas(idEmpresa) {
                 if (p.logo_empresa) {
                     logoBox.innerHTML = `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" alt="Logo">`;
                 } else {
-                    logoBox.innerHTML = `<i class="fa-solid fa-building fs-2 text-secondary"></i>`;
+                    logoBox.innerHTML = '<i class="fa-solid fa-building fs-2 text-secondary"></i>';
                 }
 
-                document.getElementById('tdRazonSocial').innerText = p.razon_social;
-                document.getElementById('tdRif').innerText = `${p.letra}-${p.rif}`;
+                document.getElementById('tdRazonSocial').innerText = p.razon_social || '-';
+                document.getElementById('tdRif').innerText = `${p.letra || ''}-${p.rif || ''}`;
                 document.getElementById('tdCondicion').innerText = (p.condicion === '[ESPECIAL]') ? 'CONTRIBUYENTE ESPECIAL' : 'ORDINARIO';
                 document.getElementById('tdCorreo').innerText = p.email || '-';
                 document.getElementById('tdTelefono').innerText = p.telefono || '-';
                 document.getElementById('tdWeb').innerText = p.web || '-';
                 document.getElementById('tdInstagram').innerText = p.instagram || '-';
                 document.getElementById('tdDireccion').innerText = p.direccion || '-';
-                document.getElementById('tdLogoContainer').innerHTML = p.logo_empresa ? `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" style="max-height: 50px;" class="rounded border p-1">` : 'Sin Logo';
+                document.getElementById('tdLogoContainer').innerHTML = p.logo_empresa
+                    ? `<img src="../../uploads/empresa/${encodeURIComponent(p.logo_empresa)}" style="max-height: 50px;" class="rounded border p-1" alt="Logo">`
+                    : 'Sin Logo';
 
                 renderTablaFirmantes(data.firmantes);
                 renderTablaRegistro(data.registros);
@@ -142,11 +186,12 @@ function volverAEstaLista() {
 function renderTablaFirmantes(firmantes) {
     const tbody = document.getElementById('tablaFirmantesBody');
     if (!firmantes || firmantes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted"><i class="fa-solid fa-user-slash me-2 opacity-50"></i>No hay firmantes o representantes registrados.</td></tr>`;
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted"><i class="fa-solid fa-user-slash me-2 opacity-50"></i>No hay firmantes o representantes registrados.</td></tr>';
         return;
     }
     let html = '';
     firmantes.forEach(f => {
+        const fid = Number(f.id) || 0;
         html += `
             <tr>
                 <td class="fw-bold text-dark">${escapeHtml(f.nombre)}</td>
@@ -158,7 +203,7 @@ function renderTablaFirmantes(firmantes) {
                 </td>
                 <td class="small text-muted">${escapeHtml(f.direccion || '-')}</td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteFirmante(${Number(f.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteFirmante(${fid}, this)" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
                 </td>
             </tr>`;
     });
@@ -168,11 +213,12 @@ function renderTablaFirmantes(firmantes) {
 function renderTablaRegistro(registros) {
     const tbody = document.getElementById('tablaRegistroBody');
     if (!registros || registros.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-file-excel me-2 opacity-50"></i>No se han registrado inscripciones de registro mercantil.</td></tr>`;
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-file-excel me-2 opacity-50"></i>No se han registrado inscripciones de registro mercantil.</td></tr>';
         return;
     }
     let html = '';
     registros.forEach(r => {
+        const rid = Number(r.id) || 0;
         html += `
             <tr>
                 <td class="fw-semibold text-dark">${escapeHtml(r.fecha)}</td>
@@ -180,7 +226,7 @@ function renderTablaRegistro(registros) {
                 <td class="fw-semibold text-secondary">Tomo ${escapeHtml(r.n_tomo)}</td>
                 <td class="small">${escapeHtml(r.descripcion || '-')}</td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteRegistro(${Number(r.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteRegistro(${rid}, this)" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
                 </td>
             </tr>`;
     });
@@ -190,22 +236,23 @@ function renderTablaRegistro(registros) {
 function renderTablaExpediente(expedientes) {
     const tbody = document.getElementById('tablaExpedienteBody');
     if (!expedientes || expedientes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted"><i class="fa-solid fa-folder-open me-2 opacity-50"></i>No se han adjuntado documentos al expediente digital.</td></tr>`;
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted"><i class="fa-solid fa-folder-open me-2 opacity-50"></i>No se han adjuntado documentos al expediente digital.</td></tr>';
         return;
     }
     let html = '';
     expedientes.forEach(e => {
+        const eid = Number(e.id) || 0;
         html += `
             <tr>
                 <td class="fw-semibold text-dark">${escapeHtml(e.fecha)}</td>
                 <td class="fw-bold text-dark">${escapeHtml(e.descripcion)}</td>
                 <td>
-                    <a href="back_empresa.php?action=download_expediente&id=${encodeURIComponent(e.id)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary px-3 rounded-2 fw-semibold">
+                    <a href="back_perfil_empresa.php?action=download_expediente&id=${encodeURIComponent(eid)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary px-3 rounded-2 fw-semibold">
                         <i class="fa-solid fa-download me-1"></i> Ver / Descargar
                     </a>
                 </td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteExpediente(${Number(e.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteExpediente(${eid}, this)" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
                 </td>
             </tr>`;
     });
@@ -222,6 +269,8 @@ function openPerfilModal() {
     document.getElementById('perfilId').value = '0';
     document.getElementById('perfilSede').value = currentSede;
     document.getElementById('modalPerfilTitle').innerText = 'Registrar Perfil Corporativo';
+    const btn = document.getElementById('btnSavePerfilEmpresa');
+    if (btn) btn.disabled = false;
     const modal = new bootstrap.Modal(document.getElementById('modalPerfilEmpresa'));
     modal.show();
 }
@@ -236,9 +285,9 @@ function editPerfilActual() {
     const p = selectedEmpresaData.perfil;
     document.getElementById('perfilId').value = p.id;
     document.getElementById('perfilSede').value = p.id_sede || currentSede;
-    document.getElementById('inputRazonSocial').value = p.razon_social;
+    document.getElementById('inputRazonSocial').value = p.razon_social || '';
     document.getElementById('inputLetra').value = p.letra || 'J';
-    document.getElementById('inputRif').value = p.rif;
+    document.getElementById('inputRif').value = p.rif || '';
     document.getElementById('inputCondicion').value = p.condicion || '[ORDINARIO]';
     document.getElementById('inputEmail').value = p.email || '';
     document.getElementById('inputTelefonoPerfil').value = p.telefono || '';
@@ -246,21 +295,28 @@ function editPerfilActual() {
     document.getElementById('inputInstagram').value = p.instagram || '';
     document.getElementById('inputDireccionPerfil').value = p.direccion || '';
     document.getElementById('modalPerfilTitle').innerText = 'Editar Perfil Corporativo';
+    const btn = document.getElementById('btnSavePerfilEmpresa');
+    if (btn) btn.disabled = false;
     const modal = new bootstrap.Modal(document.getElementById('modalPerfilEmpresa'));
     modal.show();
 }
 
-function savePerfilEmpresa() {
+function savePerfilEmpresa(btnEl) {
+    if (isSavingPerfil) return;
     const form = document.getElementById('formPerfilEmpresa');
     if (!form.checkValidity()) { form.reportValidity(); return; }
+
+    isSavingPerfil = true;
+    const btn = btnEl || document.getElementById('btnSavePerfilEmpresa');
+    if (btn) btn.disabled = true;
 
     const formData = new FormData(form);
     formData.append('action', 'save_perfil');
 
-    fetch('back_empresa.php', { method: 'POST', body: formData })
+    fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 const inst = bootstrap.Modal.getInstance(document.getElementById('modalPerfilEmpresa'));
                 if (inst) inst.hide();
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: data.message || 'Perfil guardado', showConfirmButton: false, timer: 2000 });
@@ -270,15 +326,20 @@ function savePerfilEmpresa() {
                     verGestionTablas(pId);
                 }
             } else {
-                Swal.fire('Error', data.message || 'Error al guardar perfil', 'error');
+                Swal.fire('Error', (data && data.message) || 'Error al guardar perfil', 'error');
             }
         })
         .catch(() => {
             Swal.fire('Error', 'Fallo de conexión al guardar el perfil corporativo.', 'error');
+        })
+        .finally(() => {
+            isSavingPerfil = false;
+            if (btn) btn.disabled = false;
         });
 }
 
-function deletePerfilEmpresa(id) {
+function deletePerfilEmpresa(id, btnEl) {
+    if (isDeletingPerfil) return;
     Swal.fire({
         title: '¿Eliminar empresa?',
         text: 'Se eliminará permanentemente esta empresa y todas sus tablas asociadas.',
@@ -288,18 +349,28 @@ function deletePerfilEmpresa(id) {
         cancelButtonText: 'Cancelar',
         confirmButtonText: 'Sí, eliminar'
     }).then(result => {
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed || isDeletingPerfil) return;
+        isDeletingPerfil = true;
+        if (btnEl) btnEl.disabled = true;
+
         const formData = new FormData();
         formData.append('action', 'delete_perfil');
         formData.append('id', id);
-        fetch('back_empresa.php', { method: 'POST', body: formData })
+        fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
+                if (data && data.success) {
                     volverAEstaLista();
                 } else {
-                    Swal.fire('Error', data.message || 'No se pudo eliminar el perfil.', 'error');
+                    Swal.fire('Error', (data && data.message) || 'No se pudo eliminar el perfil.', 'error');
                 }
+            })
+            .catch(() => {
+                Swal.fire('Error', 'Fallo de conexión al eliminar la empresa.', 'error');
+            })
+            .finally(() => {
+                isDeletingPerfil = false;
+                if (btnEl) btnEl.disabled = false;
             });
     });
 }
@@ -310,32 +381,47 @@ function openFirmanteModal() {
     document.getElementById('firmanteId').value = '0';
     document.getElementById('firmanteEmpresaId').value = selectedEmpresaData.perfil.id;
     document.getElementById('firmanteSedeId').value = currentSede;
+    const btn = document.getElementById('btnSaveFirmante');
+    if (btn) btn.disabled = false;
     const modal = new bootstrap.Modal(document.getElementById('modalFirmante'));
     modal.show();
 }
 
-function saveFirmante() {
+function saveFirmante(btnEl) {
+    if (isSavingFirmante) return;
     const form = document.getElementById('formFirmante');
     if (!form.checkValidity()) { form.reportValidity(); return; }
+
+    isSavingFirmante = true;
+    const btn = btnEl || document.getElementById('btnSaveFirmante');
+    if (btn) btn.disabled = true;
 
     const formData = new FormData(form);
     formData.append('action', 'save_firmante');
 
-    fetch('back_empresa.php', { method: 'POST', body: formData })
+    fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 const inst = bootstrap.Modal.getInstance(document.getElementById('modalFirmante'));
                 if (inst) inst.hide();
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: data.message || 'Firmante guardado', showConfirmButton: false, timer: 2000 });
                 loadPerfilDetalle(selectedEmpresaData.perfil.id);
             } else {
-                Swal.fire('Error', data.message || 'Error al guardar firmante', 'error');
+                Swal.fire('Error', (data && data.message) || 'Error al guardar firmante', 'error');
             }
+        })
+        .catch(() => {
+            Swal.fire('Error', 'Fallo de conexión al guardar firmante.', 'error');
+        })
+        .finally(() => {
+            isSavingFirmante = false;
+            if (btn) btn.disabled = false;
         });
 }
 
-function deleteFirmante(id) {
+function deleteFirmante(id, btnEl) {
+    if (isDeletingFirmante) return;
     Swal.fire({
         title: '¿Eliminar firmante?',
         text: 'Se eliminará este representante legal de la empresa.',
@@ -345,18 +431,28 @@ function deleteFirmante(id) {
         cancelButtonText: 'Cancelar',
         confirmButtonText: 'Sí, eliminar'
     }).then(result => {
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed || isDeletingFirmante) return;
+        isDeletingFirmante = true;
+        if (btnEl) btnEl.disabled = true;
+
         const formData = new FormData();
         formData.append('action', 'delete_firmante');
         formData.append('id', id);
-        fetch('back_empresa.php', { method: 'POST', body: formData })
+        fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
+                if (data && data.success) {
                     loadPerfilDetalle(selectedEmpresaData.perfil.id);
                 } else {
-                    Swal.fire('Error', data.message || 'No se pudo eliminar el firmante.', 'error');
+                    Swal.fire('Error', (data && data.message) || 'No se pudo eliminar el firmante.', 'error');
                 }
+            })
+            .catch(() => {
+                Swal.fire('Error', 'Fallo de conexión al eliminar firmante.', 'error');
+            })
+            .finally(() => {
+                isDeletingFirmante = false;
+                if (btnEl) btnEl.disabled = false;
             });
     });
 }
@@ -367,32 +463,47 @@ function openRegistroModal() {
     document.getElementById('registroId').value = '0';
     document.getElementById('registroEmpresaId').value = selectedEmpresaData.perfil.id;
     document.getElementById('registroSedeId').value = currentSede;
+    const btn = document.getElementById('btnSaveRegistro');
+    if (btn) btn.disabled = false;
     const modal = new bootstrap.Modal(document.getElementById('modalRegistro'));
     modal.show();
 }
 
-function saveRegistro() {
+function saveRegistro(btnEl) {
+    if (isSavingRegistro) return;
     const form = document.getElementById('formRegistro');
     if (!form.checkValidity()) { form.reportValidity(); return; }
+
+    isSavingRegistro = true;
+    const btn = btnEl || document.getElementById('btnSaveRegistro');
+    if (btn) btn.disabled = true;
 
     const formData = new FormData(form);
     formData.append('action', 'save_registro');
 
-    fetch('back_empresa.php', { method: 'POST', body: formData })
+    fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 const inst = bootstrap.Modal.getInstance(document.getElementById('modalRegistro'));
                 if (inst) inst.hide();
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: data.message || 'Registro guardado', showConfirmButton: false, timer: 2000 });
                 loadPerfilDetalle(selectedEmpresaData.perfil.id);
             } else {
-                Swal.fire('Error', data.message || 'Error al guardar el registro mercantil', 'error');
+                Swal.fire('Error', (data && data.message) || 'Error al guardar el registro mercantil', 'error');
             }
+        })
+        .catch(() => {
+            Swal.fire('Error', 'Fallo de conexión al guardar el registro mercantil.', 'error');
+        })
+        .finally(() => {
+            isSavingRegistro = false;
+            if (btn) btn.disabled = false;
         });
 }
 
-function deleteRegistro(id) {
+function deleteRegistro(id, btnEl) {
+    if (isDeletingRegistro) return;
     Swal.fire({
         title: '¿Eliminar registro mercantil?',
         text: 'Esta inscripción mercantil será eliminada.',
@@ -402,18 +513,28 @@ function deleteRegistro(id) {
         cancelButtonText: 'Cancelar',
         confirmButtonText: 'Sí, eliminar'
     }).then(result => {
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed || isDeletingRegistro) return;
+        isDeletingRegistro = true;
+        if (btnEl) btnEl.disabled = true;
+
         const formData = new FormData();
         formData.append('action', 'delete_registro');
         formData.append('id', id);
-        fetch('back_empresa.php', { method: 'POST', body: formData })
+        fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
+                if (data && data.success) {
                     loadPerfilDetalle(selectedEmpresaData.perfil.id);
                 } else {
-                    Swal.fire('Error', data.message || 'No se pudo eliminar el registro.', 'error');
+                    Swal.fire('Error', (data && data.message) || 'No se pudo eliminar el registro.', 'error');
                 }
+            })
+            .catch(() => {
+                Swal.fire('Error', 'Fallo de conexión al eliminar el registro mercantil.', 'error');
+            })
+            .finally(() => {
+                isDeletingRegistro = false;
+                if (btnEl) btnEl.disabled = false;
             });
     });
 }
@@ -423,32 +544,47 @@ function openExpedienteModal() {
     document.getElementById('formExpediente').reset();
     document.getElementById('expedienteEmpresaId').value = selectedEmpresaData.perfil.id;
     document.getElementById('expedienteSedeId').value = currentSede;
+    const btn = document.getElementById('btnSaveExpediente');
+    if (btn) btn.disabled = false;
     const modal = new bootstrap.Modal(document.getElementById('modalExpediente'));
     modal.show();
 }
 
-function saveExpediente() {
+function saveExpediente(btnEl) {
+    if (isSavingExpediente) return;
     const form = document.getElementById('formExpediente');
     if (!form.checkValidity()) { form.reportValidity(); return; }
+
+    isSavingExpediente = true;
+    const btn = btnEl || document.getElementById('btnSaveExpediente');
+    if (btn) btn.disabled = true;
 
     const formData = new FormData(form);
     formData.append('action', 'save_expediente');
 
-    fetch('back_empresa.php', { method: 'POST', body: formData })
+    fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 const inst = bootstrap.Modal.getInstance(document.getElementById('modalExpediente'));
                 if (inst) inst.hide();
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: data.message || 'Documento adjuntado', showConfirmButton: false, timer: 2000 });
                 loadPerfilDetalle(selectedEmpresaData.perfil.id);
             } else {
-                Swal.fire('Error', data.message || 'Error al adjuntar documento', 'error');
+                Swal.fire('Error', (data && data.message) || 'Error al adjuntar documento', 'error');
             }
+        })
+        .catch(() => {
+            Swal.fire('Error', 'Fallo de conexión al adjuntar documento.', 'error');
+        })
+        .finally(() => {
+            isSavingExpediente = false;
+            if (btn) btn.disabled = false;
         });
 }
 
-function deleteExpediente(id) {
+function deleteExpediente(id, btnEl) {
+    if (isDeletingExpediente) return;
     Swal.fire({
         title: '¿Eliminar documento?',
         text: 'Se eliminará este documento del expediente digital.',
@@ -458,25 +594,35 @@ function deleteExpediente(id) {
         cancelButtonText: 'Cancelar',
         confirmButtonText: 'Sí, eliminar'
     }).then(result => {
-        if (!result.isConfirmed) return;
+        if (!result.isConfirmed || isDeletingExpediente) return;
+        isDeletingExpediente = true;
+        if (btnEl) btnEl.disabled = true;
+
         const formData = new FormData();
         formData.append('action', 'delete_expediente');
         formData.append('id', id);
-        fetch('back_empresa.php', { method: 'POST', body: formData })
+        fetch('back_perfil_empresa.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
+                if (data && data.success) {
                     loadPerfilDetalle(selectedEmpresaData.perfil.id);
                 } else {
-                    Swal.fire('Error', data.message || 'No se pudo eliminar el documento.', 'error');
+                    Swal.fire('Error', (data && data.message) || 'No se pudo eliminar el documento.', 'error');
                 }
+            })
+            .catch(() => {
+                Swal.fire('Error', 'Fallo de conexión al eliminar el documento.', 'error');
+            })
+            .finally(() => {
+                isDeletingExpediente = false;
+                if (btnEl) btnEl.disabled = false;
             });
     });
 }
 
 function escapeHtml(str) {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, function(m) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, function (m) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
     });
 }

@@ -1,4 +1,7 @@
-﻿<FilesMatch "\.log$">
+Options -Indexes
+DirectoryIndex gestion_usuarios.php
+
+<FilesMatch "^(modals_.*\.php|.*\.log)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -7,3 +10,8 @@
         Deny from all
     </IfModule>
 </FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^back_usuarios\.php$ back_gestion_usuarios.php [L,QSA]
+</IfModule>

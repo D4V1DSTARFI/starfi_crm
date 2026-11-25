@@ -638,7 +638,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
 
     </main>
 
-    <?php require __DIR__ . '/modals_bandeja.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_bandeja.php';
+    ?>
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>

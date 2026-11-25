@@ -1,17 +1,31 @@
+// modules/gestion_usuarios/funciones_gestion_usuarios.js
+
 let allUsers = [];
 let allSedes = [];
 let allRoles = [];
 let currentFilter = 'TODOS';
 
+// Guards anti-doble-clic (QA-BUG-CRM3-07)
+let isSavingUser = false;
+const pendingStatusToggles = new Set();
+
 document.addEventListener('DOMContentLoaded', () => {
     loadUsers();
+
+    const userForm = document.getElementById('userForm');
+    if (userForm) {
+        userForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveUser(document.getElementById('btnGuardarUser'));
+        });
+    }
 });
 
 function loadUsers() {
-    fetch('back_usuarios.php?action=list')
+    fetch('back_gestion_usuarios.php?action=list')
         .then(res => res.json())
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 allUsers = data.data || [];
                 allSedes = data.sedes || [];
                 allRoles = data.roles || [];
@@ -20,7 +34,7 @@ function loadUsers() {
                 updateStats();
                 renderUsersTable();
             } else {
-                Swal.fire('Error', data.message || 'No se pudieron cargar los usuarios.', 'error');
+                Swal.fire('Error', (data && data.message) || 'No se pudieron cargar los usuarios.', 'error');
             }
         })
         .catch(() => {
@@ -63,7 +77,7 @@ function filterStatus(status, btn) {
 
 function renderUsersTable() {
     const tbody = document.getElementById('usersTableBody');
-    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
 
     const filtered = allUsers.filter(u => {
         const matchStatus = (currentFilter === 'TODOS') || (u.estado === currentFilter);
@@ -84,10 +98,12 @@ function renderUsersTable() {
 
     let html = '';
     filtered.forEach(u => {
+        const uid = Number(u.id) || 0;
         const isActivo = (u.estado === 'ACTIVO');
+        const nextStatus = isActivo ? 'INACTIVO' : 'ACTIVO';
         const badgeClass = isActivo ? 'status-badge-activo' : 'status-badge-inactivo';
         const statusText = isActivo ? 'Activo' : 'Inactivo';
-        const initial = u.nombre ? escapeHtml(u.nombre.charAt(0).toUpperCase()) : 'U';
+        const initial = u.nombre ? escapeHtml(String(u.nombre).charAt(0).toUpperCase()) : 'U';
 
         let rolBadge = '<span class="badge-rol-sin">Sin Rol</span>';
         if (u.rol === 'MASTER') rolBadge = '<span class="badge-rol-master"><i class="fa-solid fa-crown me-1"></i>MASTER</span>';
@@ -96,7 +112,9 @@ function renderUsersTable() {
         else if (u.rol === 'OPERADOR') rolBadge = '<span class="badge-rol-operador"><i class="fa-solid fa-headset me-1"></i>OPERADOR</span>';
         else if (u.rol && u.rol !== 'SIN_ASIGNAR') rolBadge = `<span class="badge-rol-admin" style="background-color: rgba(16, 185, 129, 0.15); color: #10B981;"><i class="fa-solid fa-user-check me-1"></i>${escapeHtml(u.rol)}</span>`;
 
-        const sedeText = u.sede_nombre ? `<span class="fw-semibold text-dark"><i class="fa-solid fa-location-dot me-1 text-secondary"></i>${escapeHtml(u.sede_nombre)}</span>` : '<span class="text-muted small">Sin Sede</span>';
+        const sedeText = u.sede_nombre
+            ? `<span class="fw-semibold text-dark"><i class="fa-solid fa-location-dot me-1 text-secondary"></i>${escapeHtml(u.sede_nombre)}</span>`
+            : '<span class="text-muted small">Sin Sede</span>';
 
         html += `
             <tr>
@@ -116,7 +134,7 @@ function renderUsersTable() {
                     <span class="text-muted small">${escapeHtml(u.telefono)}</span>
                 </td>
                 <td class="text-center">
-                    <button class="btn border-0 p-0 shadow-none" onclick="toggleStatus(${Number(u.id)}, '${isActivo ? 'INACTIVO' : 'ACTIVO'}')" title="Haz clic para cambiar estatus a ${isActivo ? 'Inactivo' : 'Activo'}">
+                    <button type="button" class="btn border-0 p-0 shadow-none" onclick="toggleStatus(${uid}, '${nextStatus}', this)" title="Haz clic para cambiar estatus a ${isActivo ? 'Inactivo' : 'Activo'}">
                         <span class="${badgeClass}">
                             <i class="fa-solid ${isActivo ? 'fa-toggle-on' : 'fa-toggle-off'} fs-6"></i>
                             ${statusText}
@@ -125,7 +143,7 @@ function renderUsersTable() {
                 </td>
                 <td class="text-end">
                     <div class="d-flex align-items-center justify-content-end gap-2">
-                        <button class="btn btn-light btn-sm text-secondary px-3 py-1.5 rounded-2 border d-flex align-items-center gap-1.5 fw-semibold" onclick="editUserById(${Number(u.id)})" title="Configurar Rol y Empresa">
+                        <button type="button" class="btn btn-light btn-sm text-secondary px-3 py-1.5 rounded-2 border d-flex align-items-center gap-1.5 fw-semibold" onclick="editUserById(${uid})" title="Configurar Rol y Empresa">
                             <i class="fa-solid fa-pen text-muted"></i> Configurar
                         </button>
                     </div>
@@ -136,30 +154,39 @@ function renderUsersTable() {
     tbody.innerHTML = html;
 }
 
-function toggleStatus(id, newStatus) {
+function toggleStatus(id, newStatus, btnEl) {
+    const uid = Number(id);
+    if (!uid || pendingStatusToggles.has(uid)) return;
+    pendingStatusToggles.add(uid);
+    if (btnEl) btnEl.disabled = true;
+
     const formData = new FormData();
     formData.append('action', 'toggle_status');
-    formData.append('id', id);
+    formData.append('id', uid);
     formData.append('estado', newStatus);
 
-    fetch('back_usuarios.php', {
+    fetch('back_gestion_usuarios.php', {
         method: 'POST',
         body: formData
     })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            const user = allUsers.find(u => u.id === id);
-            if (user) user.estado = newStatus;
-            updateStats();
-            renderUsersTable();
-        } else {
-            Swal.fire('Error', data.message || 'Error al cambiar estatus', 'error');
-        }
-    })
-    .catch(() => {
-        Swal.fire('Error', 'Fallo de conexión al cambiar el estatus del usuario.', 'error');
-    });
+        .then(res => res.json())
+        .then(data => {
+            if (data && data.success) {
+                const user = allUsers.find(u => Number(u.id) === uid);
+                if (user) user.estado = newStatus;
+                updateStats();
+                renderUsersTable();
+            } else {
+                Swal.fire('Error', (data && data.message) || 'Error al cambiar estatus', 'error');
+            }
+        })
+        .catch(() => {
+            Swal.fire('Error', 'Fallo de conexión al cambiar el estatus del usuario.', 'error');
+        })
+        .finally(() => {
+            pendingStatusToggles.delete(uid);
+            if (btnEl) btnEl.disabled = false;
+        });
 }
 
 function openUserModal() {
@@ -172,6 +199,9 @@ function openUserModal() {
     document.getElementById('inputSede').value = '0';
     document.getElementById('inputEstado').value = 'INACTIVO';
     document.getElementById('modalAlert').classList.add('d-none');
+
+    const btn = document.getElementById('btnGuardarUser');
+    if (btn) btn.disabled = false;
 
     const modalEl = document.getElementById('userModal');
     let modal = bootstrap.Modal.getInstance(modalEl);
@@ -200,16 +230,21 @@ function editUser(user) {
     document.getElementById('userModalTitle').innerText = 'Configurar Usuario, Rol y Sede';
     document.getElementById('modalAlert').classList.add('d-none');
 
+    const btn = document.getElementById('btnGuardarUser');
+    if (btn) btn.disabled = false;
+
     const modalEl = document.getElementById('userModal');
     let modal = bootstrap.Modal.getInstance(modalEl);
     if (!modal) modal = new bootstrap.Modal(modalEl);
     modal.show();
 }
 
-function saveUser() {
+function saveUser(btnEl) {
+    if (isSavingUser) return;
+
     const form = document.getElementById('userForm');
     const alertEl = document.getElementById('modalAlert');
-    const btn = document.getElementById('btnGuardarUser');
+    const btn = btnEl || document.getElementById('btnGuardarUser');
 
     if (!form.checkValidity()) {
         const modalBody = document.querySelector('#userModal .modal-body');
@@ -223,6 +258,7 @@ function saveUser() {
         return;
     }
 
+    isSavingUser = true;
     const originalHtml = btn ? btn.innerHTML : 'Guardar Configuración';
     if (btn) {
         btn.disabled = true;
@@ -235,56 +271,55 @@ function saveUser() {
     const rolVal = document.getElementById('inputRol').value;
     formData.append('rol', rolVal);
 
-    fetch('back_usuarios.php', {
+    fetch('back_gestion_usuarios.php', {
         method: 'POST',
         body: formData
     })
-    .then(res => res.text())
-    .then(text => {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
-        }
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch (e) {
-            alertEl.innerText = 'Respuesta inesperada del servidor. Por favor intenta de nuevo.';
-            alertEl.classList.remove('d-none');
-            return;
-        }
+        .then(res => res.text())
+        .then(text => {
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                alertEl.innerText = 'Respuesta inesperada del servidor. Por favor intenta de nuevo.';
+                alertEl.classList.remove('d-none');
+                return;
+            }
 
-        if (data.success) {
-            const modalEl = document.getElementById('userModal');
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            if (modal) modal.hide();
-            Swal.fire({
-                toast: true,
-                position: 'top-end',
-                icon: 'success',
-                title: data.message || 'Usuario guardado correctamente',
-                showConfirmButton: false,
-                timer: 2000
-            });
-            loadUsers();
-        } else {
-            alertEl.innerText = data.message || 'Error al guardar';
+            if (data.success) {
+                const modalEl = document.getElementById('userModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: data.message || 'Usuario guardado correctamente',
+                    showConfirmButton: false,
+                    timer: 2000
+                });
+                loadUsers();
+            } else {
+                alertEl.innerText = data.message || 'Error al guardar';
+                alertEl.classList.remove('d-none');
+            }
+        })
+        .catch(() => {
+            alertEl.innerText = 'Error al comunicarse con el servidor. Por favor intenta de nuevo.';
             alertEl.classList.remove('d-none');
-        }
-    })
-    .catch(() => {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalHtml;
-        }
-        alertEl.innerText = 'Error al comunicarse con el servidor. Por favor intenta de nuevo.';
-        alertEl.classList.remove('d-none');
-    });
+        })
+        .finally(() => {
+            isSavingUser = false;
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        });
 }
 
 function escapeHtml(str) {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, function(m) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, function (m) {
         return {
             '&': '&amp;',
             '<': '&lt;',

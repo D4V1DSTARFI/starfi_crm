@@ -15,6 +15,6 @@ Options -Indexes
 # Bloquear navegación directa a carpetas internas
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(logs|config|core|database|\.git)(/|$) - [F,L]
+    RewriteRule ^(logs|config|core|database|includes|\.git)(/|$) - [F,L]
 </IfModule>
 

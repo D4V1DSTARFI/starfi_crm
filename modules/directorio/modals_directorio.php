@@ -1,7 +1,4 @@
-<?php
-// modules/directorio/modals_directorio.php
-// Modales de Ficha de Cliente 360 y Centro de Difusión | STARFI CRM
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
 <!-- Modal Ficha de Cliente (Layout 2 Columnas) -->
 <div class="modal fade" id="profileModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 1350px;">
@@ -55,8 +52,8 @@
                             </div>
                             <div class="form-group">
                                 <label>Etiquetas (Tags)</label>
-                                <div class="d-flex gap-2 flex-wrap mt-1">
-                                    <span class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill" style="cursor: pointer;">+ Añadir Etiqueta</span>
+                                <div class="d-flex gap-2 flex-wrap mt-1" id="profTagsContainer">
+                                    <button type="button" id="btnAddProfileTag" class="badge bg-primary bg-opacity-10 text-primary border border-primary px-3 py-2 rounded-pill" style="cursor: pointer;" onclick="addProfileTag(this)">+ Añadir Etiqueta</button>
                                 </div>
                             </div>
                             <div class="form-group mb-2">

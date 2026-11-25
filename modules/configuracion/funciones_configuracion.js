@@ -1,20 +1,59 @@
-function escapeHtml(str) {
+function escapeHtmlConfig(str) {
     if (str === null || str === undefined) return '';
     return String(str).replace(/[&<>"']/g, function (m) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
     });
 }
+const escapeHtml = escapeHtmlConfig;
 
-$(document).ready(function() {
+const cfgInFlight = new Set();
+function acquireCfgLock(key, $btn, loadingHtml) {
+    if (cfgInFlight.has(key)) return false;
+    if ($btn && $btn.length && $btn.prop('disabled')) return false;
+    cfgInFlight.add(key);
+    if ($btn && $btn.length) {
+        $btn.data('orig-html', $btn.html());
+        $btn.prop('disabled', true);
+        if (loadingHtml) {
+            $btn.html(loadingHtml);
+        }
+    }
+    return true;
+}
+
+function releaseCfgLock(key, $btn, customRestoreHtml) {
+    cfgInFlight.delete(key);
+    if ($btn && $btn.length) {
+        const orig = customRestoreHtml !== undefined ? customRestoreHtml : $btn.data('orig-html');
+        $btn.prop('disabled', false);
+        if (orig !== undefined) {
+            $btn.html(orig);
+        }
+    }
+}
+
+let cachedSedesList = [];
+let cachedApisList = [];
+let isMasterConfigUser = true;
+
+$(document).ready(function () {
+    const bootEl = document.getElementById('configBootData');
+    if (bootEl) {
+        isMasterConfigUser = bootEl.getAttribute('data-is-master') === '1';
+    }
+    if (!isMasterConfigUser) {
+        $('#btnAddSede, #btnAddAPI').hide();
+    }
+
     const toggleSidebarBtn = document.getElementById('toggleSidebar');
     if (toggleSidebarBtn) {
-        toggleSidebarBtn.addEventListener('click', function() {
+        toggleSidebarBtn.addEventListener('click', function () {
             const sb = document.getElementById('sidebar');
             if (sb) sb.classList.toggle('collapsed');
         });
     }
 
-    $(document).ajaxError(function(event, jqxhr) {
+    $(document).ajaxError(function (event, jqxhr) {
         if (jqxhr && jqxhr.status === 401) {
             window.location.href = '../../login.php';
         }
@@ -23,206 +62,212 @@ $(document).ready(function() {
     // Cargar datos iniciales desde BD
     loadSedes();
     loadAPIs();
-    loadUsers();
     loadRespuestasRapidas();
 
-    // 1. Añadir Sede
-    $('#btnAddSede').on('click', function() {
-        $('#sedeNombre').val('');
-        $('#sedeDireccion').val('');
-        $('#sedeNumero').val('');
-        $('#sedeAppId').val('');
-        var myModal = new bootstrap.Modal(document.getElementById('modalSede'));
-        myModal.show();
+    // Filtros locales de Sedes
+    $(document).on('input change', '#searchSede, #filterEstadoSede, #filterApiSede', function () {
+        renderSedesCards(cachedSedesList);
     });
 
-    $('#btnSaveSede').on('click', function() {
-        const razon_social = $('#razon_social').val().trim();
-        const rif = $('#rif').val().trim();
-        if(!razon_social || !rif) { Swal.fire('Error', 'Razón Social y RIF son obligatorios', 'warning'); return; }
-        
+    // Filtros locales de APIs
+    $(document).on('input change', '#filterApiSedeSelect, #filterApiEstado, #searchApi', function () {
+        renderApisCards(cachedApisList);
+    });
+    $('#btnSearchApi').on('click', function () {
+        renderApisCards(cachedApisList);
+    });
+
+    // 1. Añadir Sede
+    $('#btnAddSede').on('click', function () {
+        if ($('#formSede').length) {
+            $('#formSede')[0].reset();
+        }
+        $('#id_sede').val('');
+        $('#modalSede .modal-title').html('<i class="fa-solid fa-building me-2 text-starfi-primary"></i>Nueva Sede e Integración');
+        const modalEl = document.getElementById('modalSede');
+        if (modalEl) {
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+    });
+
+    $('#btnSaveSede').on('click', function () {
+        const $btn = $(this);
+        const razon_social = ($('#razon_social').val() || '').trim();
+        const rif = ($('#rif').val() || '').trim();
+        if (!razon_social || !rif) {
+            Swal.fire('Error', 'Razón Social y RIF son obligatorios', 'warning');
+            return;
+        }
+        if (!acquireCfgLock('save_sede', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
+
         const data = {
             action: 'save_sede',
             id_sede: $('#id_sede').val(),
             razon_social: razon_social,
             rif: rif,
-            telefono: $('#telefono').val().trim(),
-            email: $('#email').val().trim(),
-            direccion: $('#direccion').val().trim(),
-            ciudad: $('#ciudad').val().trim(),
-            estado_loc: $('#estado_loc').val().trim(),
-            codigo_postal: $('#codigo_postal').val().trim(),
+            telefono: ($('#telefono').val() || '').trim(),
+            email: ($('#email').val() || '').trim(),
+            direccion: ($('#direccion').val() || '').trim(),
+            ciudad: ($('#ciudad').val() || '').trim(),
+            estado_loc: ($('#estado_loc').val() || '').trim(),
+            codigo_postal: ($('#codigo_postal').val() || '').trim(),
             estado_sede: $('#estado_sede').val(),
             tipo_sede: $('#tipo_sede').val(),
-            observaciones: $('#observaciones').val().trim()
+            observaciones: ($('#observaciones').val() || '').trim()
         };
 
         $.ajax({
-            url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
             data: data,
-            success: function(res) {
-                if(res.status === 'success'){
-                    bootstrap.Modal.getInstance(document.getElementById('modalSede')).hide();
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    const inst = bootstrap.Modal.getInstance(document.getElementById('modalSede'));
+                    if (inst) inst.hide();
                     Swal.fire('Éxito', res.message, 'success');
                     loadSedes();
-                } else { Swal.fire('Error', res.message, 'error'); }
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar la sede.', 'error');
+                }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error de conexión al guardar la sede.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('save_sede', $btn, 'Guardar Sede');
             }
         });
     });
 
     // 1.5. Añadir API WhatsApp
-    $('#btnAddAPI').on('click', function() {
-        $('#formAPI')[0].reset();
+    $('#btnAddAPI').on('click', function () {
+        const $btn = $(this);
+        if (!acquireCfgLock('open_add_api', $btn)) return;
+
+        if ($('#formAPI').length) {
+            $('#formAPI')[0].reset();
+        }
         $('#id_api').val('');
-        
-        // Cargar sedes en el select
+        resetSecretPasswordInput('api_token_meta', false, '', 'Deje vacío para usar Token Global (.env) o ingrese EAA...');
+        $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Nueva API WhatsApp');
+
         $.ajax({
-            url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
             data: { action: 'get_sedes_list' },
-            success: function(res) {
-                if(res.status === 'success'){
-                    let select = $('#api_sede');
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    const select = $('#api_sede');
                     select.html('<option value="">Seleccione una sede...</option>');
-                    res.data.forEach(s => {
-                        select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtml(s.nombre_sede)}</option>`);
+                    (res.data || []).forEach(s => {
+                        select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
                     });
-                    var myModal = new bootstrap.Modal(document.getElementById('modalAPI'));
-                    myModal.show();
+                    const modalEl = document.getElementById('modalAPI');
+                    if (modalEl) {
+                        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    }
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudieron cargar las sedes.', 'error');
                 }
+            },
+            complete: function () {
+                releaseCfgLock('open_add_api', $btn);
             }
         });
     });
 
-    $('#btnSaveAPI').on('click', function() {
+    $('#btnSaveAPI').on('click', function () {
+        const $btn = $(this);
         if (!$('#api_sede').val() || !$('#api_descripcion').val() || !$('#api_telefono').val() || !$('#api_telefono_meta').val()) {
-            Swal.fire('Error', 'Complete los campos obligatorios (*)', 'warning'); return;
+            Swal.fire('Error', 'Complete los campos obligatorios (*)', 'warning');
+            return;
         }
+        if (!acquireCfgLock('save_api', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
 
         const data = {
             action: 'save_api',
             id_api: $('#id_api').val(),
             id_sede: $('#api_sede').val(),
-            descripcion: $('#api_descripcion').val().trim(),
-            telefono: $('#api_telefono').val().trim(),
-            telefono_meta: $('#api_telefono_meta').val().trim(),
-            id_negocio: $('#api_id_negocio').val().trim(),
+            descripcion: ($('#api_descripcion').val() || '').trim(),
+            telefono: ($('#api_telefono').val() || '').trim(),
+            telefono_meta: ($('#api_telefono_meta').val() || '').trim(),
+            meta_token: ($('#api_token_meta').val() || '').trim(),
+            id_negocio: ($('#api_id_negocio').val() || '').trim(),
             estado: $('#api_estado').val(),
-            limite_solicitudes: $('#api_limite').val().trim(),
-            observaciones: $('#api_observacion').val().trim()
+            limite_solicitudes: ($('#api_limite').val() || '').trim(),
+            observaciones: ($('#api_observacion').val() || '').trim()
         };
 
         $.ajax({
-            url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
             data: data,
-            success: function(res) {
-                if(res.status === 'success'){
-                    bootstrap.Modal.getInstance(document.getElementById('modalAPI')).hide();
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    const inst = bootstrap.Modal.getInstance(document.getElementById('modalAPI'));
+                    if (inst) inst.hide();
+                    $('#api_token_meta').val('');
                     Swal.fire('Éxito', res.message, 'success');
                     loadAPIs();
-                    loadSedes(); // Para actualizar el badge en la vista de Sedes
-                } else { Swal.fire('Error', res.message, 'error'); }
-            }
-        });
-    });
-
-    // 2. Nuevo Operador
-    $('#btnAddUser').on('click', function() {
-        $('#opNombre').val('');
-        $('#opEmail').val('');
-        $('#opRol').val('AGENTE');
-        $('#opLimite').val(5);
-        
-        // Cargar lista de sedes para el select
-        $.ajax({
-            url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-            data: { action: 'get_sedes_list' },
-            success: function(res) {
-                if(res.status === 'success'){
-                    let select = $('#opSede');
-                    select.html('<option value="0">Global (Todas)</option>');
-                    res.data.forEach(s => {
-                        select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtml(s.nombre_sede)}</option>`);
-                    });
-                    var myModal = new bootstrap.Modal(document.getElementById('modalOperador'));
-                    myModal.show();
+                    loadSedes();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar la API.', 'error');
                 }
-            }
-        });
-    });
-
-    $('#btnSaveOperador').on('click', function() {
-        const nombre = $('#opNombre').val().trim();
-        const email = $('#opEmail').val().trim();
-        if(!nombre || !email) { Swal.fire('Error', 'Nombre y email son obligatorios', 'warning'); return; }
-        
-        $.ajax({
-            url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-            data: {
-                action: 'add_user',
-                nombre: nombre,
-                email: email,
-                rol: $('#opRol').val(),
-                sede_id: $('#opSede').val(),
-                limite: $('#opLimite').val()
             },
-            success: function(res) {
-                if(res.status === 'success'){
-                    bootstrap.Modal.getInstance(document.getElementById('modalOperador')).hide();
-                    Swal.fire('Éxito', res.message, 'success');
-                    loadUsers();
-                } else { Swal.fire('Error', res.message, 'error'); }
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error de conexión al guardar la API.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('save_api', $btn, 'Guardar API');
             }
         });
     });
 
-    // Eventos de botones de acción genéricos para Users/Operadores
-    $('#usersTableBody').on('click', '.action-btn', function() {
-        Swal.fire({
-            icon: 'warning',
-            title: 'Acción Restringida',
-            text: 'No tienes permisos de SuperAdmin para modificar este registro.',
-            timer: 2000,
-            showConfirmButton: false
-        });
-    });
-
-    // 3. Configuración GEMA AI Multi-Sede
+    // 2. Configuración GEMA AI Multi-Sede
     cargarSedesEnGemaSelect();
 
-    $('#gema_id_sede').on('change', function() {
+    $('#gema_id_sede').on('change', function () {
         const id_sede = $(this).val();
         if (id_sede) {
             loadGemaConfig(id_sede);
         }
     });
 
-    $('#btnSaveGema').on('click', function() {
+    $('#btnSaveGema').on('click', function () {
+        const $btn = $(this);
         const id_sede = $('#gema_id_sede').val();
-        const prompt = $('#gema_prompt').val().trim();
-        const nombre = $('#gema_nombre').val().trim();
+        const prompt = ($('#gema_prompt').val() || '').trim();
+        const nombre = ($('#gema_nombre').val() || '').trim();
         const direccion = $('#gema_direccion').length ? ($('#gema_direccion').val() || '').trim() : '';
-        const link_gps = $('#gema_link_gps').val().trim();
-        const token = $('#gema_token').val().trim();
+        const link_gps = ($('#gema_link_gps').val() || '').trim();
+        const token = ($('#gema_token').val() || '').trim();
         const modelo = $('#gema_modelo_ia').val();
         const temperatura = $('#gema_temperatura').val();
         const estado = $('#gema_estado').is(':checked') ? 'ACTIVO' : 'INACTIVO';
-        
-        if(!id_sede) {
+
+        if (!id_sede) {
             Swal.fire('Error', 'Seleccione una Sede', 'warning');
             return;
         }
-
-        if(!prompt) {
+        if (!prompt) {
             Swal.fire('Error', 'El Prompt de Instrucciones es obligatorio', 'warning');
             return;
         }
+        if (!token && !$('#gema_token').data('has-key')) {
+            Swal.fire('Error', 'Ingrese una Gemini API Key válida para configurar esta sede.', 'warning');
+            return;
+        }
 
-        const btn = $(this);
-        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
+        if (!acquireCfgLock('save_gema', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
 
         $.ajax({
-            url: 'back_configuracion.php', 
-            type: 'POST', 
+            url: 'back_configuracion.php',
+            type: 'POST',
             dataType: 'json',
             data: {
                 action: 'save_gema',
@@ -236,32 +281,39 @@ $(document).ready(function() {
                 temperatura: temperatura,
                 estado_ia: estado
             },
-            success: function(res) {
-                if(res.status === 'success'){
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    const masked = res.gemini_api_key_masked || '••••••••';
+                    resetSecretPasswordInput('gema_token', true, masked, 'AIzaSy...................');
                     Swal.fire('Guardado', res.message, 'success');
-                } else { 
-                    Swal.fire('Error', res.message, 'error'); 
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar.', 'error');
                 }
             },
-            complete: function() {
-                btn.prop('disabled', false).html('<i class="fa-solid fa-save me-1"></i> Guardar Configuración IA');
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error de red al guardar la configuración IA.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('save_gema', $btn, '<i class="fa-solid fa-floppy-disk me-2"></i> Guardar Configuración IA');
             }
         });
     });
 
-    $('#btnTestGema').on('click', function() {
-        const token = $('#gema_token').val().trim();
+    $('#btnTestGema').on('click', function () {
+        const $btn = $(this);
+        const id_sede = $('#gema_id_sede').val();
+        const token = ($('#gema_token').val() || '').trim();
         const modelo = $('#gema_modelo_ia').val();
-        const nombre = $('#gema_nombre').val().trim();
+        const nombre = ($('#gema_nombre').val() || '').trim();
         const temperatura = $('#gema_temperatura').val();
 
-        if(!token) {
+        if (!token && !$('#gema_token').data('has-key')) {
             Swal.fire('Atención', 'Introduce una API Key para realizar la prueba.', 'warning');
             return;
         }
 
-        const btn = $(this);
-        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Probando...');
+        if (!acquireCfgLock('test_gema', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Probando...')) return;
 
         $.ajax({
             url: 'back_configuracion.php',
@@ -269,31 +321,101 @@ $(document).ready(function() {
             dataType: 'json',
             data: {
                 action: 'test_gema_connection',
+                id_sede: id_sede,
+                api_key: token,
                 token: token,
                 modelo_ia: modelo,
                 nombre: nombre,
                 temperatura: temperatura
             },
-            success: function(res) {
-                if(res.status === 'success') {
-                    $('#testGemaContent').text(res.respuesta);
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    $('#testGemaContent').text(res.respuesta || '');
                     $('#testGemaLog').removeClass('d-none');
                     Swal.fire('¡Conexión Exitosa!', 'La API de IA respondió correctamente.', 'success');
                 } else {
                     $('#testGemaLog').addClass('d-none');
-                    Swal.fire('Error de Conexión', res.message, 'error');
+                    Swal.fire('Error de Conexión', (res && res.message) ? res.message : 'Fallo en la prueba.', 'error');
                 }
             },
-            error: function() {
-                Swal.fire('Error', 'Fallo al comunicarse con el servidor.', 'error');
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Fallo al comunicarse con el servidor.';
+                Swal.fire('Error', msg, 'error');
             },
-            complete: function() {
-                btn.prop('disabled', false).html('<i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión IA');
+            complete: function () {
+                releaseCfgLock('test_gema', $btn, '<i class="fa-solid fa-bolt me-2 text-warning"></i> Probar Conexión API');
             }
         });
     });
 
+    // Delegación segura de botones dinámicos (Cero onclick inline con datos dinámicos)
+    $(document).on('click', '.btn-sede-edit', function () {
+        editarSede(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+    $(document).on('click', '.btn-sede-api', function () {
+        configurarAPI(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+    $(document).on('click', '.btn-sede-tpls', function () {
+        gestionarPlantillas(parseInt($(this).attr('data-id') || '0', 10));
+    });
+    $(document).on('click', '.btn-sede-token', function () {
+        generarToken(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+    $(document).on('click', '.btn-sede-del', function () {
+        borrarSede(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+
+    $(document).on('click', '.btn-api-edit', function () {
+        editarAPI(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+    $(document).on('click', '.btn-api-test', function () {
+        abrirPruebaAPI(parseInt($(this).attr('data-id') || '0', 10), $(this).attr('data-numero') || '');
+    });
+    $(document).on('click', '.btn-api-toggle', function () {
+        toggleEstadoAPI(
+            parseInt($(this).attr('data-id') || '0', 10),
+            $(this).attr('data-estado') || '',
+            $(this).attr('data-sede-nombre') || '',
+            $(this)
+        );
+    });
+    $(document).on('click', '.btn-api-del', function () {
+        borrarAPI(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+
+    $(document).on('click', '.btn-delete-meta-tpl', function () {
+        eliminarPlantilla($(this).attr('data-name') || '', $(this));
+    });
+
+    $(document).on('click', '.btn-resp-edit', function () {
+        editarRespuestaRapida(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+    $(document).on('click', '.btn-resp-del', function () {
+        borrarRespuestaRapida(parseInt($(this).attr('data-id') || '0', 10), $(this));
+    });
+
+    $(document).on('click', '.sla-rule-row', function () {
+        const sid = parseInt($(this).attr('data-sede-id') || '0', 10);
+        window.selectSlaRuleRow(sid);
+    });
 });
+
+function resetSecretPasswordInput(fieldId, hasSecret, maskedValue, defaultPlaceholder) {
+    const $input = $('#' + fieldId);
+    const $eye = $('#' + fieldId + '_eye');
+    if (!$input.length) return;
+    $input.attr('type', 'password').val('');
+    if ($eye.length) {
+        $eye.removeClass('fa-eye-slash').addClass('fa-eye');
+    }
+    $input.data('has-key', !!hasSecret);
+    if (hasSecret) {
+        const maskLabel = maskedValue || '••••••••';
+        $input.attr('placeholder', `${maskLabel} (configurada — deje vacío para mantener)`);
+    } else {
+        $input.attr('placeholder', defaultPlaceholder || '');
+    }
+}
 
 function cargarSedesEnGemaSelect() {
     $.ajax({
@@ -301,16 +423,21 @@ function cargarSedesEnGemaSelect() {
         type: 'POST',
         dataType: 'json',
         data: { action: 'get_sedes_list' },
-        success: function(res) {
-            if(res.status === 'success' && res.data) {
-                let select = $('#gema_id_sede');
+        success: function (res) {
+            if (res && res.status === 'success' && Array.isArray(res.data)) {
+                const select = $('#gema_id_sede');
                 select.empty();
                 res.data.forEach(s => {
-                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                    const sid = parseInt(s.id, 10) || 0;
+                    select.append(`<option value="${sid}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
                 });
                 if (res.data.length > 0) {
-                    select.val(res.data[0].id);
-                    loadGemaConfig(res.data[0].id);
+                    const firstId = parseInt(res.data[0].id, 10) || 0;
+                    select.val(String(firstId));
+                    if (!isMasterConfigUser && res.data.length === 1) {
+                        select.prop('disabled', true);
+                    }
+                    loadGemaConfig(firstId);
                 }
             }
         }
@@ -319,47 +446,51 @@ function cargarSedesEnGemaSelect() {
 
 function loadGemaConfig(id_sede) {
     $.ajax({
-        url: 'back_configuracion.php', 
-        type: 'POST', 
+        url: 'back_configuracion.php',
+        type: 'POST',
         dataType: 'json',
         data: { action: 'load_gema', id_sede: id_sede },
-        success: function(res) {
-            if(res.status === 'success' && res.data) {
-                if (res.data.prompt !== undefined) $('#gema_prompt').val(res.data.prompt);
-                if (res.data.nombre !== undefined) $('#gema_nombre').val(res.data.nombre);
-                if ($('#gema_direccion').length && res.data.direccion_sede !== undefined) $('#gema_direccion').val(res.data.direccion_sede);
-                if (res.data.link_gps !== undefined) $('#gema_link_gps').val(res.data.link_gps);
-                if (res.data.token !== undefined) $('#gema_token').val(res.data.token);
-                if (res.data.modelo_ia !== undefined) $('#gema_modelo_ia').val(res.data.modelo_ia);
-                if (res.data.temperatura !== undefined) $('#gema_temperatura').val(res.data.temperatura);
-                $('#gema_estado').prop('checked', res.data.estado == 1 || res.data.estado_ia === 'ACTIVO');
+        success: function (res) {
+            if (res && res.status === 'success' && res.data) {
+                const d = res.data;
+                if (d.prompt !== undefined) $('#gema_prompt').val(d.prompt);
+                if (d.nombre !== undefined) $('#gema_nombre').val(d.nombre);
+                if ($('#gema_direccion').length && d.direccion_sede !== undefined) $('#gema_direccion').val(d.direccion_sede);
+                if (d.link_gps !== undefined) $('#gema_link_gps').val(d.link_gps);
+
+                const hasKey = !!(d.has_api_key || d.has_token);
+                const masked = d.gemini_api_key_masked || d.gemini_api_key || d.token || '••••••••';
+                resetSecretPasswordInput('gema_token', hasKey, masked, 'AIzaSy...................');
+
+                if (d.modelo_ia !== undefined) $('#gema_modelo_ia').val(d.modelo_ia);
+                if (d.temperatura !== undefined) $('#gema_temperatura').val(d.temperatura);
+                $('#gema_estado').prop('checked', d.estado == 1 || d.estado_ia === 'ACTIVO');
                 updateGemaLivePreview();
             }
         }
     });
 }
 
-// Escuchadores de eventos para actualización en tiempo real de la vista previa de WhatsApp
-$(document).on('input change', '#gema_nombre, #gema_link_gps, #gema_id_sede, #gema_estado', function() {
+$(document).on('input change', '#gema_nombre, #gema_link_gps, #gema_id_sede, #gema_estado', function () {
     updateGemaLivePreview();
 });
 
 function updateGemaLivePreview() {
-    const nombre = $('#gema_nombre').val().trim() || 'Gema';
-    const linkGps = $('#gema_link_gps').val().trim() || 'geo:10.48060,-66.90360';
+    const nombre = ($('#gema_nombre').val() || '').trim() || 'Gema';
+    const linkGps = ($('#gema_link_gps').val() || '').trim() || 'geo:10.48060,-66.90360';
     const sedeNombre = $('#gema_id_sede option:selected').text() || 'Sede STARFI';
     const isActivo = $('#gema_estado').is(':checked');
 
     $('#prev_bot_name').text(nombre);
     $('#preview_agent_name_display').text(nombre + ' (IA)');
     $('#preview_bubble_name').text(nombre + ' Bot');
-    
+
     let displayGps = linkGps;
     if (displayGps.length > 55) {
         displayGps = displayGps.substring(0, 52) + '...';
     }
-    $('#prev_bot_gps').html(`<span class="text-primary text-decoration-underline fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">${escapeHtml(displayGps)}</span>`);
-    
+    $('#prev_bot_gps').html(`<span class="text-primary text-decoration-underline fw-bold" style="word-break: break-all; overflow-wrap: anywhere;">${escapeHtmlConfig(displayGps)}</span>`);
+
     $('#prev_sede_name').text(sedeNombre);
     $('#preview_sede_name_display').text(sedeNombre + ' • En línea');
 
@@ -383,14 +514,27 @@ function togglePasswordVisibility(fieldId) {
 }
 
 // ============================================================================
-// Selector Interactivo 100% Offline LAN de Coordenadas GPS (Venezuela)
-// Cero dominios externos (CHK-LAN-01)
+// Selector Interactivo 100% Offline LAN en HTML5 <canvas> Nativo (Venezuela)
+// Cero dependencias externas, cero CDNs (CHK-LAN-01)
 // ============================================================================
-let mapPicker = null;
-let mapMarker = null;
 let selectedLat = 10.48060;
 let selectedLng = -66.90360;
 let mapCatalogPopulated = false;
+
+const offlineCanvasState = {
+    initialized: false,
+    centerLat: 7.4,
+    centerLng: -66.5,
+    zoom: 1.0,
+    isDraggingPin: false,
+    isPanning: false,
+    didMove: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    panStartLat: 7.4,
+    panStartLng: -66.5,
+    hoveredCityIdx: -1
+};
 
 const CATALOGO_CIUDADES_VE = [
     { nombre: 'Caracas (Centro)', estado: 'Distrito Capital', lat: 10.48060, lng: -66.90360 },
@@ -465,8 +609,8 @@ function poblarCatalogoMapaOffline() {
     $sel.html('<option value="">Catálogo rápido de ciudades...</option>');
     CATALOGO_CIUDADES_VE.forEach((c, idx) => {
         const label = `${c.nombre}, ${c.estado}`;
-        $dl.append(`<option value="${escapeHtml(label)}"></option>`);
-        $sel.append(`<option value="${idx}">${escapeHtml(label)}</option>`);
+        $dl.append(`<option value="${escapeHtmlConfig(label)}"></option>`);
+        $sel.append(`<option value="${idx}">${escapeHtmlConfig(label)}</option>`);
     });
     mapCatalogPopulated = true;
 }
@@ -507,9 +651,289 @@ function extraerCoordenadasDeTexto(texto) {
     return null;
 }
 
+function getCanvasViewportMetrics(canvas) {
+    const w = canvas.clientWidth || 720;
+    const h = canvas.clientHeight || 360;
+    const spanLng = 15.0 / offlineCanvasState.zoom;
+    const spanLat = spanLng * (h / Math.max(1, w));
+    return {
+        w,
+        h,
+        minLng: offlineCanvasState.centerLng - spanLng / 2,
+        maxLng: offlineCanvasState.centerLng + spanLng / 2,
+        minLat: offlineCanvasState.centerLat - spanLat / 2,
+        maxLat: offlineCanvasState.centerLat + spanLat / 2,
+        spanLng,
+        spanLat
+    };
+}
+
+function projectLatLngToCanvas(lat, lng, metrics) {
+    const x = ((lng - metrics.minLng) / metrics.spanLng) * metrics.w;
+    const y = ((metrics.maxLat - lat) / metrics.spanLat) * metrics.h;
+    return { x, y };
+}
+
+function unprojectCanvasToLatLng(x, y, metrics) {
+    const lng = metrics.minLng + (x / metrics.w) * metrics.spanLng;
+    const lat = metrics.maxLat - (y / metrics.h) * metrics.spanLat;
+    return {
+        lat: Math.max(-90, Math.min(90, lat)),
+        lng: Math.max(-180, Math.min(180, lng))
+    };
+}
+
+function renderOfflineCanvasMap() {
+    const canvas = document.getElementById('offlineMapCanvas');
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 720;
+    const cssH = canvas.clientHeight || 360;
+    if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    const m = getCanvasViewportMetrics(canvas);
+
+    // 1. Fondo oceánico/retícula LAN
+    ctx.fillStyle = '#DBEAFE';
+    ctx.fillRect(0, 0, m.w, m.h);
+
+    const degStep = offlineCanvasState.zoom >= 4 ? 0.25 : (offlineCanvasState.zoom >= 2 ? 0.5 : 2.0);
+    ctx.strokeStyle = 'rgba(100, 116, 139, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#64748B';
+    ctx.font = '10px monospace';
+
+    const startLng = Math.floor(m.minLng / degStep) * degStep;
+    for (let gLng = startLng; gLng <= m.maxLng; gLng += degStep) {
+        const pt = projectLatLngToCanvas(m.centerLat, gLng, m);
+        ctx.beginPath();
+        ctx.moveTo(pt.x, 0);
+        ctx.lineTo(pt.x, m.h);
+        ctx.stroke();
+        ctx.fillText(`${gLng.toFixed(degStep < 1 ? 2 : 0)}°`, pt.x + 3, m.h - 6);
+    }
+
+    const startLat = Math.floor(m.minLat / degStep) * degStep;
+    for (let gLat = startLat; gLat <= m.maxLat; gLat += degStep) {
+        const pt = projectLatLngToCanvas(gLat, m.centerLng, m);
+        ctx.beginPath();
+        ctx.moveTo(0, pt.y);
+        ctx.lineTo(m.w, pt.y);
+        ctx.stroke();
+        ctx.fillText(`${gLat.toFixed(degStep < 1 ? 2 : 0)}°`, 6, pt.y - 3);
+    }
+
+    // 2. Silueta vectorial de Venezuela
+    ctx.beginPath();
+    CONTORNO_VENEZUELA.forEach((pair, idx) => {
+        const pt = projectLatLngToCanvas(pair[0], pair[1], m);
+        if (idx === 0) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fill();
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 3. Puntos de las 48 ciudades del catálogo offline
+    CATALOGO_CIUDADES_VE.forEach((c, idx) => {
+        const pt = projectLatLngToCanvas(c.lat, c.lng, m);
+        if (pt.x < -20 || pt.x > m.w + 20 || pt.y < -20 || pt.y > m.h + 20) return;
+
+        const isHovered = (idx === offlineCanvasState.hoveredCityIdx);
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, isHovered ? 6.5 : 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = isHovered ? '#EA580C' : '#FF7A33';
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        if (isHovered || offlineCanvasState.zoom >= 2.3) {
+            ctx.font = isHovered ? 'bold 11px sans-serif' : '10px sans-serif';
+            ctx.fillStyle = '#1E293B';
+            ctx.fillText(c.nombre, pt.x + 8, pt.y + 3);
+        }
+    });
+
+    // 4. Pin seleccionado (con sombra y etiqueta)
+    const pinPt = projectLatLngToCanvas(selectedLat, selectedLng, m);
+    ctx.save();
+    ctx.translate(pinPt.x, pinPt.y);
+
+    // Sombra en base
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 6, 3, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
+    ctx.fill();
+
+    // Cuerpo de gota del marcador GPS
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(-11, -12, -13, -26, 0, -28);
+    ctx.bezierCurveTo(13, -26, 11, -12, 0, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#DC2626';
+    ctx.fill();
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(0, -18, 4.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+}
+
+function initOfflineCanvasMapPicker() {
+    const canvas = document.getElementById('offlineMapCanvas');
+    if (!canvas) return;
+
+    offlineCanvasState.centerLat = selectedLat;
+    offlineCanvasState.centerLng = selectedLng;
+    if (offlineCanvasState.zoom < 1.8) {
+        offlineCanvasState.zoom = 2.2;
+    }
+
+    if (!offlineCanvasState.initialized) {
+        offlineCanvasState.initialized = true;
+
+        const getCanvasCoords = function (evt) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = (evt.touches && evt.touches[0]) ? evt.touches[0].clientX : evt.clientX;
+            const clientY = (evt.touches && evt.touches[0]) ? evt.touches[0].clientY : evt.clientY;
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        };
+
+        canvas.addEventListener('mousedown', function (e) {
+            const pos = getCanvasCoords(e);
+            const m = getCanvasViewportMetrics(canvas);
+            const pinPt = projectLatLngToCanvas(selectedLat, selectedLng, m);
+            const distToPin = Math.hypot(pos.x - pinPt.x, pos.y - (pinPt.y - 14));
+
+            offlineCanvasState.didMove = false;
+            offlineCanvasState.dragStartX = pos.x;
+            offlineCanvasState.dragStartY = pos.y;
+
+            if (distToPin <= 18) {
+                offlineCanvasState.isDraggingPin = true;
+                canvas.style.cursor = 'grabbing';
+            } else {
+                offlineCanvasState.isPanning = true;
+                offlineCanvasState.panStartLat = offlineCanvasState.centerLat;
+                offlineCanvasState.panStartLng = offlineCanvasState.centerLng;
+                canvas.style.cursor = 'grabbing';
+            }
+        });
+
+        window.addEventListener('mousemove', function (e) {
+            if (!document.getElementById('modalMapPicker')?.classList.contains('show')) return;
+            const pos = getCanvasCoords(e);
+            const m = getCanvasViewportMetrics(canvas);
+
+            if (offlineCanvasState.isDraggingPin) {
+                offlineCanvasState.didMove = true;
+                const coords = unprojectCanvasToLatLng(pos.x, pos.y, m);
+                updateSelectedCoords(coords.lat, coords.lng);
+                return;
+            }
+
+            if (offlineCanvasState.isPanning) {
+                const dx = pos.x - offlineCanvasState.dragStartX;
+                const dy = pos.y - offlineCanvasState.dragStartY;
+                if (Math.hypot(dx, dy) > 3) {
+                    offlineCanvasState.didMove = true;
+                }
+                offlineCanvasState.centerLng = Math.max(-76, Math.min(-57, offlineCanvasState.panStartLng - (dx / m.w) * m.spanLng));
+                offlineCanvasState.centerLat = Math.max(0, Math.min(14, offlineCanvasState.panStartLat + (dy / m.h) * m.spanLat));
+                renderOfflineCanvasMap();
+                return;
+            }
+
+            if (pos.x >= 0 && pos.x <= m.w && pos.y >= 0 && pos.y <= m.h) {
+                let foundIdx = -1;
+                for (let i = 0; i < CATALOGO_CIUDADES_VE.length; i++) {
+                    const cPt = projectLatLngToCanvas(CATALOGO_CIUDADES_VE[i].lat, CATALOGO_CIUDADES_VE[i].lng, m);
+                    if (Math.hypot(pos.x - cPt.x, pos.y - cPt.y) <= 8) {
+                        foundIdx = i;
+                        break;
+                    }
+                }
+                if (foundIdx !== offlineCanvasState.hoveredCityIdx) {
+                    offlineCanvasState.hoveredCityIdx = foundIdx;
+                    canvas.style.cursor = foundIdx >= 0 ? 'pointer' : 'crosshair';
+                    renderOfflineCanvasMap();
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', function (e) {
+            if (!offlineCanvasState.isDraggingPin && !offlineCanvasState.isPanning) return;
+            const wasPanning = offlineCanvasState.isPanning;
+            const moved = offlineCanvasState.didMove;
+            offlineCanvasState.isDraggingPin = false;
+            offlineCanvasState.isPanning = false;
+            canvas.style.cursor = 'crosshair';
+
+            if (wasPanning && !moved) {
+                const pos = getCanvasCoords(e);
+                const m = getCanvasViewportMetrics(canvas);
+                if (pos.x >= 0 && pos.x <= m.w && pos.y >= 0 && pos.y <= m.h) {
+                    if (offlineCanvasState.hoveredCityIdx >= 0) {
+                        const c = CATALOGO_CIUDADES_VE[offlineCanvasState.hoveredCityIdx];
+                        updateSelectedCoords(c.lat, c.lng, `${c.nombre}, ${c.estado}`);
+                    } else {
+                        const coords = unprojectCanvasToLatLng(pos.x, pos.y, m);
+                        updateSelectedCoords(coords.lat, coords.lng);
+                    }
+                }
+            }
+        });
+
+        canvas.addEventListener('wheel', function (e) {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.22 : 0.82;
+            ajustarZoomMapaOffline(factor);
+        }, { passive: false });
+
+        window.addEventListener('resize', function () {
+            if (document.getElementById('modalMapPicker')?.classList.contains('show')) {
+                renderOfflineCanvasMap();
+            }
+        });
+    }
+
+    updateSelectedCoords(selectedLat, selectedLng);
+    renderOfflineCanvasMap();
+}
+
+function ajustarZoomMapaOffline(factor) {
+    offlineCanvasState.zoom = Math.max(0.9, Math.min(12.0, offlineCanvasState.zoom * factor));
+    renderOfflineCanvasMap();
+}
+
+function resetVistaMapaOffline() {
+    offlineCanvasState.centerLat = 7.2;
+    offlineCanvasState.centerLng = -66.4;
+    offlineCanvasState.zoom = 1.0;
+    renderOfflineCanvasMap();
+}
+
 function abrirModalMapaGPS() {
     poblarCatalogoMapaOffline();
-    const existingVal = $('#gema_link_gps').val().trim();
+    const existingVal = ($('#gema_link_gps').val() || '').trim();
     const parsed = extraerCoordenadasDeTexto(existingVal);
     if (parsed) {
         selectedLat = parsed.lat;
@@ -521,110 +945,9 @@ function abrirModalMapaGPS() {
 
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
     $('#modalMapPicker').off('shown.bs.modal').on('shown.bs.modal', function () {
-        initLeafletMapPicker();
+        initOfflineCanvasMapPicker();
     });
     modal.show();
-}
-
-function initLeafletMapPicker() {
-    if (typeof L === 'undefined') {
-        updateSelectedCoords(selectedLat, selectedLng);
-        return;
-    }
-
-    if (!mapPicker) {
-        mapPicker = L.map('leafletMapContainer', {
-            attributionControl: false,
-            zoomControl: true
-        }).setView([selectedLat, selectedLng], 10);
-
-        const OfflineLanGridLayer = L.GridLayer.extend({
-            createTile: function (coords) {
-                const tile = document.createElement('canvas');
-                const size = this.getTileSize();
-                tile.width = size.x;
-                tile.height = size.y;
-                const ctx = tile.getContext('2d');
-
-                ctx.fillStyle = '#E2E8F0';
-                ctx.fillRect(0, 0, size.x, size.y);
-
-                ctx.strokeStyle = '#CBD5E1';
-                ctx.lineWidth = 1;
-                for (let step = 64; step < size.x; step += 64) {
-                    ctx.beginPath();
-                    ctx.moveTo(step, 0);
-                    ctx.lineTo(step, size.y);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.moveTo(0, step);
-                    ctx.lineTo(size.x, step);
-                    ctx.stroke();
-                }
-
-                ctx.strokeStyle = '#94A3B8';
-                ctx.strokeRect(0, 0, size.x, size.y);
-
-                if (this._map) {
-                    const nw = this._map.unproject([coords.x * size.x, coords.y * size.y], coords.z);
-                    ctx.fillStyle = '#64748B';
-                    ctx.font = '10px monospace';
-                    ctx.fillText(`${nw.lat.toFixed(2)}°, ${nw.lng.toFixed(2)}°`, 6, 14);
-                }
-                return tile;
-            }
-        });
-        (new OfflineLanGridLayer()).addTo(mapPicker);
-
-        L.polygon(CONTORNO_VENEZUELA, {
-            color: '#0F172A',
-            weight: 2,
-            fillColor: '#F8FAFC',
-            fillOpacity: 0.85,
-            interactive: false
-        }).addTo(mapPicker);
-
-        CATALOGO_CIUDADES_VE.forEach(c => {
-            const cm = L.circleMarker([c.lat, c.lng], {
-                radius: 5,
-                color: '#E85B14',
-                weight: 1.5,
-                fillColor: '#FF7A33',
-                fillOpacity: 0.85
-            }).addTo(mapPicker);
-            cm.bindTooltip(`${c.nombre} (${c.estado})`, { direction: 'top' });
-            cm.on('click', function (ev) {
-                L.DomEvent.stopPropagation(ev);
-                mapMarker.setLatLng([c.lat, c.lng]);
-                updateSelectedCoords(c.lat, c.lng, `${c.nombre}, ${c.estado}`);
-            });
-        });
-
-        const pinIcon = L.divIcon({
-            className: 'starfi-offline-pin',
-            html: '<div style="transform: translate(-12px, -30px);"><i class="fa-solid fa-location-dot text-danger" style="font-size: 32px; filter: drop-shadow(0 3px 5px rgba(0,0,0,0.35));"></i></div>',
-            iconSize: [24, 32],
-            iconAnchor: [0, 0]
-        });
-
-        mapMarker = L.marker([selectedLat, selectedLng], { draggable: true, icon: pinIcon }).addTo(mapPicker);
-
-        mapMarker.on('dragend', function () {
-            const position = mapMarker.getLatLng();
-            updateSelectedCoords(position.lat, position.lng);
-        });
-
-        mapPicker.on('click', function (e) {
-            mapMarker.setLatLng(e.latlng);
-            updateSelectedCoords(e.latlng.lat, e.latlng.lng);
-        });
-    } else {
-        mapPicker.setView([selectedLat, selectedLng], Math.max(mapPicker.getZoom(), 10));
-        mapMarker.setLatLng([selectedLat, selectedLng]);
-        setTimeout(() => mapPicker.invalidateSize(), 200);
-    }
-
-    updateSelectedCoords(selectedLat, selectedLng);
 }
 
 function updateSelectedCoords(lat, lng, customLabel) {
@@ -634,6 +957,7 @@ function updateSelectedCoords(lat, lng, customLabel) {
     $('#mapLatInput').val(selectedLat.toFixed(5));
     $('#mapLngInput').val(selectedLng.toFixed(5));
     $('#reverseGeocodeText').text(customLabel || resolverReferenciaLocal(selectedLat, selectedLng));
+    renderOfflineCanvasMap();
 }
 
 function actualizarDesdeInputsManuales() {
@@ -644,12 +968,11 @@ function actualizarDesdeInputsManuales() {
     }
     selectedLat = lat;
     selectedLng = lng;
+    offlineCanvasState.centerLat = selectedLat;
+    offlineCanvasState.centerLng = selectedLng;
     $('#selectedCoordsText').text(`${selectedLat.toFixed(5)}, ${selectedLng.toFixed(5)}`);
     $('#reverseGeocodeText').text(resolverReferenciaLocal(selectedLat, selectedLng));
-    if (mapPicker && mapMarker) {
-        mapMarker.setLatLng([selectedLat, selectedLng]);
-        mapPicker.panTo([selectedLat, selectedLng]);
-    }
+    renderOfflineCanvasMap();
 }
 
 function seleccionarCiudadCatalogo(idxStr) {
@@ -657,23 +980,21 @@ function seleccionarCiudadCatalogo(idxStr) {
     const idx = parseInt(idxStr, 10);
     const ciudad = CATALOGO_CIUDADES_VE[idx];
     if (!ciudad) return;
-    if (mapPicker && mapMarker) {
-        mapPicker.setView([ciudad.lat, ciudad.lng], 13);
-        mapMarker.setLatLng([ciudad.lat, ciudad.lng]);
-    }
+    offlineCanvasState.centerLat = ciudad.lat;
+    offlineCanvasState.centerLng = ciudad.lng;
+    offlineCanvasState.zoom = 4.2;
     updateSelectedCoords(ciudad.lat, ciudad.lng, `${ciudad.nombre}, ${ciudad.estado}`);
 }
 
 function buscarEnMapa() {
-    const rawQuery = $('#mapSearchInput').val().trim();
+    const rawQuery = ($('#mapSearchInput').val() || '').trim();
     if (!rawQuery) return;
 
     const coordsDirectas = extraerCoordenadasDeTexto(rawQuery);
     if (coordsDirectas) {
-        if (mapPicker && mapMarker) {
-            mapPicker.setView([coordsDirectas.lat, coordsDirectas.lng], 14);
-            mapMarker.setLatLng([coordsDirectas.lat, coordsDirectas.lng]);
-        }
+        offlineCanvasState.centerLat = coordsDirectas.lat;
+        offlineCanvasState.centerLng = coordsDirectas.lng;
+        offlineCanvasState.zoom = 4.5;
         updateSelectedCoords(coordsDirectas.lat, coordsDirectas.lng);
         return;
     }
@@ -686,10 +1007,9 @@ function buscarEnMapa() {
     });
 
     if (match) {
-        if (mapPicker && mapMarker) {
-            mapPicker.setView([match.lat, match.lng], 13);
-            mapMarker.setLatLng([match.lat, match.lng]);
-        }
+        offlineCanvasState.centerLat = match.lat;
+        offlineCanvasState.centerLng = match.lng;
+        offlineCanvasState.zoom = 4.2;
         updateSelectedCoords(match.lat, match.lng, `${match.nombre}, ${match.estado}`);
     } else {
         Swal.fire('Búsqueda Local', 'No se encontró esa localidad en el catálogo offline. Puedes seleccionar una ciudad de la lista o ingresar Latitud y Longitud manualmente.', 'info');
@@ -699,7 +1019,7 @@ function buscarEnMapa() {
 function confirmarUbicacionMapa() {
     const geoUri = `geo:${selectedLat.toFixed(5)},${selectedLng.toFixed(5)}`;
     $('#gema_link_gps').val(geoUri).trigger('change');
-    
+
     const modalEl = document.getElementById('modalMapPicker');
     const modal = bootstrap.Modal.getInstance(modalEl);
     if (modal) modal.hide();
@@ -713,69 +1033,126 @@ function confirmarUbicacionMapa() {
     });
 }
 
+// ============================================================================
+// GESTIÓN DE SEDES
+// ============================================================================
 function loadSedes() {
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'load_sedes' },
-        success: function(res) {
-            if(res.status === 'success') {
-                let container = $('#sedesCardContainer');
-                container.empty();
-                if(res.data.length === 0){
-                    container.append('<div class="col-12 text-center text-muted p-4">No hay sedes registradas.</div>');
-                    return;
-                }
-                res.data.forEach(s => {
-                    let estadoBadge = s.estado === 'ACTIVO' ? '<span class="badge bg-success">Activo</span>' : '<span class="badge bg-secondary">Inactivo</span>';
-                    
-                    let apiBadge = s.tiene_api 
-                        ? '<span class="badge bg-success text-white"><i class="fa-solid fa-check me-1"></i>Con API</span>'
-                        : '<span class="badge bg-warning text-dark"><i class="fa-solid fa-triangle-exclamation me-1"></i>Sin API</span>';
-                    
-                    let card = `
-                    <div class="col-md-4">
-                        <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
-                            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
-                                <h6 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-building me-2"></i>${s.nombre_sede}</h6>
-                                ${estadoBadge}
-                            </div>
-                            <div class="card-body">
-                                <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-regular fa-id-card me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">RIF:</strong> ${s.rif || 'N/A'}</div>
-                                <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-phone me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Teléfono:</strong> ${s.telefono || 'N/A'}</div>
-                                <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-regular fa-envelope me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Email:</strong> ${s.email || 'N/A'}</div>
-                                <div class="mb-3 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-location-dot me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Ciudad:</strong> ${s.ciudad || 'N/A'}</div>
-                                
-                                <div class="d-flex gap-2 mb-3">
-                                    <span class="badge bg-info text-white">${s.tipo_sede || 'SUCURSAL'}</span>
-                                    ${apiBadge}
-                                </div>
-                                
-                                <small class="text-muted"><i class="fa-solid fa-user-group me-1"></i>0 vendedores</small>
-                            </div>
-                            <div class="card-footer bg-white border-top-0 p-0">
-                                <div class="d-flex border-top">
-                                    <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarSede(${s.id})"><i class="fa-solid fa-pen"></i></button>
-                                    <button class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="WhatsApp API" onclick="configurarAPI(${s.id})"><i class="fa-brands fa-whatsapp"></i></button>
-                                    <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Plantillas Meta" onclick="gestionarPlantillas(${s.id})"><i class="fa-solid fa-layer-group"></i></button>
-                                    <button class="btn btn-link text-warning text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Generar Token Externo" onclick="generarToken(${s.id})"><i class="fa-solid fa-key"></i></button>
-                                    <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarSede(${s.id})"><i class="fa-solid fa-trash"></i></button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>`;
-                    container.append(card);
-                });
+        success: function (res) {
+            if (res && res.status === 'success') {
+                cachedSedesList = Array.isArray(res.data) ? res.data : [];
+                renderSedesCards(cachedSedesList);
+                populateApiSedeFilter(cachedSedesList);
             }
         }
     });
 }
 
-function editarSede(id) {
+function populateApiSedeFilter(sedes) {
+    const $sel = $('#filterApiSedeSelect');
+    if (!$sel.length) return;
+    const cur = $sel.val() || '';
+    $sel.html('<option value="">Todas las sedes</option>');
+    (sedes || []).forEach(s => {
+        const sid = parseInt(s.id, 10) || 0;
+        $sel.append(`<option value="${sid}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
+    });
+    if (cur) $sel.val(cur);
+}
+
+function renderSedesCards(sedes) {
+    const container = $('#sedesCardContainer');
+    container.empty();
+
+    const q = ($('#searchSede').val() || '').trim().toLowerCase();
+    const estFilter = ($('#filterEstadoSede').val() || '').trim();
+    const apiFilter = ($('#filterApiSede').val() || '').trim();
+
+    const filtered = (sedes || []).filter(s => {
+        if (estFilter && String(s.estado || '') !== estFilter) return false;
+        if (apiFilter === 'CON_API' && !s.tiene_api) return false;
+        if (apiFilter === 'SIN_API' && s.tiene_api) return false;
+        if (q) {
+            const hay = `${s.nombre_sede || ''} ${s.rif || ''} ${s.direccion || ''} ${s.ciudad || ''}`.toLowerCase();
+            if (hay.indexOf(q) === -1) return false;
+        }
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        container.append('<div class="col-12 text-center text-muted p-4">No hay sedes registradas para los filtros seleccionados.</div>');
+        return;
+    }
+
+    filtered.forEach(s => {
+        const sid = parseInt(s.id, 10) || 0;
+        const estadoBadge = s.estado === 'ACTIVO'
+            ? '<span class="badge bg-success">Activo</span>'
+            : '<span class="badge bg-secondary">Inactivo</span>';
+
+        const apiBadge = s.tiene_api
+            ? '<span class="badge bg-success text-white"><i class="fa-solid fa-check me-1"></i>Con API</span>'
+            : '<span class="badge bg-warning text-dark"><i class="fa-solid fa-triangle-exclamation me-1"></i>Sin API</span>';
+
+        const tokenBadge = s.has_token
+            ? `<div class="mt-2 small text-muted"><i class="fa-solid fa-key text-warning me-1"></i>Token POS/ERP: <code class="text-dark">${escapeHtmlConfig(s.api_token_masked || '••••••••')}</code></div>`
+            : '<div class="mt-2 small text-muted"><i class="fa-solid fa-key text-secondary me-1"></i>Token POS/ERP: <span class="fst-italic">Sin generar</span></div>';
+
+        const masterBtns = isMasterConfigUser
+            ? `
+                <button type="button" class="btn btn-link text-success text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-sede-api" data-id="${sid}" title="WhatsApp API"><i class="fa-brands fa-whatsapp"></i></button>
+                <button type="button" class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-sede-tpls" data-id="${sid}" title="Plantillas Meta"><i class="fa-solid fa-layer-group"></i></button>
+                <button type="button" class="btn btn-link text-warning text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-sede-token" data-id="${sid}" title="Generar Token Externo"><i class="fa-solid fa-key"></i></button>
+                <button type="button" class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn btn-sede-del" data-id="${sid}" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+              `
+            : `
+                <button type="button" class="btn btn-link text-info text-decoration-none flex-fill rounded-0 py-2 action-btn btn-sede-tpls" data-id="${sid}" title="Plantillas Meta"><i class="fa-solid fa-layer-group"></i></button>
+              `;
+
+        const card = `
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
+                    <h6 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-building me-2"></i>${escapeHtmlConfig(s.nombre_sede)}</h6>
+                    ${estadoBadge}
+                </div>
+                <div class="card-body">
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-regular fa-id-card me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">RIF:</strong> ${escapeHtmlConfig(s.rif || 'N/A')}</div>
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-phone me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Teléfono:</strong> ${escapeHtmlConfig(s.telefono || 'N/A')}</div>
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-regular fa-envelope me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Email:</strong> ${escapeHtmlConfig(s.email || 'N/A')}</div>
+                    <div class="mb-3 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-location-dot me-2" style="width: 16px; text-align: center;"></i><strong class="text-dark">Ciudad:</strong> ${escapeHtmlConfig(s.ciudad || 'N/A')}</div>
+
+                    <div class="d-flex gap-2 mb-2 flex-wrap">
+                        <span class="badge bg-info text-white">${escapeHtmlConfig(s.tipo_sede || 'SUCURSAL')}</span>
+                        ${apiBadge}
+                    </div>
+                    ${tokenBadge}
+                </div>
+                <div class="card-footer bg-white border-top-0 p-0">
+                    <div class="d-flex border-top">
+                        <button type="button" class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-sede-edit" data-id="${sid}" title="Editar"><i class="fa-solid fa-pen"></i></button>
+                        ${masterBtns}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        container.append(card);
+    });
+}
+
+function editarSede(id, $btn) {
+    if (!acquireCfgLock('edit_sede_' + id, $btn)) return;
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'get_sede', id: id },
-        success: function(res) {
-            if(res.status === 'success') {
+        success: function (res) {
+            if (res && res.status === 'success' && res.data) {
                 const s = res.data;
                 $('#id_sede').val(s.id);
                 $('#razon_social').val(s.nombre_sede);
@@ -789,23 +1166,27 @@ function editarSede(id) {
                 $('#estado_sede').val(s.estado);
                 $('#tipo_sede').val(s.tipo_sede);
                 $('#observaciones').val(s.observaciones);
-                
+
                 $('#modalSede .modal-title').html('<i class="fa-solid fa-building me-2 text-starfi-primary"></i>Editar Sede');
-                
-                var modalEl = document.getElementById('modalSede');
-                var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-                myModal.show();
+                const modalEl = document.getElementById('modalSede');
+                if (modalEl) {
+                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                }
             } else {
-                Swal.fire('Error', res.message, 'error');
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo cargar la sede.', 'error');
             }
+        },
+        complete: function () {
+            releaseCfgLock('edit_sede_' + id, $btn);
         }
     });
 }
 
-function borrarSede(id) {
+function borrarSede(id, $btn) {
+    if (cfgInFlight.has('del_sede_' + id)) return;
     Swal.fire({
         title: '¿Estás seguro?',
-        text: "¡No podrás revertir esto! Se eliminará la sede.",
+        text: '¡No podrás revertir esto! Se eliminará la sede.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#d33',
@@ -813,64 +1194,93 @@ function borrarSede(id) {
         confirmButtonText: 'Sí, borrar',
         cancelButtonText: 'Cancelar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            $.ajax({
-                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-                data: { action: 'delete_sede', id: id },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Eliminado', res.message, 'success');
-                        loadSedes();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('del_sede_' + id, $btn)) return;
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'delete_sede', id: id },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Eliminado', res.message, 'success');
+                    loadSedes();
+                    loadAPIs();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo eliminar.', 'error');
                 }
-            });
-        }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'No se pudo eliminar la sede.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('del_sede_' + id, $btn);
+            }
+        });
     });
 }
 
-function generarToken(id_sede) {
+function generarToken(id_sede, $btn) {
+    if (cfgInFlight.has('gen_tok_' + id_sede)) return;
     Swal.fire({
         title: '¿Generar nuevo Token?',
-        text: "Esto creará un token de acceso de 64 caracteres para integraciones externas con esta Sede. Si ya existía uno, quedará invalidado.",
+        text: 'Esto creará un token único de 64 caracteres para integraciones externas con esta Sede. Solo se mostrará una vez y el anterior quedará invalidado.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#E85B14',
         cancelButtonColor: '#6c757d',
         confirmButtonText: 'Sí, generar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            $.ajax({
-                url: 'back_configuracion.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'generate_api_token', id_sede: id_sede },
-                success: function(res) {
-                    if (res.status === 'success') {
-                        Swal.fire({
-                            title: 'Token Generado',
-                            html: `<p>Usa este token en el sistema POS o ERP del cliente:</p>
-                                   <div style="background:#f4f4f4; padding:10px; border-radius:5px; word-break: break-all; font-family: monospace; font-weight:bold;">${res.token}</div>`,
-                            icon: 'success'
-                        });
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('gen_tok_' + id_sede, $btn)) return;
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'generate_api_token', id_sede: id_sede },
+            success: function (res) {
+                if (res && res.status === 'success' && res.token) {
+                    const safeToken = escapeHtmlConfig(res.token);
+                    loadSedes();
+                    Swal.fire({
+                        title: 'Token Generado (Copia Única)',
+                        html: `<p class="small text-muted mb-2">Copia y guarda este token ahora en el sistema POS/ERP. Por seguridad no volverá a mostrarse en texto plano:</p>
+                               <div class="p-2 rounded border bg-light font-monospace fw-bold text-dark" style="word-break: break-all;">${safeToken}</div>`,
+                        icon: 'success',
+                        confirmButtonText: 'Copiar y Cerrar',
+                        confirmButtonColor: '#E85B14'
+                    }).then(() => {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(String(res.token)).catch(() => {});
+                        }
+                    });
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al generar el token.', 'error');
                 }
-            });
-        }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error al generar el token.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('gen_tok_' + id_sede, $btn);
+            }
+        });
     });
 }
 
+// ============================================================================
+// GESTIÓN DE PLANTILLAS META
+// ============================================================================
 function gestionarPlantillas(id_sede) {
     $('#plantillas_id_sede').val(id_sede);
     mostrarListaPlantillas();
-    
-    var modalEl = document.getElementById('modalPlantillasMeta');
-    var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    myModal.show();
-    
+
+    const modalEl = document.getElementById('modalPlantillasMeta');
+    if (modalEl) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
     cargarPlantillasDeMeta();
 }
 
@@ -886,146 +1296,142 @@ function mostrarListaPlantillas() {
     $('#vistaListaPlantillas').fadeIn();
 }
 
+function renderMetaTemplatesRows(tbody, list) {
+    tbody.empty();
+    if (!Array.isArray(list) || list.length === 0) {
+        tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted">No hay plantillas registradas en Meta.</td></tr>');
+        return;
+    }
+
+    list.forEach(t => {
+        const rawStatus = String(t.status || '');
+        let badgeColor = 'bg-secondary';
+        if (rawStatus === 'APPROVED') badgeColor = 'bg-success';
+        else if (rawStatus === 'REJECTED') badgeColor = 'bg-danger';
+        else if (rawStatus === 'PENDING') badgeColor = 'bg-warning text-dark';
+
+        const safeName = escapeHtmlConfig(t.name);
+        const safeCat = escapeHtmlConfig(t.category);
+        const safeLang = escapeHtmlConfig(t.language);
+        const safeStatus = escapeHtmlConfig(rawStatus);
+
+        tbody.append(`
+            <tr>
+                <td class="fw-bold text-dark">${safeName}</td>
+                <td><span class="badge bg-light text-dark border">${safeCat}</span></td>
+                <td>${safeLang}</td>
+                <td><span class="badge ${badgeColor}">${safeStatus}</span></td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-sm btn-outline-danger btn-delete-meta-tpl" data-name="${safeName}" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            </tr>
+        `);
+    });
+}
+
 function cargarPlantillasDeMeta() {
-    let id_sede = $('#plantillas_id_sede').val();
-    let tbody = $('#tablaPlantillasMeta tbody');
+    const id_sede = $('#plantillas_id_sede').val();
+    const tbody = $('#tablaPlantillasMeta tbody');
     tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando plantillas desde Meta...</td></tr>');
-    
+
     $.ajax({
         url: 'back_configuracion.php',
         type: 'POST',
         dataType: 'json',
         data: { action: 'get_meta_templates', id_sede: id_sede },
-        success: function(res) {
-            if(res.status === 'success') {
-                tbody.empty();
-                if(!res.data || res.data.length === 0) {
-                    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted">No hay plantillas registradas en Meta.</td></tr>');
-                    return;
-                }
-                
-                res.data.forEach(t => {
-                    let badgeColor = 'bg-secondary';
-                    if (t.status === 'APPROVED') badgeColor = 'bg-success';
-                    else if (t.status === 'REJECTED') badgeColor = 'bg-danger';
-                    else if (t.status === 'PENDING') badgeColor = 'bg-warning text-dark';
-                    
-                    let html = `
-                        <tr>
-                            <td class="fw-bold text-dark">${t.name}</td>
-                            <td><span class="badge bg-light text-dark border">${t.category}</span></td>
-                            <td>${t.language}</td>
-                            <td><span class="badge ${badgeColor}">${t.status}</span></td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-outline-danger" onclick="eliminarPlantilla('${t.name}')" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
-                            </td>
-                        </tr>
-                    `;
-                    tbody.append(html);
-                });
+        success: function (res) {
+            if (res && res.status === 'success') {
+                renderMetaTemplatesRows(tbody, res.data || []);
             } else {
-                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${res.message}</td></tr>`);
+                const msg = escapeHtmlConfig((res && res.message) ? res.message : 'Error al consultar plantillas.');
+                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${msg}</td></tr>`);
             }
         },
-        error: function() {
+        error: function () {
             tbody.html('<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Error de conexión al cargar plantillas.</td></tr>');
         }
     });
 }
 
 function sincronizarPlantillasMeta() {
-    let id_sede = $('#plantillas_id_sede').val();
-    let tbody = $('#tablaPlantillasMeta tbody');
+    const $btn = $('#btnSyncPlantillasMeta');
+    if (!acquireCfgLock('sync_meta_tpls', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Sincronizando...')) return;
+
+    const id_sede = $('#plantillas_id_sede').val();
+    const tbody = $('#tablaPlantillasMeta tbody');
     tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted"><i class="fa-solid fa-spinner fa-spin me-2"></i>Sincronizando con Meta...</td></tr>');
-    
+
     $.ajax({
         url: 'back_configuracion.php',
         type: 'POST',
         dataType: 'json',
         data: { action: 'sync_meta_templates', id_sede: id_sede },
-        success: function(res) {
-            if(res.status === 'success') {
-                tbody.empty();
-                if(!res.data || res.data.length === 0) {
-                    tbody.html('<tr><td colspan="5" class="text-center py-4 text-muted">No hay plantillas registradas en Meta.</td></tr>');
-                    return;
-                }
-                
-                res.data.forEach(t => {
-                    let badgeColor = 'bg-secondary';
-                    if (t.status === 'APPROVED') badgeColor = 'bg-success';
-                    else if (t.status === 'REJECTED') badgeColor = 'bg-danger';
-                    else if (t.status === 'PENDING') badgeColor = 'bg-warning text-dark';
-                    
-                    let html = `
-                        <tr>
-                            <td class="fw-bold text-dark">${t.name}</td>
-                            <td><span class="badge bg-light text-dark border">${t.category}</span></td>
-                            <td>${t.language}</td>
-                            <td><span class="badge ${badgeColor}">${t.status}</span></td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-outline-danger" onclick="eliminarPlantilla('${t.name}')" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
-                            </td>
-                        </tr>
-                    `;
-                    tbody.append(html);
-                });
+        success: function (res) {
+            if (res && res.status === 'success') {
+                renderMetaTemplatesRows(tbody, res.data || []);
             } else {
-                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${res.message}</td></tr>`);
+                const msg = escapeHtmlConfig((res && res.message) ? res.message : 'Error al sincronizar plantillas.');
+                tbody.html(`<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>${msg}</td></tr>`);
             }
         },
-        error: function() {
+        error: function () {
             tbody.html('<tr><td colspan="5" class="text-center py-4 text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Error de conexión al sincronizar plantillas.</td></tr>');
+        },
+        complete: function () {
+            releaseCfgLock('sync_meta_tpls', $btn, '<i class="fa-solid fa-rotate me-1"></i> Sincronizar Plantillas');
         }
     });
 }
 
 function guardarNuevaPlantilla() {
-    let id_sede = $('#plantillas_id_sede').val();
-    let name = $('#new_template_name').val().trim();
-    let category = $('#new_template_category').val();
-    let lang = $('#new_template_lang').val();
-    let body = $('#new_template_body').val().trim();
-    
-    if(!name || !body) {
+    const $btn = $('#btnGuardarNuevaPlantilla');
+    const id_sede = $('#plantillas_id_sede').val();
+    const name = ($('#new_template_name').val() || '').trim();
+    const category = $('#new_template_category').val();
+    const lang = $('#new_template_lang').val();
+    const body = ($('#new_template_body').val() || '').trim();
+
+    if (!name || !body) {
         Swal.fire('Atención', 'El nombre y el cuerpo son obligatorios', 'warning');
         return;
     }
-    
-    Swal.fire({
-        title: 'Creando Plantilla',
-        html: 'Enviando a revisión a Meta...',
-        allowOutsideClick: false,
-        didOpen: () => { Swal.showLoading(); }
-    });
-    
+    if (!acquireCfgLock('create_meta_tpl', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando...')) return;
+
     $.ajax({
         url: 'back_configuracion.php',
         type: 'POST',
         dataType: 'json',
-        data: { 
-            action: 'create_meta_template', 
+        data: {
+            action: 'create_meta_template',
             id_sede: id_sede,
             name: name,
             category: category,
             language: lang,
             body: body
         },
-        success: function(res) {
-            if(res.status === 'success') {
+        success: function (res) {
+            if (res && res.status === 'success') {
                 Swal.fire('¡Éxito!', 'Plantilla creada y enviada a revisión.', 'success');
                 mostrarListaPlantillas();
                 cargarPlantillasDeMeta();
             } else {
-                Swal.fire('Error', res.message, 'error');
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo crear la plantilla.', 'error');
             }
+        },
+        error: function () {
+            Swal.fire('Error', 'Fallo de conexión al crear la plantilla.', 'error');
+        },
+        complete: function () {
+            releaseCfgLock('create_meta_tpl', $btn, 'Enviar a Meta');
         }
     });
 }
 
 function crearPlantillaCSAT() {
-    let id_sede = $('#plantillas_id_sede').val();
-    
+    const $btn = $('#btnAutoCrearCSAT');
+    if (cfgInFlight.has('create_csat_tpl')) return;
+    const id_sede = $('#plantillas_id_sede').val();
+
     Swal.fire({
         title: '¿Crear Plantilla CSAT?',
         text: "Se enviará automáticamente a Meta una plantilla estandarizada llamada 'starfi_csat_survey' donde se le pedirá al cliente calificar la atención del 1 al 5.",
@@ -1035,103 +1441,117 @@ function crearPlantillaCSAT() {
         cancelButtonColor: '#6c757d',
         confirmButtonText: 'Sí, crear'
     }).then((result) => {
-        if (result.isConfirmed) {
-            Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
-            
-            $.ajax({
-                url: 'back_configuracion.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'create_csat_template', id_sede: id_sede },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Plantilla Creada', 'La plantilla CSAT ha sido enviada a revisión. En breve estará disponible para su uso.', 'success');
-                        cargarPlantillasDeMeta();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
-                },
-                error: function() {
-                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('create_csat_tpl', $btn)) return;
+        Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'create_csat_template', id_sede: id_sede },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Plantilla Creada', 'La plantilla CSAT ha sido enviada a revisión.', 'success');
+                    cargarPlantillasDeMeta();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al crear.', 'error');
                 }
-            });
-        }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión.', 'error');
+            },
+            complete: function () {
+                releaseCfgLock('create_csat_tpl', $btn);
+            }
+        });
     });
 }
 
 function crearPlantillaNotificacionInterna() {
-    let id_sede = $('#plantillas_id_sede').val();
-    
+    const $btn = $('#btnAutoCrearNotifInterna');
+    if (cfgInFlight.has('create_internal_tpl')) return;
+    const id_sede = $('#plantillas_id_sede').val();
+
     Swal.fire({
         title: '¿Crear Plantilla Notificación Interna?',
-        text: "Se enviará automáticamente a Meta una plantilla estandarizada de tipo UTILITY llamada 'starfi_notificacion_interna' con una variable genérica {{1}} para enviar cualquier aviso interno a operadores.",
+        text: "Se enviará automáticamente a Meta una plantilla estandarizada de tipo UTILITY llamada 'starfi_notificacion_interna'.",
         icon: 'info',
         showCancelButton: true,
         confirmButtonColor: '#0dcaf0',
         cancelButtonColor: '#6c757d',
         confirmButtonText: 'Sí, crear'
     }).then((result) => {
-        if (result.isConfirmed) {
-            Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
-            
-            $.ajax({
-                url: 'back_configuracion.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'create_internal_notification_template', id_sede: id_sede },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Plantilla Creada', 'La plantilla starfi_notificacion_interna ha sido enviada a revisión a Meta. En breve estará disponible para su uso.', 'success');
-                        sincronizarPlantillasMeta();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
-                },
-                error: function() {
-                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('create_internal_tpl', $btn)) return;
+        Swal.fire({ title: 'Creando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'create_internal_notification_template', id_sede: id_sede },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Plantilla Creada', 'La plantilla starfi_notificacion_interna ha sido enviada a revisión a Meta.', 'success');
+                    sincronizarPlantillasMeta();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al crear.', 'error');
                 }
-            });
-        }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión.', 'error');
+            },
+            complete: function () {
+                releaseCfgLock('create_internal_tpl', $btn);
+            }
+        });
     });
 }
 
 function crearPlantillaDifusionDirecta() {
-    let id_sede = $('#plantillas_id_sede').val();
+    const $btn = $('#btnAutoCrearDifusion');
+    if (cfgInFlight.has('create_broadcast_tpl')) return;
+    const id_sede = $('#plantillas_id_sede').val();
 
     Swal.fire({
         title: '¿Auto-Crear Plantilla de Difusión (starfi_difusion_directa)?',
-        text: "Se enviará a Meta la plantilla oficial 'starfi_difusion_directa' con 3 variables ({{1}} Nombre, {{2}} Cuerpo, {{3}} Eslogan) y el pie de página 'Servicio de mensajería inteligente de STARFI CRM'.",
+        text: "Se enviará a Meta la plantilla oficial 'starfi_difusion_directa' con 3 variables ({{1}}, {{2}}, {{3}}).",
         icon: 'question',
         showCancelButton: true,
         confirmButtonColor: '#E85B14',
         cancelButtonColor: '#6c757d',
         confirmButtonText: 'Sí, crear en Meta'
     }).then((result) => {
-        if (result.isConfirmed) {
-            Swal.fire({ title: 'Enviando a Meta...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('create_broadcast_tpl', $btn)) return;
+        Swal.fire({ title: 'Enviando a Meta...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
 
-            $.ajax({
-                url: 'back_configuracion.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'create_broadcast_template', id_sede: id_sede },
-                success: function(res) {
-                    if (res.status === 'success') {
-                        Swal.fire('¡Plantilla Creada!', 'La plantilla starfi_difusion_directa fue registrada en Meta y sincronizada exitosamente.', 'success');
-                        sincronizarPlantillasMeta();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
-                },
-                error: function() {
-                    Swal.fire('Error', 'Fallo de conexión.', 'error');
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'create_broadcast_template', id_sede: id_sede },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('¡Plantilla Creada!', 'La plantilla starfi_difusion_directa fue registrada en Meta exitosamente.', 'success');
+                    sincronizarPlantillasMeta();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al crear.', 'error');
                 }
-            });
-        }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión.', 'error');
+            },
+            complete: function () {
+                releaseCfgLock('create_broadcast_tpl', $btn);
+            }
+        });
     });
 }
 
-function eliminarPlantilla(name) {
+function eliminarPlantilla(name, $btn) {
+    if (!name || cfgInFlight.has('del_tpl_' + name)) return;
     Swal.fire({
         title: '¿Eliminar Plantilla?',
         text: `Se eliminará la plantilla '${name}' de Meta de forma permanente.`,
@@ -1141,190 +1561,277 @@ function eliminarPlantilla(name) {
         cancelButtonColor: '#6c757d',
         confirmButtonText: 'Sí, eliminar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            let id_sede = $('#plantillas_id_sede').val();
-            
-            Swal.fire({ title: 'Eliminando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
-            
-            $.ajax({
-                url: 'back_configuracion.php',
-                type: 'POST',
-                dataType: 'json',
-                data: { action: 'delete_meta_template', id_sede: id_sede, name: name },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Eliminada', 'Plantilla eliminada de Meta.', 'success');
-                        cargarPlantillasDeMeta();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('del_tpl_' + name, $btn)) return;
+        const id_sede = $('#plantillas_id_sede').val();
+
+        Swal.fire({ title: 'Eliminando...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'delete_meta_template', id_sede: id_sede, name: name },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Eliminada', 'Plantilla eliminada de Meta.', 'success');
+                    cargarPlantillasDeMeta();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al eliminar.', 'error');
                 }
-            });
-        }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión al eliminar.', 'error');
+            },
+            complete: function () {
+                releaseCfgLock('del_tpl_' + name, $btn);
+            }
+        });
     });
 }
 
-function configurarAPI(id_sede) {
-    // 1. Cargar las sedes primero para asegurar que existan los options en el select
+// ============================================================================
+// GESTIÓN DE APIS WHATSAPP
+// ============================================================================
+function configurarAPI(id_sede, $btn) {
+    if (!acquireCfgLock('cfg_api_' + id_sede, $btn)) return;
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'get_sedes_list' },
-        success: function(resSedes) {
-            if(resSedes.status === 'success'){
-                let select = $('#api_sede');
+        success: function (resSedes) {
+            if (resSedes && resSedes.status === 'success') {
+                const select = $('#api_sede');
                 select.html('<option value="">Seleccione una sede...</option>');
-                resSedes.data.forEach(s => {
-                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                (resSedes.data || []).forEach(s => {
+                    select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
                 });
-                
-                // 2. Buscar si ya hay una API configurada para esta sede, sino abre el modal en blanco
+
                 $.ajax({
-                    url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                    url: 'back_configuracion.php',
+                    type: 'POST',
+                    dataType: 'json',
                     data: { action: 'get_api_by_sede', id_sede: id_sede },
-                    success: function(res) {
-                        $('#formAPI')[0].reset();
-                        $('#api_sede').val(id_sede);
-                        
-                        if(res.status === 'success' && res.data) {
-                            // Hay API
+                    success: function (res) {
+                        if ($('#formAPI').length) $('#formAPI')[0].reset();
+                        $('#api_sede').val(String(id_sede));
+
+                        if (res && res.status === 'success' && res.data) {
                             const a = res.data;
                             $('#id_api').val(a.id);
                             $('#api_descripcion').val(a.descripcion);
                             $('#api_telefono').val(a.numero_telefono);
                             $('#api_telefono_meta').val(a.meta_app_id);
-                            $('#api_token_meta').val(a.meta_token);
+                            resetSecretPasswordInput(
+                                'api_token_meta',
+                                !!a.has_token,
+                                a.meta_token_masked || a.meta_token || '••••••••',
+                                'Deje vacío para usar Token Global (.env) o ingrese EAA...'
+                            );
                             $('#api_id_negocio').val(a.id_negocio);
                             $('#api_estado').val(a.estado);
                             $('#api_limite').val(a.limite_solicitudes);
                             $('#api_observacion').val(a.observaciones);
-                            
                             $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Editar API WhatsApp');
                         } else {
-                            // Nueva API para esta sede
                             $('#id_api').val('');
+                            resetSecretPasswordInput(
+                                'api_token_meta',
+                                false,
+                                '',
+                                'Deje vacío para usar Token Global (.env) o ingrese EAA...'
+                            );
                             $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Nueva API WhatsApp');
                         }
-                        
-                        // 3. Mostrar modal
-                        var modalEl = document.getElementById('modalAPI');
-                        var myModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-                        myModal.show();
+
+                        const modalEl = document.getElementById('modalAPI');
+                        if (modalEl) {
+                            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                        }
+                    },
+                    complete: function () {
+                        releaseCfgLock('cfg_api_' + id_sede, $btn);
                     }
                 });
+            } else {
+                releaseCfgLock('cfg_api_' + id_sede, $btn);
             }
+        },
+        error: function () {
+            releaseCfgLock('cfg_api_' + id_sede, $btn);
         }
     });
-}
-
-function mostrarEstadisticas(id_sede) {
-    window.location.href = '../dashboard/dashboard.php?sede=' + id_sede;
 }
 
 function loadAPIs() {
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'load_apis' },
-        success: function(res) {
-            if(res.status === 'success') {
-                let container = $('#apisCardContainer');
-                container.empty();
-                
-                let total = res.data.length;
-                let activas = 0;
-                let inactivas = 0;
-                let sedesConAPI = new Set();
-                
-                if(total === 0){
-                    container.append('<div class="col-12 text-center text-muted p-4">No hay APIs configuradas.</div>');
-                } else {
-                    res.data.forEach(a => {
-                        if (a.estado === 'ACTIVO') {
-                            activas++;
-                        } else {
-                            inactivas++;
-                        }
-                        if (a.id_sede) sedesConAPI.add(a.id_sede);
-                        
-                        let badge = a.estado === 'ACTIVO' ? '<span class="badge bg-success" style="cursor: pointer;" title="Haz clic para desactivar sede"><i class="fa-solid fa-circle-check me-1"></i>Activo</span>' : '<span class="badge bg-secondary" style="cursor: pointer;" title="Haz clic para activar sede"><i class="fa-solid fa-circle-xmark me-1"></i>Inactivo</span>';
-                        
-                        let token_trunc = a.meta_token ? a.meta_token.substring(0, 20) + '...' : 'N/A';
-                        let nombreSedeEscaped = (a.nombre_sede || a.descripcion || '').replace(/'/g, "\\'");
-                        
-                        let card = `
-                        <div class="col-md-4">
-                            <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
-                                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
-                                    <h6 class="mb-0 fw-bold text-muted"><i class="fa-solid fa-circle ${a.estado === 'ACTIVO' ? 'text-success' : 'text-secondary'} me-2" style="font-size: 0.6rem;"></i>${a.descripcion || 'Sin descripción'}</h6>
-                                    <div onclick="toggleEstadoAPI(${a.id}, '${a.estado}', '${nombreSedeEscaped}')">
-                                        ${badge}
-                                    </div>
-                                </div>
-                                <div class="card-body">
-                                    <div class="mb-3 text-muted" style="font-size: 0.85rem;"><i class="fa-solid fa-building me-2"></i>${a.nombre_sede || 'Sin sede asignada'}</div>
-                                    
-                                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-phone me-2" style="width: 16px;"></i><strong class="text-dark">Teléfono:</strong><br>${a.numero_telefono || 'N/A'}</div>
-                                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-hashtag me-2" style="width: 16px;"></i><strong class="text-dark">ID Meta:</strong><br>${a.meta_app_id || 'N/A'}</div>
-                                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-key me-2" style="width: 16px;"></i><strong class="text-dark">Metadatos del token:</strong><br><span style="font-family: monospace; font-size: 0.8rem;">${token_trunc}</span></div>
-                                    <div class="mb-3 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-briefcase me-2" style="width: 16px;"></i><strong class="text-dark">ID de WABA:</strong><br>${a.id_negocio || 'N/A'}</div>
-                                    
-                                    <small class="text-muted"><i class="fa-solid fa-check-double me-1 text-success"></i>Hoy: 0 mensajes</small>
-                                </div>
-                                <div class="card-footer bg-white border-top-0 p-0">
-                                    <div class="d-flex border-top">
-                                        <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar API" onclick="editarAPI(${a.id})"><i class="fa-solid fa-pen"></i></button>
-                                        <button class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Probar API" onclick="abrirPruebaAPI(${a.id}, '${a.numero_telefono}')"><i class="fa-solid fa-bolt"></i></button>
-                                        <button class="btn btn-link ${a.estado === 'ACTIVO' ? 'text-warning' : 'text-success'} text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="${a.estado === 'ACTIVO' ? 'Desactivar Sede (No enviar mensajes)' : 'Activar Sede'}" onclick="toggleEstadoAPI(${a.id}, '${a.estado}', '${nombreSedeEscaped}')"><i class="fa-solid fa-power-off"></i></button>
-                                        <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar API" onclick="borrarAPI(${a.id})"><i class="fa-solid fa-trash"></i></button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>`;
-                        container.append(card);
-                    });
-                }
-                
-                // Actualizar métricas visuales
-                $('#statApiTotal').text(total);
-                $('#statApiActivas').text(activas);
-                $('#statApiInactivas').text(inactivas);
-                $('#statApiSedes').text(sedesConAPI.size);
+        success: function (res) {
+            if (res && res.status === 'success') {
+                cachedApisList = Array.isArray(res.data) ? res.data : [];
+                renderApisCards(cachedApisList);
             }
         }
     });
 }
 
-function editarAPI(id_api) {
-    // Buscar los datos de esta API para editar
+function renderApisCards(apis) {
+    const container = $('#apisCardContainer');
+    container.empty();
+
+    const allApis = apis || [];
+    let activas = 0;
+    let inactivas = 0;
+    const sedesConAPI = new Set();
+    allApis.forEach(a => {
+        if (a.estado === 'ACTIVO') activas++;
+        else inactivas++;
+        if (a.id_sede) sedesConAPI.add(a.id_sede);
+    });
+    $('#statApiTotal').text(allApis.length);
+    $('#statApiActivas').text(activas);
+    $('#statApiInactivas').text(inactivas);
+    $('#statApiSedes').text(sedesConAPI.size);
+
+    const sedeFilter = ($('#filterApiSedeSelect').val() || '').trim();
+    const estFilter = ($('#filterApiEstado').val() || '').trim();
+    const q = ($('#searchApi').val() || '').trim().toLowerCase();
+
+    const filtered = allApis.filter(a => {
+        if (sedeFilter && String(a.id_sede || '') !== sedeFilter) return false;
+        if (estFilter && String(a.estado || '') !== estFilter) return false;
+        if (q) {
+            const hay = `${a.descripcion || ''} ${a.numero_telefono || ''} ${a.nombre_sede || ''} ${a.id_negocio || ''}`.toLowerCase();
+            if (hay.indexOf(q) === -1) return false;
+        }
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        container.append('<div class="col-12 text-center text-muted p-4">No hay APIs configuradas.</div>');
+        return;
+    }
+
+    filtered.forEach(a => {
+        const aid = parseInt(a.id, 10) || 0;
+        const safeEstado = escapeHtmlConfig(a.estado || 'INACTIVO');
+        const safeNombreSede = escapeHtmlConfig(a.nombre_sede || a.descripcion || 'Sin sede asignada');
+        const safeNumero = escapeHtmlConfig(a.numero_telefono || 'N/A');
+        const safeMasked = a.has_token ? escapeHtmlConfig(a.meta_token_masked || '••••••••') : 'No configurado';
+
+        const badge = a.estado === 'ACTIVO'
+            ? '<span class="badge bg-success" style="cursor: pointer;" title="Estado de la línea"><i class="fa-solid fa-circle-check me-1"></i>Activo</span>'
+            : '<span class="badge bg-secondary" style="cursor: pointer;" title="Estado de la línea"><i class="fa-solid fa-circle-xmark me-1"></i>Inactivo</span>';
+
+        const actionFooter = isMasterConfigUser
+            ? `
+                <button type="button" class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-api-edit" data-id="${aid}" title="Editar API"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" class="btn btn-link text-info text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-api-test" data-id="${aid}" data-numero="${safeNumero}" title="Probar API"><i class="fa-solid fa-bolt"></i></button>
+                <button type="button" class="btn btn-link ${a.estado === 'ACTIVO' ? 'text-warning' : 'text-success'} text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-api-toggle" data-id="${aid}" data-estado="${safeEstado}" data-sede-nombre="${safeNombreSede}" title="${a.estado === 'ACTIVO' ? 'Desactivar Sede' : 'Activar Sede'}"><i class="fa-solid fa-power-off"></i></button>
+                <button type="button" class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn btn-api-del" data-id="${aid}" title="Eliminar API"><i class="fa-solid fa-trash"></i></button>
+              `
+            : `
+                <button type="button" class="btn btn-link text-info text-decoration-none flex-fill rounded-0 py-2 action-btn btn-api-test" data-id="${aid}" data-numero="${safeNumero}" title="Probar API"><i class="fa-solid fa-bolt"></i></button>
+              `;
+
+        const headerToggleWrap = isMasterConfigUser
+            ? `<div class="btn-api-toggle" data-id="${aid}" data-estado="${safeEstado}" data-sede-nombre="${safeNombreSede}">${badge}</div>`
+            : `<div>${badge}</div>`;
+
+        const card = `
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm border-0" style="border-radius: 10px; overflow: hidden;">
+                <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pt-3 pb-0">
+                    <h6 class="mb-0 fw-bold text-muted"><i class="fa-solid fa-circle ${a.estado === 'ACTIVO' ? 'text-success' : 'text-secondary'} me-2" style="font-size: 0.6rem;"></i>${escapeHtmlConfig(a.descripcion || 'Sin descripción')}</h6>
+                    ${headerToggleWrap}
+                </div>
+                <div class="card-body">
+                    <div class="mb-3 text-muted" style="font-size: 0.85rem;"><i class="fa-solid fa-building me-2"></i>${escapeHtmlConfig(a.nombre_sede || 'Sin sede asignada')}</div>
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-phone me-2" style="width: 16px;"></i><strong class="text-dark">Teléfono:</strong><br>${safeNumero}</div>
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-hashtag me-2" style="width: 16px;"></i><strong class="text-dark">ID Meta:</strong><br>${escapeHtmlConfig(a.meta_app_id || 'N/A')}</div>
+                    <div class="mb-1 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-key me-2" style="width: 16px;"></i><strong class="text-dark">Token Meta:</strong><br><span style="font-family: monospace; font-size: 0.8rem;">${safeMasked}</span></div>
+                    <div class="mb-3 text-muted" style="font-size: 0.9rem;"><i class="fa-solid fa-briefcase me-2" style="width: 16px;"></i><strong class="text-dark">ID de WABA:</strong><br>${escapeHtmlConfig(a.id_negocio || 'N/A')}</div>
+                    <small class="text-muted"><i class="fa-solid fa-check-double me-1 text-success"></i>Línea verificada</small>
+                </div>
+                <div class="card-footer bg-white border-top-0 p-0">
+                    <div class="d-flex border-top">
+                        ${actionFooter}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        container.append(card);
+    });
+}
+
+function editarAPI(id_api, $btn) {
+    if (!acquireCfgLock('edit_api_' + id_api, $btn)) return;
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-        data: { action: 'get_api_by_id', id_api: id_api },
-        success: function(res) {
-            if(res.status === 'success' && res.data) {
-                const a = res.data;
-                $('#id_api').val(a.id);
-                $('#api_sede').val(a.id_sede);
-                $('#api_descripcion').val(a.descripcion);
-                $('#api_telefono').val(a.numero_telefono);
-                $('#api_telefono_meta').val(a.meta_app_id);
-                $('#api_token_meta').val(a.meta_token);
-                $('#api_id_negocio').val(a.id_negocio);
-                $('#api_estado').val(a.estado);
-                $('#api_limite').val(a.limite_solicitudes);
-                $('#api_observacion').val(a.observaciones);
-                
-                var myModal = new bootstrap.Modal(document.getElementById('modalAPI'));
-                myModal.show();
-            } else {
-                Swal.fire('Error', 'No se pudo cargar la API.', 'error');
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'get_sedes_list' },
+        success: function (resSedes) {
+            if (resSedes && resSedes.status === 'success') {
+                const select = $('#api_sede');
+                select.html('<option value="">Seleccione una sede...</option>');
+                (resSedes.data || []).forEach(s => {
+                    select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
+                });
             }
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'get_api_by_id', id_api: id_api },
+                success: function (res) {
+                    if (res && res.status === 'success' && res.data) {
+                        const a = res.data;
+                        $('#id_api').val(a.id);
+                        $('#api_sede').val(a.id_sede);
+                        $('#api_descripcion').val(a.descripcion);
+                        $('#api_telefono').val(a.numero_telefono);
+                        $('#api_telefono_meta').val(a.meta_app_id);
+                        resetSecretPasswordInput(
+                            'api_token_meta',
+                            !!a.has_token,
+                            a.meta_token_masked || a.meta_token || '••••••••',
+                            'Deje vacío para usar Token Global (.env) o ingrese EAA...'
+                        );
+                        $('#api_id_negocio').val(a.id_negocio);
+                        $('#api_estado').val(a.estado);
+                        $('#api_limite').val(a.limite_solicitudes);
+                        $('#api_observacion').val(a.observaciones);
+                        $('#modalAPI .modal-title').html('<i class="fa-brands fa-whatsapp me-2"></i>Editar API WhatsApp');
+
+                        const modalEl = document.getElementById('modalAPI');
+                        if (modalEl) {
+                            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                        }
+                    } else {
+                        Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo cargar la API.', 'error');
+                    }
+                },
+                complete: function () {
+                    releaseCfgLock('edit_api_' + id_api, $btn);
+                }
+            });
+        },
+        error: function () {
+            releaseCfgLock('edit_api_' + id_api, $btn);
         }
     });
 }
 
-function borrarAPI(id) {
+function borrarAPI(id, $btn) {
+    if (cfgInFlight.has('del_api_' + id)) return;
     Swal.fire({
         title: '¿Estás seguro?',
-        text: "¡No podrás revertir esto! Se eliminará la configuración de la API.",
+        text: '¡No podrás revertir esto! Se eliminará la configuración de la API.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#d33',
@@ -1332,29 +1839,39 @@ function borrarAPI(id) {
         confirmButtonText: 'Sí, borrar',
         cancelButtonText: 'Cancelar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            $.ajax({
-                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-                data: { action: 'delete_api', id: id },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Eliminado', res.message, 'success');
-                        loadAPIs();
-                        loadSedes(); // Por si cambió el estado de "Con API" en la sede
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('del_api_' + id, $btn)) return;
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'delete_api', id: id },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Eliminado', res.message, 'success');
+                    loadAPIs();
+                    loadSedes();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'Error al eliminar la API.', 'error');
                 }
-            });
-        }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error al eliminar la API.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('del_api_' + id, $btn);
+            }
+        });
     });
 }
 
-function toggleEstadoAPI(id_api, estado_actual, nombre_sede) {
+function toggleEstadoAPI(id_api, estado_actual, nombre_sede, $btn) {
+    if (cfgInFlight.has('toggle_api_' + id_api)) return;
     const esActivo = estado_actual === 'ACTIVO';
     const nuevoEstado = esActivo ? 'INACTIVO' : 'ACTIVO';
     const titulo = esActivo ? '¿Desactivar esta sede?' : '¿Activar esta sede?';
-    const texto = esActivo 
+    const texto = esActivo
         ? `Al desactivar ${nombre_sede || 'esta sede'}, no se enviarán más mensajes automáticos ni notificaciones.`
         : `Al activar ${nombre_sede || 'esta sede'}, se reanudará el envío de mensajes de WhatsApp.`;
     const btnTexto = esActivo ? 'Sí, desactivar' : 'Sí, activar';
@@ -1370,127 +1887,89 @@ function toggleEstadoAPI(id_api, estado_actual, nombre_sede) {
         confirmButtonText: btnTexto,
         cancelButtonText: 'Cancelar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            $.ajax({
-                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-                data: { action: 'toggle_api_estado', id_api: id_api, nuevo_estado: nuevoEstado },
-                success: function(res) {
-                    if (res.status === 'success') {
-                        Swal.fire('Estado actualizado', res.message, 'success');
-                        loadAPIs();
-                        loadSedes();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
-                },
-                error: function() {
-                    Swal.fire('Error', 'No se pudo procesar la solicitud.', 'error');
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('toggle_api_' + id_api, $btn)) return;
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'toggle_api_estado', id_api: id_api, nuevo_estado: nuevoEstado },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Estado actualizado', res.message, 'success');
+                    loadAPIs();
+                    loadSedes();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo cambiar el estado.', 'error');
                 }
-            });
-        }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'No se pudo procesar la solicitud.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('toggle_api_' + id_api, $btn);
+            }
+        });
     });
 }
 
-function mostrarEstadisticasAPI(id) {
-    Swal.fire({
-        icon: 'info',
-        title: 'Métricas de la API',
-        text: 'Las estadísticas detalladas de esta línea estarán en Starfi 2.0.'
-    });
-}
-
-function abrirPruebaAPI(id, numero) {
+function abrirPruebaAPI(id) {
     $('#id_api_test').val(id);
     $('#resultadoTest').html('');
-    var myModal = new bootstrap.Modal(document.getElementById('modalProbarAPI'));
-    myModal.show();
+    const modalEl = document.getElementById('modalProbarAPI');
+    if (modalEl) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
 }
 
 function ejecutarPruebaAPI() {
+    const $btn = $('#btnEjecutarPruebaAPI');
     const id_api = $('#id_api_test').val();
-    const numero = $('#telefono_test').val().trim();
-    const mensaje = $('#mensaje_test').val().trim();
-    
-    if(!numero || !mensaje) {
+    const numero = ($('#telefono_test').val() || '').trim();
+    const mensaje = ($('#mensaje_test').val() || '').trim();
+
+    if (!numero || !mensaje) {
         Swal.fire('Atención', 'Ingrese un número y un mensaje', 'warning');
         return;
     }
-    
+    if (!acquireCfgLock('test_api', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando...')) return;
+
     $('#resultadoTest').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> Enviando prueba...</div>');
-    
+
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: {
             action: 'test_api',
             id_api: id_api,
             numero: numero,
             mensaje: mensaje
         },
-        success: function(res) {
-            if(res.status === 'success') {
-                $('#resultadoTest').html(`<div class="alert alert-success"><i class="fa-solid fa-check-circle"></i> ${res.message}</div>`);
+        success: function (res) {
+            if (res && res.status === 'success') {
+                $('#resultadoTest').html(`<div class="alert alert-success"><i class="fa-solid fa-check-circle"></i> ${escapeHtmlConfig(res.message)}</div>`);
             } else {
-                $('#resultadoTest').html(`<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${res.message}</div>`);
+                $('#resultadoTest').html(`<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${escapeHtmlConfig((res && res.message) ? res.message : 'Fallo desconocido')}</div>`);
             }
         },
-        error: function() {
+        error: function () {
             $('#resultadoTest').html('<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error de conexión con el servidor.</div>');
+        },
+        complete: function () {
+            releaseCfgLock('test_api', $btn, '<i class="fa-solid fa-paper-plane me-1"></i> Enviar Prueba');
         }
     });
 }
 
-function loadUsers() {
-    $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-        data: { action: 'load_users' },
-        success: function(res) {
-            if(res.status === 'success') {
-                let tbody = $('#usersTableBody');
-                tbody.empty();
-                if(res.data.length === 0){
-                    tbody.append('<tr><td colspan="5" class="text-center text-muted">No hay operadores registrados.</td></tr>');
-                    return;
-                }
-                res.data.forEach(u => {
-                    let rolBadge = u.rol === 'ADMIN' ? '<span class="badge bg-danger">Admin</span>' : 
-                                  (u.rol === 'SUPERVISOR' ? '<span class="badge bg-primary">Supervisor</span>' : '<span class="badge bg-secondary">Agente</span>');
-                    let sedeTxt = u.sede || 'Global';
-                    let tr = `<tr>
-                        <td class="fw-bold" style="padding-left: 24px;"><i class="fa-solid fa-user-circle text-muted me-2"></i> ${u.nombre}</td>
-                        <td>${rolBadge}</td>
-                        <td class="text-muted">${sedeTxt}</td>
-                        <td>${u.limite} chats simultáneos</td>
-                        <td style="text-align: right; padding-right: 24px;">
-                            <button class="action-btn" title="Editar Permisos"><i class="fa-solid fa-shield-halved"></i></button>
-                            <button class="action-btn danger" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
-                        </td>
-                    </tr>`;
-                    tbody.append(tr);
-                });
-            }
-        }
-    });
-}
-
-function confirmLogout(event) {
-    event.preventDefault();
-    Swal.fire({
-        title: '¿Cerrar Sesión?',
-        text: "Tendrás que volver a ingresar tus credenciales.",
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonColor: '#E85B14',
-        cancelButtonColor: '#94A3B8',
-        confirmButtonText: 'Sí, salir',
-        cancelButtonText: 'Cancelar'
-    }).then((result) => {
-        if (result.isConfirmed) {
-            window.location.href = '../../logout.php';
-        }
-    });
-}
-
+// ============================================================================
+// DIAGNÓSTICO Y PRUEBAS
+// ============================================================================
 function ejecutarDiagnostico() {
+    const $btn = $('#btnRunDiagnostico');
+    if (!acquireCfgLock('run_diag', $btn, '<i class="fa-solid fa-spinner fa-spin me-2"></i> Ejecutando...')) return;
+
     const resDiv = $('#resultadoDiagnostico');
     resDiv.html('<div class="alert alert-info py-2"><i class="fa-solid fa-spinner fa-spin me-2"></i> Ejecutando auto-diagnóstico...</div>');
 
@@ -1499,66 +1978,66 @@ function ejecutarDiagnostico() {
         type: 'POST',
         dataType: 'json',
         data: { action: 'run_diagnostico' },
-        success: function(res) {
-            if (res.status === 'success') {
+        success: function (res) {
+            if (res && res.status === 'success' && res.data) {
                 const data = res.data;
                 let html = '<div class="card bg-light border-0 p-3 mt-2" style="border-radius: 8px;">';
-                
-                // Conexión BD
-                const dbStatus = data.database.status === 'ok' 
-                    ? '<span class="text-success"><i class="fa-solid fa-circle-check me-1"></i> Conectado</span>' 
+
+                const dbStatus = data.database.status === 'ok'
+                    ? '<span class="text-success"><i class="fa-solid fa-circle-check me-1"></i> Conectado</span>'
                     : '<span class="text-danger"><i class="fa-solid fa-circle-xmark me-1"></i> Error</span>';
-                html += `<div class="mb-2"><strong>Base de Datos:</strong> ${dbStatus} - ${data.database.message}</div>`;
-                
-                // Líneas activas
-                const lineasStatus = data.lineas_activas.status === 'ok' 
-                    ? '<span class="text-success"><i class="fa-solid fa-circle-check me-1"></i> OK</span>' 
+                html += `<div class="mb-2"><strong>Base de Datos:</strong> ${dbStatus} - ${escapeHtmlConfig(data.database.message)}</div>`;
+
+                const lineasStatus = data.lineas_activas.status === 'ok'
+                    ? '<span class="text-success"><i class="fa-solid fa-circle-check me-1"></i> OK</span>'
                     : '<span class="text-warning"><i class="fa-solid fa-triangle-exclamation me-1"></i> Advertencia</span>';
-                html += `<div class="mb-2"><strong>Líneas Activas:</strong> ${lineasStatus} - ${data.lineas_activas.message}</div>`;
-                
-                // Tablas
+                html += `<div class="mb-2"><strong>Líneas Activas:</strong> ${lineasStatus} - ${escapeHtmlConfig(data.lineas_activas.message)}</div>`;
+
                 html += '<div class="mb-2"><strong>Estructura de Tablas:</strong><ul class="list-unstyled ps-3 mt-1 row">';
-                for (const [tabla, existe] of Object.entries(data.tables.data)) {
-                    const icono = existe 
-                        ? '<i class="fa-solid fa-check text-success me-1"></i>' 
+                for (const [tabla, existe] of Object.entries(data.tables.data || {})) {
+                    const safeTabla = escapeHtmlConfig(tabla);
+                    const icono = existe
+                        ? '<i class="fa-solid fa-check text-success me-1"></i>'
                         : '<i class="fa-solid fa-xmark text-danger me-1"></i>';
-                    const label = existe ? `<code>${tabla}</code>` : `<code class="text-danger">${tabla} (Falta)</code>`;
+                    const label = existe ? `<code>${safeTabla}</code>` : `<code class="text-danger">${safeTabla} (Falta)</code>`;
                     html += `<li class="col-6 mb-1">${icono} ${label}</li>`;
                 }
                 html += '</ul></div>';
 
-                // Archivos
                 html += '<div class="mb-0"><strong>Archivos de Control:</strong><ul class="list-unstyled ps-3 mt-1 row">';
-                for (const [archivo, existe] of Object.entries(data.files.data)) {
-                    const icono = existe 
-                        ? '<i class="fa-solid fa-check text-success me-1"></i>' 
+                for (const [archivo, existe] of Object.entries(data.files.data || {})) {
+                    const safeArchivo = escapeHtmlConfig(archivo);
+                    const icono = existe
+                        ? '<i class="fa-solid fa-check text-success me-1"></i>'
                         : '<i class="fa-solid fa-xmark text-danger me-1"></i>';
-                    const label = existe ? `<span>${archivo}</span>` : `<span class="text-danger">${archivo} (No encontrado)</span>`;
+                    const label = existe ? `<span>${safeArchivo}</span>` : `<span class="text-danger">${safeArchivo} (No encontrado)</span>`;
                     html += `<li class="col-12 mb-1">${icono} ${label}</li>`;
                 }
-                html += '</ul></div>';
-
-                html += '</div>';
+                html += '</ul></div></div>';
                 resDiv.html(html);
             } else {
-                resDiv.html(`<div class="alert alert-danger py-2"><i class="fa-solid fa-triangle-exclamation me-2"></i> Error: ${res.message}</div>`);
+                resDiv.html(`<div class="alert alert-danger py-2"><i class="fa-solid fa-triangle-exclamation me-2"></i> Error: ${escapeHtmlConfig((res && res.message) ? res.message : 'Fallo desconocido')}</div>`);
             }
         },
-        error: function() {
+        error: function () {
             resDiv.html('<div class="alert alert-danger py-2"><i class="fa-solid fa-triangle-exclamation me-2"></i> Error de comunicación con el servidor.</div>');
+        },
+        complete: function () {
+            releaseCfgLock('run_diag', $btn, '<i class="fa-solid fa-circle-play me-2"></i> Ejecutar Diagnóstico');
         }
     });
 }
 
 function ejecutarSimulador() {
+    const $btn = $('#btnRunSimulador');
+    if (!acquireCfgLock('run_sim', $btn, '<i class="fa-solid fa-spinner fa-spin me-2"></i> Simulando...')) return;
+
     Swal.fire({
         title: 'Ejecutando Simulación',
         text: 'Enviando payload de prueba al Webhook...',
         icon: 'info',
         allowOutsideClick: false,
-        didOpen: () => {
-            Swal.showLoading();
-        }
+        didOpen: () => { Swal.showLoading(); }
     });
 
     $.ajax({
@@ -1566,8 +2045,8 @@ function ejecutarSimulador() {
         type: 'POST',
         dataType: 'json',
         data: { action: 'run_simulacion_entrante' },
-        success: function(res) {
-            if (res.status === 'success') {
+        success: function (res) {
+            if (res && res.status === 'success') {
                 Swal.fire({
                     icon: 'success',
                     title: '¡Mensaje Simulado!',
@@ -1575,34 +2054,40 @@ function ejecutarSimulador() {
                     confirmButtonColor: '#E85B14'
                 });
             } else {
-                Swal.fire('Error', res.message, 'error');
+                Swal.fire('Error', (res && res.message) ? res.message : 'Error en simulación.', 'error');
             }
         },
-        error: function() {
+        error: function () {
             Swal.fire('Error', 'No se pudo conectar al simulador.', 'error');
+        },
+        complete: function () {
+            releaseCfgLock('run_sim', $btn, '<i class="fa-solid fa-paper-plane me-2"></i> Simular Recepción de Mensaje');
         }
     });
 }
 
 function enviarNotificacionPrueba() {
     const form = $('#formNotifPrueba')[0];
-    if (!form.checkValidity()) {
+    if (form && !form.checkValidity()) {
         form.reportValidity();
         return;
     }
+
+    const $btn = $('#btnSendNotifPrueba');
+    if (!acquireCfgLock('send_notif_test', $btn, '<i class="fa-solid fa-spinner fa-spin me-2"></i> Enviando...')) return;
 
     const resDiv = $('#resultadoNotifPrueba');
     resDiv.html('<div class="alert alert-info py-2"><i class="fa-solid fa-spinner fa-spin me-2"></i> Procesando y enviando notificación a Meta...</div>');
 
     const data = {
         action: 'run_envio_transaccional',
-        telefono: $('#notif_telefono').val().trim(),
-        nombre_cliente: $('#notif_cliente').val().trim(),
-        monto_total: $('#notif_monto').val().trim(),
-        correlativo: $('#notif_correlativo').val().trim(),
-        asesor_ventas: $('#notif_asesor').val().trim(),
-        telefono_asesor: $('#notif_tel_asesor').val().trim(),
-        nombre_empresa: $('#notif_empresa').val().trim()
+        telefono: ($('#notif_telefono').val() || '').trim(),
+        nombre_cliente: ($('#notif_cliente').val() || '').trim(),
+        monto_total: ($('#notif_monto').val() || '').trim(),
+        correlativo: ($('#notif_correlativo').val() || '').trim(),
+        asesor_ventas: ($('#notif_asesor').val() || '').trim(),
+        telefono_asesor: ($('#notif_tel_asesor').val() || '').trim(),
+        nombre_empresa: ($('#notif_empresa').val() || '').trim()
     };
 
     $.ajax({
@@ -1610,54 +2095,64 @@ function enviarNotificacionPrueba() {
         type: 'POST',
         dataType: 'json',
         data: data,
-        success: function(res) {
-            if (res.status === 'success') {
+        success: function (res) {
+            if (res && res.status === 'success') {
+                const detailsObj = res.details || {};
+                const metaId = (detailsObj.meta_response && Array.isArray(detailsObj.meta_response.messages) && detailsObj.meta_response.messages[0])
+                    ? detailsObj.meta_response.messages[0].id
+                    : 'N/A';
                 resDiv.html(`
                     <div class="alert alert-success py-3">
-                        <h6 class="fw-bold mb-2"><i class="fa-solid fa-check-circle me-1"></i> ${res.message}</h6>
-                        <small class="d-block mb-1"><strong>Registro en Base de Datos:</strong> ${res.details.registro_bd}</small>
-                        <small class="d-block mb-2"><strong>ID Mensaje Meta:</strong> ${res.details.meta_response.messages ? res.details.meta_response.messages[0].id : 'N/A'}</small>
-                        <pre class="bg-dark text-light p-2 rounded small mb-0" style="max-height: 200px; overflow-y: auto;">${JSON.stringify(res.details, null, 2)}</pre>
+                        <h6 class="fw-bold mb-2"><i class="fa-solid fa-check-circle me-1"></i> ${escapeHtmlConfig(res.message)}</h6>
+                        <small class="d-block mb-1"><strong>Registro en Base de Datos:</strong> ${escapeHtmlConfig(detailsObj.registro_bd || '')}</small>
+                        <small class="d-block mb-2"><strong>ID Mensaje Meta:</strong> ${escapeHtmlConfig(metaId)}</small>
+                        <pre class="bg-dark text-light p-2 rounded small mb-0" style="max-height: 200px; overflow-y: auto;">${escapeHtmlConfig(JSON.stringify(detailsObj, null, 2))}</pre>
                     </div>
                 `);
             } else {
                 let errorDetails = '';
-                if (res.details) {
-                    errorDetails = `<pre class="bg-dark text-light p-2 rounded small mt-2 mb-0" style="max-height: 200px; overflow-y: auto;">${JSON.stringify(res.details, null, 2)}</pre>`;
+                if (res && res.details) {
+                    errorDetails = `<pre class="bg-dark text-light p-2 rounded small mt-2 mb-0" style="max-height: 200px; overflow-y: auto;">${escapeHtmlConfig(JSON.stringify(res.details, null, 2))}</pre>`;
                 }
                 resDiv.html(`
                     <div class="alert alert-danger py-3">
                         <h6 class="fw-bold mb-1"><i class="fa-solid fa-triangle-exclamation me-1"></i> Error en Envío</h6>
-                        <p class="small mb-1">${res.message}</p>
+                        <p class="small mb-1">${escapeHtmlConfig((res && res.message) ? res.message : 'No se pudo enviar la notificación.')}</p>
                         ${errorDetails}
                     </div>
                 `);
             }
         },
-        error: function() {
+        error: function () {
             resDiv.html('<div class="alert alert-danger py-2"><i class="fa-solid fa-triangle-exclamation me-2"></i> Error de conexión con el servidor.</div>');
+        },
+        complete: function () {
+            releaseCfgLock('send_notif_test', $btn, '<i class="fa-solid fa-paper-plane me-2"></i> Enviar Notificación de Prueba');
         }
     });
 }
 
-// --- NUEVAS FUNCIONES DE INTEGRACIÓN DIRECTA CON META GRAPH ---
+// ============================================================================
+// INTEGRACIÓN DIRECTA CON META GRAPH
+// ============================================================================
 function toggleApiExperience() {
-    const isNew = document.getElementById('api_type_new').checked;
-    
+    const newEl = document.getElementById('api_type_new');
+    const isNew = newEl && newEl.checked;
+
     if (isNew) {
         $('#waba_container').hide();
         $('#select_number_container').hide();
         $('#phone_id_readonly_container').hide();
         $('#api_telefono').prop('readonly', false);
         $('#api_telefono_meta').prop('readonly', false).val('');
-        
+
         $('#phone_id_manual_container').show();
         $('#pin_container').show();
     } else {
         $('#waba_container').show();
         $('#phone_id_manual_container').hide();
         $('#pin_container').hide();
-        
+
         $('#phone_id_readonly_container').show();
         $('#api_telefono').prop('readonly', true);
         $('#api_telefono_meta').prop('readonly', true);
@@ -1665,119 +2160,131 @@ function toggleApiExperience() {
 }
 
 function fetchMetaApis() {
-    const waba_id = $('#api_id_negocio').val();
-    
-    if(!waba_id) {
+    const $btn = $('#btnFetchMeta');
+    const waba_id = ($('#api_id_negocio').val() || '').trim();
+
+    if (!waba_id) {
         Swal.fire('Atención', 'Debes ingresar el WABA ID de Meta', 'warning');
         return;
     }
-    
-    $('#btnFetchMeta').html('<i class="fa-solid fa-spinner fa-spin"></i>').prop('disabled', true);
-    
-    $.post('back_configuracion.php', {
-        action: 'fetch_meta_apis',
-        waba_id: waba_id
-    }, function(res) {
-        $('#btnFetchMeta').html('<i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas').prop('disabled', false);
-        
-        if(res.status === 'success' && res.data && res.data.length > 0) {
-            let options = '<option value="">Seleccione un número de la lista...</option>';
-            window.lastFetchedMetaNumbers = res.data; // save to global for autofill
-            
-            res.data.forEach(num => {
-                options += `<option value="${num.id}">${num.display_phone_number} (${num.quality_rating})</option>`;
-            });
-            
-            $('#api_select_meta').html(options);
-            $('#select_number_container').slideDown();
-            Swal.fire('¡Éxito!', `Se encontraron ${res.data.length} líneas en Meta.`, 'success');
-        } else {
-            Swal.fire('Error', res.message || 'No se encontraron números o el token es inválido.', 'error');
+    if (!acquireCfgLock('fetch_meta_apis', $btn, '<i class="fa-solid fa-spinner fa-spin"></i>')) return;
+
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'fetch_meta_apis', waba_id: waba_id },
+        success: function (res) {
+            if (res && res.status === 'success' && Array.isArray(res.data) && res.data.length > 0) {
+                let options = '<option value="">Seleccione un número de la lista...</option>';
+                window.lastFetchedMetaNumbers = res.data;
+
+                res.data.forEach(num => {
+                    options += `<option value="${escapeHtmlConfig(num.id)}">${escapeHtmlConfig(num.display_phone_number)} (${escapeHtmlConfig(num.quality_rating)})</option>`;
+                });
+
+                $('#api_select_meta').html(options);
+                $('#select_number_container').slideDown();
+                Swal.fire('¡Éxito!', `Se encontraron ${res.data.length} líneas en Meta.`, 'success');
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se encontraron números o el token es inválido.', 'error');
+            }
+        },
+        error: function (xhr) {
+            const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error de conexión con el servidor local.';
+            Swal.fire('Error', msg, 'error');
+        },
+        complete: function () {
+            releaseCfgLock('fetch_meta_apis', $btn, '<i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas');
         }
-    }, 'json').fail(function() {
-        $('#btnFetchMeta').html('<i class="fa-solid fa-cloud-arrow-down me-1"></i> Buscar Líneas').prop('disabled', false);
-        Swal.fire('Error', 'Error de conexión con el servidor local.', 'error');
     });
 }
 
 function autoFillMetaNumber() {
     const selectedId = $('#api_select_meta').val();
-    if(!selectedId || !window.lastFetchedMetaNumbers) return;
-    
-    const numData = window.lastFetchedMetaNumbers.find(n => n.id === selectedId);
-    if(numData) {
-        $('#api_telefono').val(numData.display_phone_number);
-        $('#api_telefono_meta').val(numData.id);
+    if (!selectedId || !window.lastFetchedMetaNumbers) return;
+
+    const numData = window.lastFetchedMetaNumbers.find(n => String(n.id) === String(selectedId));
+    if (numData) {
+        $('#api_telefono').val(numData.display_phone_number || '');
+        $('#api_telefono_meta').val(numData.id || '');
     }
 }
 
 function registerMetaPhone() {
-    const phone_id = $('#api_telefono_meta_manual').val();
-    const pin = $('#api_pin_meta').val();
-    
-    if(!phone_id || !pin) {
+    const $btn = $('#btnRegisterMeta');
+    const phone_id = ($('#api_telefono_meta_manual').val() || '').trim();
+    const pin = ($('#api_pin_meta').val() || '').trim();
+
+    if (!phone_id || !pin) {
         Swal.fire('Atención', 'Completa el Phone ID y el PIN de 6 dígitos.', 'warning');
         return;
     }
-    
-    if(pin.length !== 6) {
+    if (pin.length !== 6) {
         Swal.fire('Atención', 'El PIN debe ser exactamente de 6 dígitos numéricos.', 'warning');
         return;
     }
-    
-    $('#btnRegisterMeta').html('<i class="fa-solid fa-spinner fa-spin"></i>').prop('disabled', true);
-    
-    $.post('back_configuracion.php', {
-        action: 'register_meta_phone',
-        phone_id: phone_id,
-        pin: pin
-    }, function(res) {
-        $('#btnRegisterMeta').html('<i class="fa-solid fa-check-circle me-1"></i> Dar Alta').prop('disabled', false);
-        
-        if(res.status === 'success') {
-            Swal.fire('¡Dado de Alta!', res.message, 'success');
-            // Auto fill the local CRM registration fields below
-            $('#api_telefono_meta').val(phone_id);
-            // Switch to existing mode since it's now registered
-            $('#api_type_existing').prop('checked', true);
-            toggleApiExperience();
-        } else {
-            Swal.fire('Error', res.message || 'Error al registrar el número en Meta.', 'error');
+    if (!acquireCfgLock('reg_meta_phone', $btn, '<i class="fa-solid fa-spinner fa-spin"></i>')) return;
+
+    $.ajax({
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
+        data: { action: 'register_meta_phone', phone_id: phone_id, pin: pin },
+        success: function (res) {
+            if (res && res.status === 'success') {
+                Swal.fire('¡Dado de Alta!', res.message, 'success');
+                $('#api_telefono_meta').val(phone_id);
+                $('#api_type_existing').prop('checked', true);
+                toggleApiExperience();
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'Error al registrar el número en Meta.', 'error');
+            }
+        },
+        error: function (xhr) {
+            const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Error de conexión con el servidor local.';
+            Swal.fire('Error', msg, 'error');
+        },
+        complete: function () {
+            releaseCfgLock('reg_meta_phone', $btn, '<i class="fa-solid fa-check-circle me-1"></i> Dar Alta');
         }
-    }, 'json').fail(function() {
-        $('#btnRegisterMeta').html('<i class="fa-solid fa-check-circle me-1"></i> Dar Alta').prop('disabled', false);
-        Swal.fire('Error', 'Error de conexión con el servidor local.', 'error');
     });
 }
 
-// --- GESTIÓN DE RESPUESTAS RÁPIDAS ---
+// ============================================================================
+// GESTIÓN DE RESPUESTAS RÁPIDAS
+// ============================================================================
 function loadRespuestasRapidas() {
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'load_respuestas_rapidas' },
-        success: function(res) {
-            if(res.status === 'success') {
-                let container = $('#respuestasContainer');
+        success: function (res) {
+            if (res && res.status === 'success') {
+                const container = $('#respuestasContainer');
                 container.empty();
-                if(res.data.length === 0){
+                const list = res.data || [];
+                if (list.length === 0) {
                     container.append('<div class="col-12 text-center text-muted p-4">No hay respuestas rápidas registradas.</div>');
                     return;
                 }
-                res.data.forEach(r => {
-                    let card = `
+                list.forEach(r => {
+                    const rid = parseInt(r.id, 10) || 0;
+                    const card = `
                     <div class="col-md-4">
                         <div class="card h-100 shadow-sm border-0" style="border-radius: 10px;">
                             <div class="card-header bg-white border-0 pt-3 pb-0">
-                                <h6 class="mb-0 fw-bold text-dark"><i class="fa-solid fa-bolt text-warning me-2"></i>${r.titulo}</h6>
-                                <small class="text-muted"><i class="fa-solid fa-building me-1"></i>${r.nombre_sede || 'Sede no asignada'}</small>
+                                <h6 class="mb-0 fw-bold text-dark"><i class="fa-solid fa-bolt text-warning me-2"></i>${escapeHtmlConfig(r.titulo)}</h6>
+                                <small class="text-muted"><i class="fa-solid fa-building me-1"></i>${escapeHtmlConfig(r.nombre_sede || 'Sede no asignada')}</small>
                             </div>
                             <div class="card-body">
-                                <p class="text-muted mb-0" style="font-size: 0.9rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">${r.mensaje}</p>
+                                <p class="text-muted mb-0" style="font-size: 0.9rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">${escapeHtmlConfig(r.mensaje)}</p>
                             </div>
                             <div class="card-footer bg-white border-top-0 p-0">
                                 <div class="d-flex border-top">
-                                    <button class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn" title="Editar" onclick="editarRespuestaRapida(${r.id})"><i class="fa-solid fa-pen"></i></button>
-                                    <button class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn" title="Eliminar" onclick="borrarRespuestaRapida(${r.id})"><i class="fa-solid fa-trash"></i></button>
+                                    <button type="button" class="btn btn-link text-primary text-decoration-none flex-fill border-end rounded-0 py-2 action-btn btn-resp-edit" data-id="${rid}" title="Editar"><i class="fa-solid fa-pen"></i></button>
+                                    <button type="button" class="btn btn-link text-danger text-decoration-none flex-fill rounded-0 py-2 action-btn btn-resp-del" data-id="${rid}" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
                                 </div>
                             </div>
                         </div>
@@ -1790,92 +2297,135 @@ function loadRespuestasRapidas() {
 }
 
 function addRespuestaRapida() {
-    $('#formRespuesta')[0].reset();
+    if (!acquireCfgLock('open_add_resp')) return;
+    if ($('#formRespuesta').length) $('#formRespuesta')[0].reset();
     $('#id_respuesta').val('');
-    
+
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'get_sedes_list' },
-        success: function(res) {
-            if(res.status === 'success'){
-                let select = $('#resp_id_sede');
+        success: function (res) {
+            if (res && res.status === 'success') {
+                const select = $('#resp_id_sede');
                 select.html('<option value="">Seleccione una sede...</option>');
-                res.data.forEach(s => {
-                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                (res.data || []).forEach(s => {
+                    select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
                 });
-                
+                if (!isMasterConfigUser && (res.data || []).length === 1) {
+                    select.val(String(res.data[0].id));
+                }
+
                 $('#modalRespuestaRapida .modal-title').html('<i class="fa-solid fa-bolt text-warning me-2"></i>Nueva Respuesta Rápida');
-                var myModal = new bootstrap.Modal(document.getElementById('modalRespuestaRapida'));
-                myModal.show();
+                const modalEl = document.getElementById('modalRespuestaRapida');
+                if (modalEl) {
+                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                }
             }
+        },
+        complete: function () {
+            releaseCfgLock('open_add_resp');
         }
     });
 }
 
-function editarRespuestaRapida(id) {
+function editarRespuestaRapida(id, $btn) {
+    if (!acquireCfgLock('edit_resp_' + id, $btn)) return;
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: { action: 'get_sedes_list' },
-        success: function(resSedes) {
-            if(resSedes.status === 'success'){
-                let select = $('#resp_id_sede');
+        success: function (resSedes) {
+            if (resSedes && resSedes.status === 'success') {
+                const select = $('#resp_id_sede');
                 select.html('<option value="">Seleccione una sede...</option>');
-                resSedes.data.forEach(s => {
-                    select.append(`<option value="${s.id}">${s.nombre_sede}</option>`);
+                (resSedes.data || []).forEach(s => {
+                    select.append(`<option value="${parseInt(s.id, 10) || 0}">${escapeHtmlConfig(s.nombre_sede)}</option>`);
                 });
-                
+
                 $.ajax({
-                    url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+                    url: 'back_configuracion.php',
+                    type: 'POST',
+                    dataType: 'json',
                     data: { action: 'get_respuesta_rapida', id: id },
-                    success: function(res) {
-                        if(res.status === 'success' && res.data) {
+                    success: function (res) {
+                        if (res && res.status === 'success' && res.data) {
                             const r = res.data;
                             $('#id_respuesta').val(r.id);
                             $('#resp_id_sede').val(r.id_sede);
                             $('#resp_titulo').val(r.titulo);
                             $('#resp_mensaje').val(r.mensaje);
-                            
+
                             $('#modalRespuestaRapida .modal-title').html('<i class="fa-solid fa-bolt text-warning me-2"></i>Editar Respuesta Rápida');
-                            var myModal = new bootstrap.Modal(document.getElementById('modalRespuestaRapida'));
-                            myModal.show();
+                            const modalEl = document.getElementById('modalRespuestaRapida');
+                            if (modalEl) {
+                                bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                            }
+                        } else {
+                            Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo cargar la respuesta.', 'error');
                         }
+                    },
+                    complete: function () {
+                        releaseCfgLock('edit_resp_' + id, $btn);
                     }
                 });
+            } else {
+                releaseCfgLock('edit_resp_' + id, $btn);
             }
+        },
+        error: function () {
+            releaseCfgLock('edit_resp_' + id, $btn);
         }
     });
 }
 
-$('#btnSaveRespuesta').on('click', function() {
-    if (!$('#resp_id_sede').val() || !$('#resp_titulo').val() || !$('#resp_mensaje').val()) {
-        Swal.fire('Error', 'Complete todos los campos obligatorios (*)', 'warning'); return;
+$(document).on('click', '#btnSaveRespuesta', function () {
+    const $btn = $(this);
+    if (!$('#resp_id_sede').val() || !($('#resp_titulo').val() || '').trim() || !($('#resp_mensaje').val() || '').trim()) {
+        Swal.fire('Error', 'Complete todos los campos obligatorios (*)', 'warning');
+        return;
     }
+    if (!acquireCfgLock('save_resp', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
 
     const data = {
         action: 'save_respuesta_rapida',
         id_respuesta: $('#id_respuesta').val(),
         id_sede: $('#resp_id_sede').val(),
-        titulo: $('#resp_titulo').val().trim(),
-        mensaje: $('#resp_mensaje').val().trim()
+        titulo: ($('#resp_titulo').val() || '').trim(),
+        mensaje: ($('#resp_mensaje').val() || '').trim()
     };
 
     $.ajax({
-        url: 'back_configuracion.php', type: 'POST', dataType: 'json',
+        url: 'back_configuracion.php',
+        type: 'POST',
+        dataType: 'json',
         data: data,
-        success: function(res) {
-            if(res.status === 'success'){
-                bootstrap.Modal.getInstance(document.getElementById('modalRespuestaRapida')).hide();
+        success: function (res) {
+            if (res && res.status === 'success') {
+                const inst = bootstrap.Modal.getInstance(document.getElementById('modalRespuestaRapida'));
+                if (inst) inst.hide();
                 Swal.fire('Éxito', res.message, 'success');
                 loadRespuestasRapidas();
-            } else { Swal.fire('Error', res.message, 'error'); }
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'Error al guardar.', 'error');
+            }
+        },
+        error: function () {
+            Swal.fire('Error', 'Fallo de red al guardar la respuesta rápida.', 'error');
+        },
+        complete: function () {
+            releaseCfgLock('save_resp', $btn, 'Guardar Respuesta');
         }
     });
 });
 
-function borrarRespuestaRapida(id) {
+function borrarRespuestaRapida(id, $btn) {
+    if (cfgInFlight.has('del_resp_' + id)) return;
     Swal.fire({
         title: '¿Estás seguro?',
-        text: "Esta respuesta rápida se eliminará permanentemente.",
+        text: 'Esta respuesta rápida se eliminará permanentemente.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#d33',
@@ -1883,20 +2433,28 @@ function borrarRespuestaRapida(id) {
         confirmButtonText: 'Sí, borrar',
         cancelButtonText: 'Cancelar'
     }).then((result) => {
-        if (result.isConfirmed) {
-            $.ajax({
-                url: 'back_configuracion.php', type: 'POST', dataType: 'json',
-                data: { action: 'delete_respuesta_rapida', id: id },
-                success: function(res) {
-                    if(res.status === 'success') {
-                        Swal.fire('Eliminado', res.message, 'success');
-                        loadRespuestasRapidas();
-                    } else {
-                        Swal.fire('Error', res.message, 'error');
-                    }
+        if (!result.isConfirmed) return;
+        if (!acquireCfgLock('del_resp_' + id, $btn)) return;
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'delete_respuesta_rapida', id: id },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire('Eliminado', res.message, 'success');
+                    loadRespuestasRapidas();
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo eliminar.', 'error');
                 }
-            });
-        }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión al eliminar.', 'error');
+            },
+            complete: function () {
+                releaseCfgLock('del_resp_' + id, $btn);
+            }
+        });
     });
 }
 
@@ -1908,7 +2466,6 @@ let slaSedesPopulated = false;
 $(document).ready(function () {
     loadSlaSettingsModule(0);
 
-    // Soporte de enlace directo ?tab=sla desde la Bandeja Omnicanal
     const sp = new URLSearchParams(window.location.search);
     if (sp.get('tab') === 'sla') {
         const slaTabEl = document.getElementById('sla-tab');
@@ -1926,6 +2483,7 @@ $(document).ready(function () {
     });
 
     $('#btnSaveSlaSettings').on('click', function () {
+        const $btn = $(this);
         const sedeId = parseInt($('#cfgSlaSedeSelect').val() || '0', 10);
         const verdeMin = parseInt($('#cfgSlaVerdeMin').val() || '5', 10);
         const amarilloMin = parseInt($('#cfgSlaAmarilloMin').val() || '15', 10);
@@ -1936,37 +2494,43 @@ $(document).ready(function () {
             Swal.fire('Validación SLA', 'El límite para Rojo Crítico debe ser mayor que el tiempo máximo en Verde.', 'warning');
             return;
         }
+        if (!acquireCfgLock('save_sla', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
 
-        const btn = $(this);
-        btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
-        $.post('back_configuracion.php', {
-            action: 'save_sla_settings',
-            id_sede: sedeId,
-            verde_max_min: verdeMin,
-            amarillo_max_min: amarilloMin,
-            round_robin_online_min: rrMin,
-            alerta_sonora_activa: snd
-        }, function (res) {
-            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA');
-            if (res && res.status === 'success') {
-                Swal.fire({ icon: 'success', title: 'Guardado', text: res.message, timer: 2200, showConfirmButton: false });
-                loadSlaSettingsModule(sedeId);
-            } else {
-                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar.', 'error');
+        $.ajax({
+            url: 'back_configuracion.php',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'save_sla_settings',
+                id_sede: sedeId,
+                verde_max_min: verdeMin,
+                amarillo_max_min: amarilloMin,
+                round_robin_online_min: rrMin,
+                alerta_sonora_activa: snd
+            },
+            success: function (res) {
+                if (res && res.status === 'success') {
+                    Swal.fire({ icon: 'success', title: 'Guardado', text: res.message, timer: 2200, showConfirmButton: false });
+                    loadSlaSettingsModule(sedeId);
+                } else {
+                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo guardar.', 'error');
+                }
+            },
+            error: function (xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Fallo de red al guardar los tiempos SLA.';
+                Swal.fire('Error', msg, 'error');
+            },
+            complete: function () {
+                releaseCfgLock('save_sla', $btn, '<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA');
             }
-        }, 'json').fail(function () {
-            btn.prop('disabled', false).html('<i class="fa-solid fa-floppy-disk me-1"></i> Guardar Configuración SLA');
-            Swal.fire('Error', 'Fallo de red al guardar los tiempos SLA.', 'error');
         });
     });
 
     $('#btnResetSlaOverride').on('click', function () {
         const $btn = $(this);
-        if ($btn.prop('disabled')) return;
+        if (cfgInFlight.has('reset_sla') || $btn.prop('disabled')) return;
         const sedeId = parseInt($('#cfgSlaSedeSelect').val() || '0', 10);
         if (sedeId <= 0) return;
-        $btn.prop('disabled', true);
-        const origHtml = $btn.html();
 
         Swal.fire({
             title: '¿Restaurar a Regla Global?',
@@ -1976,20 +2540,24 @@ $(document).ready(function () {
             confirmButtonText: 'Sí, restaurar',
             cancelButtonText: 'Cancelar'
         }).then((r) => {
-            if (!r.isConfirmed) {
-                $btn.prop('disabled', false);
-                return;
-            }
-            $btn.html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Restaurando...');
-            $.post('back_configuracion.php', { action: 'reset_sla_sede', id_sede: sedeId }, function (res) {
-                if (res && res.status === 'success') {
-                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 2200 });
-                    loadSlaSettingsModule(sedeId);
-                } else {
-                    Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo restaurar.', 'error');
+            if (!r.isConfirmed) return;
+            if (!acquireCfgLock('reset_sla', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Restaurando...')) return;
+            $.ajax({
+                url: 'back_configuracion.php',
+                type: 'POST',
+                dataType: 'json',
+                data: { action: 'reset_sla_sede', id_sede: sedeId },
+                success: function (res) {
+                    if (res && res.status === 'success') {
+                        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: res.message, showConfirmButton: false, timer: 2200 });
+                        loadSlaSettingsModule(sedeId);
+                    } else {
+                        Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo restaurar.', 'error');
+                    }
+                },
+                complete: function () {
+                    releaseCfgLock('reset_sla', $btn, '<i class="fa-solid fa-rotate-left me-1"></i> Restaurar a Regla Global');
                 }
-            }, 'json').always(function () {
-                $btn.prop('disabled', false).html(origHtml);
             });
         });
     });
@@ -2022,7 +2590,7 @@ function loadSlaSettingsModule(targetSede) {
                 $sel.append('<option value="0">🌎 Regla Global por Defecto (Todas las Sedes)</option>');
             }
             (res.sedes || []).forEach(s => {
-                $sel.append(`<option value="${parseInt(s.id, 10) || 0}">🏢 ${escapeHtml(s.nombre_sede)}</option>`);
+                $sel.append(`<option value="${parseInt(s.id, 10) || 0}">🏢 ${escapeHtmlConfig(s.nombre_sede)}</option>`);
             });
             if (!res.is_master && res.user_sede > 0) {
                 $sel.val(String(res.user_sede)).prop('disabled', true);
@@ -2062,8 +2630,8 @@ function loadSlaSettingsModule(targetSede) {
             const a = parseInt(r.amarillo_max_min || 15, 10);
             const activeCls = (sid === reqSede) ? 'table-active fw-bold' : '';
             $tbody.append(`
-                <tr class="${activeCls}" style="cursor:pointer;" onclick="window.selectSlaRuleRow(${sid})">
-                    <td>${escapeHtml(r.ambito_nombre)}</td>
+                <tr class="sla-rule-row ${activeCls}" data-sede-id="${sid}" style="cursor:pointer;">
+                    <td>${escapeHtmlConfig(r.ambito_nombre)}</td>
                     <td class="text-center text-success fw-bold">&lt;${v}m</td>
                     <td class="text-center text-warning-emphasis fw-bold">${v}-${a}m</td>
                     <td class="text-center text-danger fw-bold">&gt;${a}m</td>

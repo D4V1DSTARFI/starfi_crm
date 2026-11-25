@@ -1,3 +1,4 @@
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
     <!-- Modal Añadir Sede -->
     <div class="modal fade" id="modalSede" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -122,9 +123,15 @@
                                 <small class="text-muted d-block mt-1">Requerido para autocompletar números.</small>
                             </div>
                             
-                            <div class="col-12 d-none">
-                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Token de Meta (Permanente) <span class="text-danger">*</span></label>
-                                <textarea class="form-control form-control-premium" id="api_token_meta" name="api_token_meta" rows="2" placeholder="EAAxxxxxxxxxx..." style="font-family: monospace;"></textarea>
+                            <div class="col-12">
+                                <label class="form-label text-muted fw-bold text-uppercase" style="font-size: 0.75rem;">Token de Meta (Permanente / Opcional)</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control form-control-premium border-end-0" id="api_token_meta" name="api_token_meta" autocomplete="new-password" placeholder="Deje vacío para usar Token Global (.env) o ingrese EAA..." style="font-family: monospace;">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('api_token_meta')">
+                                        <i class="fa-solid fa-eye" id="api_token_meta_eye"></i>
+                                    </button>
+                                </div>
+                                <small class="text-muted d-block mt-1"><i class="fa-solid fa-shield-halved text-success me-1"></i> Si ya existe un token configurado, deje este campo vacío para mantenerlo intacto.</small>
                             </div>
 
                             <!-- Campos exclusivos para Alta (Número Nuevo) -->
@@ -229,7 +236,7 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                 </div>
                 <div class="modal-footer border-top-0 p-4 pt-0">
                     <button type="button" class="btn btn-light fw-bold" style="border-radius: 10px; padding: 10px 20px;" data-bs-dismiss="modal">Cerrar</button>
-                    <button type="button" class="btn btn-info text-white fw-bold shadow-sm" style="border-radius: 10px; padding: 10px 20px;" onclick="ejecutarPruebaAPI()">
+                    <button type="button" id="btnEjecutarPruebaAPI" class="btn btn-info text-white fw-bold shadow-sm" style="border-radius: 10px; padding: 10px 20px;" onclick="ejecutarPruebaAPI()">
                         <i class="fa-solid fa-paper-plane me-1"></i> Enviar Prueba
                     </button>
                 </div>
@@ -247,19 +254,19 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                 </div>
                 <div class="modal-body p-4 bg-light">
                     <input type="hidden" id="plantillas_id_sede">
-                    <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
                         <h6 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-muted me-2"></i>Lista de Plantillas Sincronizadas</h6>
                         <div>
-                            <button type="button" class="btn btn-success shadow-sm rounded-pill fw-bold me-2" onclick="sincronizarPlantillasMeta()">
+                            <button type="button" id="btnSyncPlantillasMeta" class="btn btn-success shadow-sm rounded-pill fw-bold me-2" onclick="sincronizarPlantillasMeta()">
                                 <i class="fa-solid fa-rotate me-1"></i> Sincronizar Plantillas
                             </button>
-                            <button type="button" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
+                            <button type="button" id="btnAutoCrearCSAT" class="btn btn-warning shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaCSAT()">
                                 <i class="fa-solid fa-star me-1"></i> Auto-Crear Plantilla CSAT
                             </button>
-                            <button type="button" class="btn btn-info text-white shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaNotificacionInterna()">
+                            <button type="button" id="btnAutoCrearNotifInterna" class="btn btn-info text-white shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaNotificacionInterna()">
                                 <i class="fa-solid fa-bell me-1"></i> Auto-Crear Plantilla Notificación Interna
                             </button>
-                            <button type="button" class="btn btn-dark shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaDifusionDirecta()">
+                            <button type="button" id="btnAutoCrearDifusion" class="btn btn-dark shadow-sm rounded-pill fw-bold me-2" onclick="crearPlantillaDifusionDirecta()">
                                 <i class="fa-solid fa-bullhorn text-warning me-1"></i> Auto-Crear Plantilla Difusión
                             </button>
                             <button type="button" class="btn btn-primary shadow-sm rounded-pill fw-bold" onclick="mostrarCrearPlantilla()">
@@ -322,7 +329,7 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                                     </div>
                                     <div class="mt-4 pt-3 border-top text-end">
                                         <button type="button" class="btn btn-light rounded-pill px-4 me-2 fw-bold" onclick="mostrarListaPlantillas()">Cancelar</button>
-                                        <button type="button" class="btn btn-success rounded-pill px-4 fw-bold shadow-sm" onclick="guardarNuevaPlantilla()">Enviar a Meta</button>
+                                        <button type="button" id="btnGuardarNuevaPlantilla" class="btn btn-success rounded-pill px-4 fw-bold shadow-sm" onclick="guardarNuevaPlantilla()">Enviar a Meta</button>
                                     </div>
                                 </form>
                             </div>
@@ -370,7 +377,7 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
         </div>
     </div>
 
-    <!-- Modal Selector Local Offline de Coordenadas GPS Venezuela (100% LAN) -->
+    <!-- Modal Selector Local Offline de Coordenadas GPS Venezuela (100% LAN HTML5 Canvas) -->
     <div class="modal fade" id="modalMapPicker" tabindex="-1" aria-labelledby="modalMapPickerLabel" aria-hidden="true" style="z-index: 1060;">
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content border-0 shadow-lg" style="border-radius: 16px; overflow: hidden;">
@@ -381,7 +388,7 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                         </div>
                         <div>
                             <h5 class="modal-title fw-bold text-white mb-0" id="modalMapPickerLabel" style="font-size: 1.1rem;">Selector Local de Coordenadas GPS (Offline LAN)</h5>
-                            <small class="text-white-50" style="font-size: 0.75rem;">Busca una ciudad de Venezuela, haz clic en el plano o edita Latitud y Longitud directamente.</small>
+                            <small class="text-white-50" style="font-size: 0.75rem;">Busca una ciudad de Venezuela, haz clic o arrastra sobre el plano vectorial o edita Latitud y Longitud.</small>
                         </div>
                     </div>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -409,8 +416,15 @@ Si recibes este mensaje, la configuración es correcta.</textarea>
                             </div>
                         </div>
 
-                        <!-- Contenedor Interactivo Local (Canvas Grid + Venezuela) -->
-                        <div id="leafletMapContainer" style="height: 360px; width: 100%; z-index: 1; background-color: #E2E8F0;"></div>
+                        <!-- Contenedor Interactivo Local (HTML5 Canvas Nativo + Venezuela) -->
+                        <div id="offlineMapCanvasWrap" class="position-relative" style="height: 360px; width: 100%; background-color: #E2E8F0; overflow: hidden; user-select: none;">
+                            <canvas id="offlineMapCanvas" style="display: block; width: 100%; height: 100%; cursor: crosshair;"></canvas>
+                            <div class="position-absolute top-0 end-0 m-2 d-flex flex-column gap-1" style="z-index: 5;">
+                                <button type="button" class="btn btn-sm btn-light border shadow-sm fw-bold" title="Acercar" onclick="ajustarZoomMapaOffline(1.35)" style="width: 34px; height: 34px;">+</button>
+                                <button type="button" class="btn btn-sm btn-light border shadow-sm fw-bold" title="Alejar" onclick="ajustarZoomMapaOffline(0.74)" style="width: 34px; height: 34px;">−</button>
+                                <button type="button" class="btn btn-sm btn-light border shadow-sm" title="Vista completa de Venezuela" onclick="resetVistaMapaOffline()" style="width: 34px; height: 34px;"><i class="fa-solid fa-expand"></i></button>
+                            </div>
+                        </div>
 
                         <!-- Barra de Coordenadas Editables en Vivo -->
                         <div class="p-3 bg-white border-top" style="font-size: 0.85rem;">

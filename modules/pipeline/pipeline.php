@@ -21,14 +21,20 @@ $sedes = [];
 $nombre_sede_propia = 'Sede Principal';
 if ($con) {
     starfi_ensure_sprint2_schema($con);
-    $rS = $con->query("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
-    if ($rS) {
-        while ($row = $rS->fetch_assoc()) {
-            $sedes[] = $row;
-            if (intval($row['id']) === $id_sede_agente) {
-                $nombre_sede_propia = $row['nombre_sede'];
+    $stmtSedes = $con->prepare("SELECT id, nombre_sede FROM sedes WHERE estado = 'ACTIVO' ORDER BY nombre_sede ASC");
+    if ($stmtSedes && $stmtSedes->execute()) {
+        $rS = $stmtSedes->get_result();
+        if ($rS) {
+            while ($row = $rS->fetch_assoc()) {
+                $sedes[] = $row;
+                if (intval($row['id']) === $id_sede_agente) {
+                    $nombre_sede_propia = $row['nombre_sede'];
+                }
             }
         }
+        $stmtSedes->close();
+    } elseif ($stmtSedes) {
+        $stmtSedes->close();
     }
 }
 ?>
@@ -385,7 +391,7 @@ if ($con) {
                     </select>
 
                     <div class="position-relative">
-                        <input type="text" id="pipeSearchInput"
+                        <input type="text" id="pipeSearchInput" autocomplete="off"
                             class="form-control form-control-sm pipeline-filter-control ps-4"
                             placeholder="Buscar cliente, teléfono, producto..." style="min-width:230px;">
                         <i class="fa-solid fa-magnifying-glass position-absolute"
@@ -560,7 +566,10 @@ if ($con) {
         </div>
     </div>
 
-    <?php require __DIR__ . '/modals_pipeline.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_pipeline.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>

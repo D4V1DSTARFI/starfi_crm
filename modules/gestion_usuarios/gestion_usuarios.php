@@ -243,7 +243,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                         <div class="search-bar-modern">
                             <i class="fa-solid fa-search text-muted"></i>
-                            <input type="text" id="searchInput" placeholder="Buscar por nombre, usuario..." onkeyup="renderUsersTable()">
+                            <input type="text" id="searchInput" autocomplete="off" placeholder="Buscar por nombre, usuario..." onkeyup="renderUsersTable()">
                         </div>
                     </div>
 
@@ -275,7 +275,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </main>
     </div>
 
-    <?php require __DIR__ . '/modals_gestion_usuarios.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_gestion_usuarios.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>

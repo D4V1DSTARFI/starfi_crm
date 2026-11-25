@@ -1,3 +1,4 @@
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
     <!-- Modal Perfil 360 -->
     <div class="modal fade" id="modalProfile360" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">

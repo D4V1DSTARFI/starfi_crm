@@ -1,8 +1,4 @@
-<?php
-/**
- * Modales del Módulo de Gestión de Roles y Permisos - STARFI CRM
- */
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
 <div class="modal fade" id="modalRoleInfo" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
@@ -20,7 +16,7 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="submitRoleModal()">Crear Rol</button>
+                <button type="button" id="btnSubmitRoleModal" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="submitRoleModal(this)">Crear Rol</button>
             </div>
         </div>
     </div>

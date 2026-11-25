@@ -1068,3 +1068,43 @@ if (!function_exists('starfi_assign_round_robin_advisor')) {
         }
     }
 }
+
+if (!function_exists('starfi_persist_media_cache')) {
+    /**
+     * Persiste la ruta local cacheada de un archivo multimedia WABA y audita la operación (CHK-ARC-02 / CHK-SEC-04).
+     */
+    function starfi_persist_media_cache($con, $chat_id, $media_id, $local_url, $agente_id = null, $id_sede = null) {
+        if (!($con instanceof mysqli)) {
+            return false;
+        }
+        $cid = intval($chat_id);
+        $mid = trim((string)$media_id);
+        $url = trim((string)$local_url);
+        if ($cid <= 0 || $mid === '' || $url === '') {
+            return false;
+        }
+        $stmtUpd = $con->prepare("UPDATE `mensajes_y_eventos` SET `url_archivo` = ? WHERE `id_conversacion` = ? AND `url_archivo` = ?");
+        if (!$stmtUpd) {
+            return false;
+        }
+        $stmtUpd->bind_param("sis", $url, $cid, $mid);
+        $ok = $stmtUpd->execute();
+        $affected = $stmtUpd->affected_rows;
+        $stmtUpd->close();
+
+        if ($ok && $affected > 0) {
+            require_once __DIR__ . '/audit.php';
+            registrar_auditoria(
+                'bandeja',
+                'CACHE_MEDIA_WABA',
+                "Materialización de caché local multimedia WABA en conversación #{$cid}",
+                ['url_archivo' => $mid],
+                ['id_conversacion' => $cid, 'url_archivo' => $url],
+                $con,
+                $agente_id,
+                $id_sede
+            );
+        }
+        return (bool)$ok;
+    }
+}

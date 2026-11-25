@@ -4,13 +4,15 @@
 // 100% mysqli_prepare() + cero fugas SQL + bitácora formal starfi_log_exception().
 
 @ini_set('display_errors', '0');
+header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../core/audit.php';
+
 requireAuth();
 requirePermission('dashboard');
+
 $agente_dashboard = getAgenteInfo();
 session_write_close();
-header('Content-Type: application/json; charset=utf-8');
 
 $con = getDbConnection();
 if (!$con) {
@@ -26,13 +28,25 @@ $dash_db_hash = starfi_db_schema_hash($con);
 $dash_idx_flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_dash_idx_v3_' . $dash_db_hash . '.flag';
 $in_active_tx = function_exists('starfi_tx_is_active') && starfi_tx_is_active($con);
 if (!$in_active_tx && !file_exists($dash_idx_flag)) {
-    $chkIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
-    if ($chkIdx && $chkIdx->num_rows === 0) {
-        @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_msg_pagado_ts (es_pagado, timestamp)");
+    $stmtIdx1 = @$con->prepare("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_msg_pagado_ts'");
+    if ($stmtIdx1 && $stmtIdx1->execute()) {
+        $rIdx1 = $stmtIdx1->get_result();
+        $hasIdx1 = ($rIdx1 && $rIdx1->num_rows > 0);
+        $stmtIdx1->close();
+        if (!$hasIdx1) {
+            $stAlt1 = @$con->prepare("ALTER TABLE mensajes_y_eventos ADD INDEX idx_msg_pagado_ts (es_pagado, timestamp)");
+            if ($stAlt1) { @$stAlt1->execute(); $stAlt1->close(); }
+        }
     }
-    $chkWamidIdx = @$con->query("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_meta_wamid'");
-    if ($chkWamidIdx && $chkWamidIdx->num_rows === 0) {
-        @$con->query("ALTER TABLE mensajes_y_eventos ADD INDEX idx_meta_wamid (id_mensaje_meta(100))");
+    $stmtIdx2 = @$con->prepare("SHOW INDEX FROM mensajes_y_eventos WHERE Key_name = 'idx_meta_wamid'");
+    if ($stmtIdx2 && $stmtIdx2->execute()) {
+        $rIdx2 = $stmtIdx2->get_result();
+        $hasIdx2 = ($rIdx2 && $rIdx2->num_rows > 0);
+        $stmtIdx2->close();
+        if (!$hasIdx2) {
+            $stAlt2 = @$con->prepare("ALTER TABLE mensajes_y_eventos ADD INDEX idx_meta_wamid (id_mensaje_meta(100))");
+            if ($stAlt2) { @$stAlt2->execute(); $stAlt2->close(); }
+        }
     }
     @file_put_contents($dash_idx_flag, date('c'));
 }
@@ -104,11 +118,9 @@ switch ($action) {
         $where_sql = count($where_clauses) > 0 ? (" WHERE " . implode(" AND ", $where_clauses)) : "";
         $cerrados_where = ($where_sql === "") ? " WHERE c.estado = 'CERRADO'" : ($where_sql . " AND c.estado = 'CERRADO'");
 
-        // Verificar columnas opcionales en conversaciones y clientes_contactos para compatibilidad entre esquemas
-        $colsConvRes = @$con->query("SHOW COLUMNS FROM `conversaciones`");
         $convCols = [];
-        if ($colsConvRes) {
-            while ($rc = $colsConvRes->fetch_assoc()) {
+        foreach (dash_fetch_all_prepared($con, "SHOW COLUMNS FROM `conversaciones`") as $rc) {
+            if (!empty($rc['Field'])) {
                 $convCols[$rc['Field']] = true;
             }
         }
@@ -164,17 +176,15 @@ switch ($action) {
         $gasto_real_total = 0.0;
         $camp_ids_periodo = [];
 
-        $chkCampTbl = @$con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-        if ($chkCampTbl && $chkCampTbl->num_rows > 0) {
-            $colsDestRes = @$con->query("SHOW COLUMNS FROM `campanas_difusion_destinatarios`");
+        $chkCampRows = dash_fetch_all_prepared($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
+        if (!empty($chkCampRows)) {
             $destCols = [];
-            if ($colsDestRes) {
-                while ($rd = $colsDestRes->fetch_assoc()) $destCols[$rd['Field']] = true;
+            foreach (dash_fetch_all_prepared($con, "SHOW COLUMNS FROM `campanas_difusion_destinatarios`") as $rd) {
+                if (!empty($rd['Field'])) $destCols[$rd['Field']] = true;
             }
-            $colsCdRes = @$con->query("SHOW COLUMNS FROM `campanas_difusion`");
             $cdCols = [];
-            if ($colsCdRes) {
-                while ($rcd = $colsCdRes->fetch_assoc()) $cdCols[$rcd['Field']] = true;
+            foreach (dash_fetch_all_prepared($con, "SHOW COLUMNS FROM `campanas_difusion`") as $rcd) {
+                if (!empty($rcd['Field'])) $cdCols[$rcd['Field']] = true;
             }
 
             $dateCampCol = isset($cdCols['fecha_creacion']) ? 'cd.fecha_creacion' : 'cd.created_at';
@@ -300,8 +310,8 @@ switch ($action) {
 
         // 5. Lead Scoring Promedio
         $avg_lead = 0;
-        $chkLeadCol = @$con->query("SHOW COLUMNS FROM `clientes_contactos` LIKE 'calificacion_calidad'");
-        if ($chkLeadCol && $chkLeadCol->num_rows > 0) {
+        $chkLeadRows = dash_fetch_all_prepared($con, "SHOW COLUMNS FROM `clientes_contactos` LIKE 'calificacion_calidad'");
+        if (!empty($chkLeadRows)) {
             $lead_query = "SELECT AVG(cc.calificacion_calidad) AS avg_score FROM clientes_contactos cc JOIN conversaciones c ON cc.id = c.id_cliente LEFT JOIN lineas_whatsapp lw ON c.id_linea = lw.id" . $cerrados_where . " AND cc.calificacion_calidad > 0";
             $leadRows = dash_fetch_all_prepared($con, $lead_query, $base_types, $base_params);
             if (!empty($leadRows) && $leadRows[0]['avg_score'] !== null) {
@@ -351,6 +361,38 @@ switch ($action) {
                 'chart_data'      => $chart_data,
                 'motivos_data'    => $motivos_data,
             ],
+        ]);
+        break;
+
+    case 'audit_export_excel':
+        $agente = $agente_dashboard;
+        $rol = strtoupper(trim((string)($agente['rol'] ?? 'AGENTE')));
+        $user_sede = intval($agente['id_sede'] ?? 0);
+        $is_master = ($rol === 'MASTER' || $rol === 'MASTER CI' || intval($agente['id'] ?? 0) === 1);
+
+        $fecha_ini = trim((string)($_POST['fecha_inicio'] ?? ($_POST['fecha_desde'] ?? '')));
+        $fecha_fin = trim((string)($_POST['fecha_fin'] ?? ($_POST['fecha_hasta'] ?? '')));
+        $req_sede  = trim((string)($_POST['id_sede'] ?? 'all'));
+        $sede_efectiva = (!$is_master && $user_sede > 0) ? (string)$user_sede : $req_sede;
+
+        registrar_auditoria(
+            'dashboard',
+            'EXPORTAR_KPI_EXCEL',
+            'Exportación ejecutiva de métricas y KPIs en libro Excel (.xlsx)',
+            null,
+            [
+                'fecha_inicio' => $fecha_ini,
+                'fecha_fin'    => $fecha_fin,
+                'id_sede'      => $sede_efectiva,
+            ],
+            $con,
+            intval($agente['id'] ?? 0),
+            $user_sede > 0 ? $user_sede : null
+        );
+
+        echo json_encode([
+            'status'  => 'success',
+            'message' => 'Exportación registrada en auditoría.',
         ]);
         break;
 

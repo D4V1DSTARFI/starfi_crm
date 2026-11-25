@@ -1,11 +1,20 @@
 <?php
-// get_media.php
-require_once __DIR__ . '/core/auth.php';
+/**
+ * Controlador Seguro de Transmisión y Caché Multimedia WABA — STARFI CRM (QA-STD-GLOBAL-2.1)
+ * - Exige sesión activa y permiso modular (bandeja o directorio).
+ * - Valida pertenencia estricta del archivo a id_conversacion e id_sede (Anti-IDOR Cross-Sede).
+ * - Lista blanca estricta de MIME seguros con finfo; fuerza application/octet-stream + attachment + nosniff
+ *   para cualquier otro formato (incluyendo text/html, image/svg+xml, text/xml, application/javascript).
+ */
 
-// Exigir sesión activa devolviendo HTTP 401 inmediato ante accesos sin sesión (ej. modo incógnito)
+@ini_set('display_errors', '0');
+require_once __DIR__ . '/core/auth.php';
+require_once __DIR__ . '/core/audit.php';
+
 if (!isset($_SESSION['agente_id']) || empty($_SESSION['agente_id'])) {
     http_response_code(401);
     header('Content-Type: text/plain; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
     exit('401 Unauthorized');
 }
 if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
@@ -13,52 +22,96 @@ if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 
     session_destroy();
     http_response_code(401);
     header('Content-Type: text/plain; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
     exit('401 Session Expired');
 }
 requireAuth();
 
+if (!hasPermission('bandeja') && !hasPermission('directorio')) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    exit('403 Forbidden');
+}
+
 $agente_info = getAgenteInfo();
 $agente_id = intval($agente_info['id'] ?? ($_SESSION['agente_id'] ?? 0));
-$rol_raw = strtoupper(trim($agente_info['rol'] ?? ''));
-$is_master = ($agente_id === 1 || $rol_raw === 'MASTER' || $rol_raw === 'MASTER CI');
-$is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE'));
+$rol_raw = strtoupper(trim((string)($agente_info['rol'] ?? '')));
+$is_master = ($agente_id === 1 || $rol_raw === 'MASTER');
+$is_admin = (!$is_master && ($rol_raw === 'ADMINISTRADOR' || $rol_raw === 'ADMIN' || $rol_raw === 'GERENTE' || $rol_raw === 'MASTER CI'));
 $is_operador = (!$is_master && !$is_admin);
 $user_sede = intval($agente_info['id_sede'] ?? 0);
 
 session_write_close();
 
-function stream_file($file, $content_type) {
-    if (!file_exists($file)) {
+/**
+ * Transmite un archivo aplicando lista blanca estricta de MIME seguros (CHK-SEC-03 / CHK-SEC-07).
+ *
+ * @param string      $file           Ruta física del archivo validado.
+ * @param string|null $requested_mime MIME sugerido (se revalida con finfo).
+ */
+function stream_file($file, $requested_mime = null) {
+    if (!is_file($file) || !is_readable($file)) {
         http_response_code(404);
+        header('X-Content-Type-Options: nosniff');
         exit;
+    }
+
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $detected_mime = strtolower(trim((string)($finfo->file($file) ?: 'application/octet-stream')));
+    $ext_lower = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
+    if ($ext_lower === 'ogg' && in_array($detected_mime, ['audio/ogg', 'application/ogg', 'video/ogg'], true)) {
+        $detected_mime = 'audio/ogg';
+    }
+
+    $safe_inline_mimes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'audio/ogg',
+        'video/mp4',
+        'application/pdf',
+    ];
+
+    if (in_array($detected_mime, $safe_inline_mimes, true)) {
+        $content_type = $detected_mime;
+        $disposition = 'inline';
+    } else {
+        $content_type = 'application/octet-stream';
+        $disposition = 'attachment';
     }
 
     $size = filesize($file);
     $length = $size;
     $start = 0;
-    $end = $size - 1;
+    $end = max(0, $size - 1);
+    $safe_dl_name = rawurlencode(basename($file));
 
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Security-Policy: default-src \'none\'; media-src \'self\'; img-src \'self\'; style-src \'none\'; script-src \'none\'; sandbox');
     header("Content-Type: $content_type");
-    header("Accept-Ranges: bytes");
-    header("Cache-Control: private, max-age=86400");
+    header("Content-Disposition: $disposition; filename=\"$safe_dl_name\"");
+    header('Accept-Ranges: bytes');
+    header('Cache-Control: private, max-age=86400');
 
-    if (isset($_SERVER['HTTP_RANGE'])) {
+    if ($size > 0 && isset($_SERVER['HTTP_RANGE'])) {
         $c_start = $start;
         $c_end = $end;
 
-        list(, $range) = explode('=', $_SERVER['HTTP_RANGE'], 2);
+        $parts = explode('=', $_SERVER['HTTP_RANGE'], 2);
+        $range = $parts[1] ?? '';
         if (strpos($range, ',') !== false) {
             header('HTTP/1.1 416 Requested Range Not Satisfiable');
             header("Content-Range: bytes $start-$end/$size");
             exit;
         }
 
-        if ($range == '-') {
-            $c_start = $size - substr($range, 1);
+        if ($range === '-') {
+            $c_start = $size - intval(substr($range, 1));
         } else {
-            $range = explode('-', $range);
-            $c_start = intval($range[0]);
-            $c_end = (isset($range[1]) && is_numeric($range[1])) ? intval($range[1]) : $size;
+            $range_arr = explode('-', $range);
+            $c_start = intval($range_arr[0]);
+            $c_end = (isset($range_arr[1]) && is_numeric($range_arr[1])) ? intval($range_arr[1]) : $end;
         }
 
         $c_end = ($c_end > $end) ? $end : $c_end;
@@ -82,23 +135,31 @@ function stream_file($file, $content_type) {
     header("Content-Length: $length");
 
     $fp = fopen($file, 'rb');
-    fseek($fp, $start);
-    $buffer_size = 1024 * 8; // 8kb
-    $bytes_sent = 0;
+    if ($fp) {
+        if ($start > 0) {
+            fseek($fp, $start);
+        }
+        $buffer_size = 1024 * 8;
+        $bytes_sent = 0;
 
-    while (!feof($fp) && ($bytes_sent < $length) && (connection_status() == 0)) {
-        $buffer = fread($fp, $buffer_size);
-        echo $buffer;
-        flush();
-        $bytes_sent += strlen($buffer);
+        while (!feof($fp) && ($bytes_sent < $length) && (connection_status() === 0)) {
+            $buffer = fread($fp, min($buffer_size, $length - $bytes_sent));
+            if ($buffer === false || $buffer === '') {
+                break;
+            }
+            echo $buffer;
+            flush();
+            $bytes_sent += strlen($buffer);
+        }
+        fclose($fp);
     }
-    fclose($fp);
     exit;
 }
 
 $con = getDbConnection();
 if (!$con) {
     http_response_code(500);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 
@@ -107,6 +168,7 @@ $chat_id = intval($_GET['chat_id'] ?? 0);
 
 if ($media_id === '' || $chat_id <= 0) {
     http_response_code(400);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 
@@ -120,6 +182,7 @@ $stmtChat = $con->prepare("
 ");
 if (!$stmtChat) {
     http_response_code(500);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 $stmtChat->bind_param("i", $chat_id);
@@ -130,14 +193,16 @@ $stmtChat->close();
 
 if (!$chatRow) {
     http_response_code(404);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 
+$chat_sede = intval($chatRow['id_sede'] ?? 0);
 if (!$is_master) {
-    $chat_sede = intval($chatRow['id_sede'] ?? 0);
     if ($user_sede <= 0 || $chat_sede !== $user_sede) {
         http_response_code(403);
         header('Content-Type: text/plain; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
         exit('403 Forbidden');
     }
     if ($is_operador) {
@@ -145,6 +210,7 @@ if (!$is_master) {
         if ($conv_agente !== $agente_id && $chatRow['estado'] !== 'ESPERA_ASIGNACION') {
             http_response_code(403);
             header('Content-Type: text/plain; charset=utf-8');
+            header('X-Content-Type-Options: nosniff');
             exit('403 Forbidden');
         }
     }
@@ -152,15 +218,55 @@ if (!$is_master) {
 
 $meta_token = trim((string)($chatRow['meta_token'] ?? ''));
 
-// 2. Si media_id ya es ruta local (formato heredado), servir validando que no salga de /assets/uploads/
+// 2. Si media_id apunta a ruta local o prefijo media_*, verificar pertenencia a id_conversacion ANTES de servir (Anti-IDOR)
 if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_') !== false) {
     $filename = basename(str_replace('\\', '/', $media_id));
+    if ($filename === '' || $filename === '.' || $filename === '..' || !preg_match('/^[A-Za-z0-9._-]+$/', $filename)) {
+        http_response_code(400);
+        header('X-Content-Type-Options: nosniff');
+        exit('400 Bad Request');
+    }
+
+    $like_upload = '%/assets/uploads/' . $filename;
+    $like_filename = '%' . $filename;
+    $extracted_meta_id = '';
+    if (preg_match('/^media_([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$/', $filename, $mOwn)) {
+        $extracted_meta_id = $mOwn[1];
+    }
+
+    $stmtOwn = $con->prepare("
+        SELECT id
+        FROM mensajes_y_eventos
+        WHERE id_conversacion = ?
+          AND (
+              url_archivo = ?
+              OR url_archivo LIKE ?
+              OR url_archivo LIKE ?
+              OR (? != '' AND url_archivo = ?)
+          )
+        LIMIT 1
+    ");
+    $belongs_to_chat = false;
+    if ($stmtOwn) {
+        $stmtOwn->bind_param("isssss", $chat_id, $media_id, $like_upload, $like_filename, $extracted_meta_id, $extracted_meta_id);
+        $stmtOwn->execute();
+        $resOwn = $stmtOwn->get_result();
+        $belongs_to_chat = ($resOwn && $resOwn->num_rows > 0);
+        $stmtOwn->close();
+    }
+
+    if (!$belongs_to_chat) {
+        http_response_code(403);
+        header('Content-Type: text/plain; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
+        exit('403 Forbidden');
+    }
+
+    $uploads_root = realpath(__DIR__ . '/assets/uploads');
     $direct_path = __DIR__ . '/assets/uploads/' . $filename;
-    if (file_exists($direct_path) && filesize($direct_path) > 200) {
-        $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
-        $mime_local = $finfo_loc->file($direct_path) ?: 'application/octet-stream';
-        if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-        stream_file($direct_path, $mime_local);
+    $real_direct = realpath($direct_path);
+    if ($real_direct && $uploads_root && strpos($real_direct, $uploads_root) === 0 && is_file($real_direct) && filesize($real_direct) > 0) {
+        stream_file($real_direct);
         exit;
     }
 
@@ -174,55 +280,67 @@ if (strpos($media_id, '/assets/uploads/') !== false || strpos($media_id, 'media_
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_TIMEOUT => 8
+            CURLOPT_TIMEOUT => 8,
         ]);
         $remBin = curl_exec($chRem);
         $remCode = curl_getinfo($chRem, CURLINFO_HTTP_CODE);
         curl_close($chRem);
-        if ($remCode === 200 && !empty($remBin) && strlen($remBin) > 200) {
-            if (!is_dir(__DIR__ . '/assets/uploads')) @mkdir(__DIR__ . '/assets/uploads', 0775, true);
+        if ($remCode === 200 && !empty($remBin) && strlen($remBin) > 0) {
+            if (!is_dir(__DIR__ . '/assets/uploads')) {
+                @mkdir(__DIR__ . '/assets/uploads', 0775, true);
+            }
             @file_put_contents($direct_path, $remBin);
-            $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
-            $mime_local = $finfo_loc->file($direct_path) ?: 'application/octet-stream';
-            if (strpos($direct_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-            stream_file($direct_path, $mime_local);
+            stream_file($direct_path);
             exit;
         }
     }
 
-    if (preg_match('/media_([0-9]+)/', $filename, $mIdMatch)) {
-        $media_id = $mIdMatch[1];
+    if ($extracted_meta_id !== '') {
+        $media_id = $extracted_meta_id;
     }
 }
 
-// 3. Verificar si ya fue cacheado en BD usando consulta preparada (0 concatenación SQL)
+// 3. Verificar que media_id pertenezca a esta conversación y revisar si ya fue cacheado en BD
 $like_media = '%' . $media_id . '%';
-$stmtCache = $con->prepare("SELECT url_archivo FROM mensajes_y_eventos WHERE id_conversacion = ? AND url_archivo LIKE ? LIMIT 1");
+$stmtCache = $con->prepare("
+    SELECT url_archivo
+    FROM mensajes_y_eventos
+    WHERE id_conversacion = ?
+      AND (url_archivo = ? OR url_archivo LIKE ?)
+    LIMIT 1
+");
+$found_in_chat = false;
 if ($stmtCache) {
-    $stmtCache->bind_param("is", $chat_id, $like_media);
+    $stmtCache->bind_param("iss", $chat_id, $media_id, $like_media);
     $stmtCache->execute();
     $resCache = $stmtCache->get_result();
     $rowCache = $resCache ? $resCache->fetch_assoc() : null;
     $stmtCache->close();
 
     if ($rowCache && !empty($rowCache['url_archivo'])) {
-        $url = $rowCache['url_archivo'];
+        $found_in_chat = true;
+        $url = (string)$rowCache['url_archivo'];
         if (strpos($url, '/assets/uploads/') !== false) {
             $safe_name = basename(substr($url, strpos($url, '/assets/uploads/') + strlen('/assets/uploads/')));
             $local_path = __DIR__ . '/assets/uploads/' . $safe_name;
-            if (file_exists($local_path) && filesize($local_path) > 200) {
-                $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
-                $mime_local = $finfo_loc->file($local_path) ?: 'application/octet-stream';
-                if (strpos($local_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-                stream_file($local_path, $mime_local);
+            if (is_file($local_path) && filesize($local_path) > 0) {
+                stream_file($local_path);
                 exit;
             }
         }
     }
 }
 
+if (!$found_in_chat) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    exit('403 Forbidden');
+}
+
 if ($meta_token === '' || $meta_token === 'temp_token') {
     http_response_code(404);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 
@@ -239,35 +357,43 @@ curl_setopt($ch, CURLOPT_TIMEOUT, 8);
 $response = curl_exec($ch);
 curl_close($ch);
 
-$media_info = json_decode($response, true);
+$media_info = json_decode((string)$response, true);
 if (!isset($media_info['url'])) {
     http_response_code(404);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
 $meta_media_url = $media_info['url'];
-$mime = $media_info['mime_type'] ?? 'application/octet-stream';
+$mime = strtolower(trim((string)($media_info['mime_type'] ?? 'application/octet-stream')));
 
 $ext = 'bin';
-if (strpos($mime, 'jpeg') !== false) $ext = 'jpg';
-else if (strpos($mime, 'png') !== false) $ext = 'png';
-else if (strpos($mime, 'webp') !== false) $ext = 'webp';
-else if (strpos($mime, 'ogg') !== false) $ext = 'ogg';
-else if (strpos($mime, 'pdf') !== false) $ext = 'pdf';
-else if (strpos($mime, 'mp4') !== false) $ext = 'mp4';
+if ($mime === 'image/jpeg') {
+    $ext = 'jpg';
+} elseif ($mime === 'image/png') {
+    $ext = 'png';
+} elseif ($mime === 'image/webp') {
+    $ext = 'webp';
+} elseif (strpos($mime, 'ogg') !== false) {
+    $ext = 'ogg';
+} elseif ($mime === 'application/pdf') {
+    $ext = 'pdf';
+} elseif ($mime === 'video/mp4') {
+    $ext = 'mp4';
+}
 
 $safe_media_id = preg_replace('/[^a-zA-Z0-9_\-]/', '', $media_id);
 if ($safe_media_id === '') {
     http_response_code(400);
+    header('X-Content-Type-Options: nosniff');
     exit;
 }
-$filename = "media_{$safe_media_id}.$ext";
-$upload_dir = __DIR__ . "/assets/uploads";
-if (!is_dir($upload_dir)) {
-    mkdir($upload_dir, 0775, true);
-}
-$save_path = $upload_dir . "/$filename";
 
-// 5. Paso 2: Descargar el binario con SSL verificado
+$upload_dir = __DIR__ . '/assets/uploads';
+if (!is_dir($upload_dir)) {
+    @mkdir($upload_dir, 0775, true);
+}
+
+// 5. Paso 2: Descargar el binario con SSL verificado y validar MIME real con finfo antes de fijar extensión
 $ch2 = curl_init($meta_media_url);
 curl_setopt($ch2, CURLOPT_HTTPHEADER, ["Authorization: Bearer $meta_token"]);
 curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
@@ -280,28 +406,37 @@ curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
 $binary = curl_exec($ch2);
 curl_close($ch2);
 
-if ($binary) {
+if ($binary !== false && $binary !== '') {
+    $finfo_buf = new finfo(FILEINFO_MIME_TYPE);
+    $real_bin_mime = strtolower(trim((string)($finfo_buf->buffer($binary) ?: 'application/octet-stream')));
+    $mime_to_ext = [
+        'image/jpeg'      => 'jpg',
+        'image/png'       => 'png',
+        'image/webp'      => 'webp',
+        'audio/ogg'       => 'ogg',
+        'application/ogg' => 'ogg',
+        'video/mp4'       => 'mp4',
+        'application/pdf' => 'pdf',
+    ];
+    $ext = $mime_to_ext[$real_bin_mime] ?? 'bin';
+    $filename = "media_{$safe_media_id}.{$ext}";
+    $save_path = $upload_dir . '/' . $filename;
+
     file_put_contents($save_path, $binary);
 
-    $base_path = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME']));
-    if ($base_path == '/') $base_path = '';
-
+    $base_path = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
+    if ($base_path === '/' || $base_path === '\\' || $base_path === '.') {
+        $base_path = '';
+    }
     $local_url = $base_path . "/assets/uploads/$filename";
 
-    // Actualizar caché en BD con sentencia preparada acotada a la conversación
-    $stmtUpd = $con->prepare("UPDATE mensajes_y_eventos SET url_archivo = ? WHERE id_conversacion = ? AND url_archivo = ?");
-    if ($stmtUpd) {
-        $stmtUpd->bind_param("sis", $local_url, $chat_id, $media_id);
-        $stmtUpd->execute();
-        $stmtUpd->close();
+    if (function_exists('starfi_persist_media_cache')) {
+        starfi_persist_media_cache($con, $chat_id, $media_id, $local_url, $agente_id, $chat_sede);
     }
 
-    $finfo_loc = new finfo(FILEINFO_MIME_TYPE);
-    $mime_local = $finfo_loc->file($save_path) ?: 'application/octet-stream';
-    if (strpos($save_path, '.ogg') !== false) $mime_local = 'audio/ogg';
-    stream_file($save_path, $mime_local);
+    stream_file($save_path);
     exit;
-} else {
-    http_response_code(500);
 }
-?>
+
+http_response_code(500);
+header('X-Content-Type-Options: nosniff');

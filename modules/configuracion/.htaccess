@@ -1,4 +1,7 @@
-﻿<FilesMatch "\.log$">
+Options -Indexes
+DirectoryIndex configuracion.php
+
+<FilesMatch "^(modals_.*\.php|.*\.log|.*\.json)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>

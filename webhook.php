@@ -231,16 +231,22 @@ if (!defined('WEBHOOK_NO_EXECUTE')) {
     // VALIDACIÓN ESTRICTA Y OBLIGATORIA DE FIRMA HMAC SHA-256 EN TODO HTTP POST (QA-BUG-CRM2-12 / CHK-CLD-02)
     if (PHP_SAPI !== 'cli') {
         if (!defined('META_APP_SECRET') || trim((string)META_APP_SECRET) === '') {
+            require_once __DIR__ . '/config/database.php';
+            registrar_auditoria('webhook', 'RECHAZO_FIRMA_HMAC', 'Petición POST a webhook rechazada: META_APP_SECRET no configurado.', null, ['ip' => $_SERVER['REMOTE_ADDR'] ?? '']);
             http_response_code(403);
             exit('Forbidden: META_APP_SECRET requerido');
         }
         $signature = trim((string)($_SERVER['HTTP_X_HUB_SIGNATURE_256'] ?? ''));
         if ($signature === '') {
+            require_once __DIR__ . '/config/database.php';
+            registrar_auditoria('webhook', 'RECHAZO_FIRMA_HMAC', 'Petición POST a webhook rechazada: cabecera X-Hub-Signature-256 ausente.', null, ['ip' => $_SERVER['REMOTE_ADDR'] ?? '']);
             http_response_code(403);
             exit('Forbidden: Firma X-Hub-Signature-256 no proporcionada');
         }
         $expected_signature = 'sha256=' . hash_hmac('sha256', $raw_payload, trim((string)META_APP_SECRET));
         if (!hash_equals($expected_signature, $signature)) {
+            require_once __DIR__ . '/config/database.php';
+            registrar_auditoria('webhook', 'RECHAZO_FIRMA_HMAC', 'Petición POST a webhook rechazada: firma X-Hub-Signature-256 inválida.', null, ['ip' => $_SERVER['REMOTE_ADDR'] ?? '']);
             http_response_code(403);
             exit('Forbidden: Firma X-Hub-Signature-256 invalida');
         }
@@ -693,6 +699,16 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                 $stmt_upd_csat->bind_param('ii', $csat_value, $csat_conv_id);
                 @$stmt_upd_csat->execute();
                 $stmt_upd_csat->close();
+                registrar_auditoria(
+                    'webhook',
+                    'CALIFICACION_CSAT_CLIENTE',
+                    "Cliente #{$id_cliente} calificó conversación #{$csat_conv_id} con {$csat_value} estrellas",
+                    ['csat_score' => null],
+                    ['id_conversacion' => $csat_conv_id, 'csat_score' => $csat_value],
+                    $con,
+                    null,
+                    $id_sede
+                );
             }
 
             $id_msg_csat_param = !empty($id_mensaje_meta) ? (string)$id_mensaje_meta : null;
@@ -934,6 +950,16 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                     }
 
                     $asesor_rr = starfi_assign_round_robin_advisor($con, $id_sede, $id_conversacion, $id_cliente, 'Handover Cliente');
+                    registrar_auditoria(
+                        'webhook',
+                        'HANDOVER_HUMANO_CLIENTE',
+                        "Transferencia a asesor humano solicitada por cliente en conversación #{$id_conversacion}",
+                        ['estado' => $estado_conv],
+                        ['id_conversacion' => $id_conversacion, 'id_cliente' => $id_cliente, 'id_asesor' => $asesor_rr['id'] ?? null],
+                        $con,
+                        null,
+                        $id_sede
+                    );
                     $msg_handover = $asesor_rr
                         ? "Te estoy transfiriendo con nuestro asesor en línea ({$asesor_rr['nombre']}). En un momento te atenderá personalmente."
                         : 'Te estoy transfiriendo con un asesor de nuestra tienda. En un momento serás atendido por nuestro equipo.';
@@ -982,6 +1008,16 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                                         $stmt_upd_nom->bind_param('si', $nuevoNombre, $id_cliente);
                                         @$stmt_upd_nom->execute();
                                         $stmt_upd_nom->close();
+                                        registrar_auditoria(
+                                            'webhook',
+                                            'ACTUALIZAR_NOMBRE_CLIENTE_IA',
+                                            "Nombre de cliente #{$id_cliente} actualizado por asistente IA en sede #{$id_sede}",
+                                            ['nombre' => $nombre_db],
+                                            ['id_cliente' => $id_cliente, 'nombre' => $nuevoNombre],
+                                            $con,
+                                            null,
+                                            $id_sede
+                                        );
                                     }
                                     $nombre_db = $nuevoNombre;
                                 }
@@ -1002,6 +1038,16 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
                                 }
 
                                 $asesor_rr = starfi_assign_round_robin_advisor($con, $id_sede, $id_conversacion, $id_cliente, 'IA [SOLICITAR_AGENTE_HUMANO]');
+                                registrar_auditoria(
+                                    'webhook',
+                                    'HANDOVER_HUMANO_IA',
+                                    "Transferencia a asesor humano solicitada por IA en conversación #{$id_conversacion}",
+                                    ['estado' => $estado_conv],
+                                    ['id_conversacion' => $id_conversacion, 'id_cliente' => $id_cliente, 'id_asesor' => $asesor_rr['id'] ?? null],
+                                    $con,
+                                    null,
+                                    $id_sede
+                                );
 
                                 if (empty($respuestaLimpia)) {
                                     $respuestaLimpia = $asesor_rr

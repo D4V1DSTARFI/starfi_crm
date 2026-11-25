@@ -296,7 +296,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
                             <div class="search-bar-modern">
                                 <i class="fa-solid fa-search"></i>
-                                <input type="text" id="searchRule" placeholder="Buscar por disparador o mensaje...">
+                                <input type="text" id="searchRule" autocomplete="off" placeholder="Buscar por disparador o mensaje...">
                             </div>
                             <div class="d-flex gap-2">
                                 <button class="btn btn-outline-secondary" id="btnToggleView" onclick="toggleViewMode()" style="border-radius: 30px; font-weight: 600; padding: 8px 20px;">
@@ -315,7 +315,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                     <h5 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-code-branch text-primary me-2"></i>Árbol Conversacional</h5>
                                     <small class="text-muted">Arrastra conexiones entre las salidas y entradas de los nodos. Haz doble clic en un nodo para editarlo.</small>
                                 </div>
-                                <button class="btn btn-success fw-bold px-4 shadow-sm" onclick="saveDrawflowNetwork()"><i class="fa-solid fa-save me-1"></i> Guardar Red</button>
+                                <button class="btn btn-success fw-bold px-4 shadow-sm" id="btnSaveDrawflow" onclick="saveDrawflowNetwork(this)"><i class="fa-solid fa-save me-1"></i> Guardar Red</button>
                             </div>
                             <div id="drawflow"></div>
                         </div>
@@ -352,13 +352,15 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </main>
     </div>
 
-    <?php require __DIR__ . '/modals_gestor_bots.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_gestor_bots.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
     <script src="../../assets/js/drawflow.min.js"></script>
     <script src="funciones_gestor_bots.js"></script>
-    <script src="drawflow_integration.js"></script>
 </body>
 </html>

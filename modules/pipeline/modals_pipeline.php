@@ -1,9 +1,4 @@
-<?php
-/**
- * modules/pipeline/modals_pipeline.php
- * Subvista aislada de modales del Embudo de Ventas (Kanban USD) | STARFI CRM (MVC CHK-ARC-01)
- */
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
     <!-- Modal Crear / Editar Oportunidad Comercial -->
     <div class="modal fade" id="modalDealKanban" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">

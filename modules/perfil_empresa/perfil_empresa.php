@@ -146,7 +146,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             </div>
                             <div class="search-bar-modern">
                                 <i class="fa-solid fa-search text-muted"></i>
-                                <input type="text" id="searchEmpresa" placeholder="Buscar empresa o RIF..." onkeyup="filterTablaPrincipal()">
+                                <input type="text" id="searchEmpresa" autocomplete="off" placeholder="Buscar empresa o RIF..." onkeyup="filterTablaPrincipal()">
                             </div>
                         </div>
 
@@ -374,7 +374,10 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </main>
     </div>
 
-    <?php require __DIR__ . '/modals_perfil_empresa.php'; ?>
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_perfil_empresa.php';
+    ?>
 
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>

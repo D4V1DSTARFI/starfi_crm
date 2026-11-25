@@ -1,27 +1,59 @@
 <?php
-// modules/dashboard/back_whatsapp_analytics.php
+// modules/whatsapp_analytics/back_whatsapp_analytics.php
 // Controlador de Métricas Meta WhatsApp API y Auditoría Híbrida — STARFI CRM (QA-STD-GLOBAL-2.1)
-// 100% mysqli_prepare(), CURLOPT_TIMEOUT <= 8s, cero fugas SQL y bitácora starfi_log_exception().
+// 100% mysqli_prepare(), CURLOPT_TIMEOUT <= 8s, aislamiento por sede, cero fugas SQL y bitácora starfi_log_exception().
 
 @ini_set('display_errors', '0');
+header('Content-Type: application/json; charset=utf-8');
 date_default_timezone_set('America/Caracas');
+
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../core/audit.php';
 require_once __DIR__ . '/../../config/database.php';
 
 requireAuth();
 requirePermission('whatsapp_analytics');
-header('Content-Type: application/json; charset=utf-8');
 
 $agente = getAgenteInfo();
-$es_master = (($agente['rol'] ?? '') === 'MASTER' || intval($agente['id'] ?? 0) === 1);
+$es_master = (strtoupper(trim((string)($agente['rol'] ?? ''))) === 'MASTER' || intval($agente['id'] ?? 0) === 1);
 $id_sede_agente = intval($agente['id_sede'] ?? 0);
+
+function wa_analytics_table_cols(mysqli $con, string $sqlStatic): array {
+    $cols = [];
+    $stmt = @$con->prepare($sqlStatic);
+    if ($stmt && $stmt->execute()) {
+        $res = $stmt->get_result();
+        while ($res && ($rw = $res->fetch_assoc())) {
+            if (!empty($rw['Field'])) {
+                $cols[$rw['Field']] = true;
+            }
+        }
+        $stmt->close();
+    }
+    return $cols;
+}
+
+function wa_analytics_check_exists(mysqli $con, string $sqlStatic): bool {
+    $stmt = @$con->prepare($sqlStatic);
+    if (!$stmt || !$stmt->execute()) {
+        return false;
+    }
+    $res = $stmt->get_result();
+    $ok = ($res && $res->num_rows > 0);
+    $stmt->close();
+    return $ok;
+}
 
 $action = trim((string)($_POST['action'] ?? ''));
 
 if ($action === 'get_analytics') {
     $id_sede = intval($_POST['id_sede'] ?? 0);
     if (!$es_master) {
+        if ($id_sede_agente <= 0) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Su usuario no posee una sede activa asignada.']);
+            exit;
+        }
         $id_sede = $id_sede_agente;
     }
 
@@ -45,6 +77,7 @@ if ($action === 'get_analytics') {
 
     $con = getDbConnection();
     if (!$con) {
+        http_response_code(500);
         echo json_encode(['status' => 'error', 'message' => 'Error de conexión a la base de datos']);
         exit;
     }
@@ -70,7 +103,7 @@ if ($action === 'get_analytics') {
     }
 
     if (!$rowLinea) {
-        echo json_encode(['status' => 'error', 'message' => 'No hay líneas de WhatsApp configuradas']);
+        echo json_encode(['status' => 'error', 'message' => 'No hay líneas de WhatsApp configuradas para la sede seleccionada']);
         exit;
     }
 
@@ -90,7 +123,7 @@ if ($action === 'get_analytics') {
 
     $url = "https://graph.facebook.com/v23.0/" . rawurlencode($waba_id) . "?fields=$fields";
 
-    $cache_key = 'waba_analytics_' . md5($url);
+    $cache_key = 'waba_analytics_' . md5($url . '|sede=' . $id_sede);
     if (isset($session_cache_snapshot[$cache_key]) && (time() - ($session_cache_snapshot[$cache_key]['ts'] ?? 0) < 180)) {
         $resp = $session_cache_snapshot[$cache_key]['resp'];
     } else {
@@ -109,7 +142,7 @@ if ($action === 'get_analytics') {
             curl_close($curl);
 
             if ($raw_exec === false && $curl_err !== '') {
-                starfi_log_exception('whatsapp_analytics', 'Error cURL consultando Meta Analytics', ['error' => $curl_err]);
+                starfi_log_exception('whatsapp_analytics', 'Error cURL consultando Meta Analytics', ['detail' => $curl_err]);
             } else {
                 $decoded = json_decode((string)$raw_exec, true);
                 if (is_array($decoded)) {
@@ -118,7 +151,8 @@ if ($action === 'get_analytics') {
             }
         }
 
-        if (is_array($resp) && !empty($resp) && !isset($resp['error'])) {
+        $metaHasErr = is_array($resp) && array_key_exists('error', $resp);
+        if (is_array($resp) && !empty($resp) && !$metaHasErr) {
             @session_start();
             foreach (array_keys($_SESSION) as $k) {
                 if (strpos($k, 'waba_analytics_') === 0 && $k !== $cache_key) {
@@ -127,7 +161,7 @@ if ($action === 'get_analytics') {
             }
             $_SESSION[$cache_key] = ['ts' => time(), 'resp' => $resp];
             session_write_close();
-        } elseif (isset($resp['error'])) {
+        } elseif ($metaHasErr) {
             starfi_log_exception('whatsapp_analytics', 'Respuesta de error Meta Graph API', ['meta_code' => $resp['error']['code'] ?? null]);
             if (!$es_master) {
                 $resp = [];
@@ -161,16 +195,13 @@ if ($action === 'get_analytics') {
     $hasta_dt = $fecha_hasta . " 23:59:59";
 
     $camp_ids_active = [];
-    $chk_camp = @$con->query("SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
-    $has_camp_table = ($chk_camp && $chk_camp->num_rows > 0);
+    $has_camp_table = wa_analytics_check_exists($con, "SHOW TABLES LIKE 'campanas_difusion_destinatarios'");
     $destCols = [];
     $campCols = [];
 
     if ($has_camp_table) {
-        $rD = @$con->query("SHOW COLUMNS FROM `campanas_difusion_destinatarios`");
-        if ($rD) { while ($rw = $rD->fetch_assoc()) $destCols[$rw['Field']] = true; }
-        $rC = @$con->query("SHOW COLUMNS FROM `campanas_difusion`");
-        if ($rC) { while ($rw = $rC->fetch_assoc()) $campCols[$rw['Field']] = true; }
+        $destCols = wa_analytics_table_cols($con, "SHOW COLUMNS FROM `campanas_difusion_destinatarios`");
+        $campCols = wa_analytics_table_cols($con, "SHOW COLUMNS FROM `campanas_difusion`");
 
         $catExpr  = isset($campCols['template_category']) ? "c.template_category" : (isset($campCols['categoria_meta']) ? "c.categoria_meta" : "''");
         $dateCamp = isset($campCols['fecha_creacion']) ? "c.fecha_creacion" : "c.created_at";
@@ -324,21 +355,17 @@ if ($action === 'get_analytics') {
         $stmtAud->close();
     }
 
-    // Obtener configuración de tarifa de la sede
     $tarifa_config = ['tipo_tarifa' => 'PORCENTAJE', 'valor' => 10.00];
-    if ($id_sede > 0) {
-        $chkTarCols = @$con->query("SHOW COLUMNS FROM `waba_tarifas_sede` LIKE 'tipo_tarifa'");
-        if ($chkTarCols && $chkTarCols->num_rows > 0) {
-            $stmt = $con->prepare("SELECT tipo_tarifa, valor FROM waba_tarifas_sede WHERE id_sede = ? LIMIT 1");
-            if ($stmt) {
-                $stmt->bind_param("i", $id_sede);
-                $stmt->execute();
-                $res_t = $stmt->get_result();
-                if ($res_t && ($row_t = $res_t->fetch_assoc())) {
-                    $tarifa_config = $row_t;
-                }
-                $stmt->close();
+    if ($id_sede > 0 && wa_analytics_check_exists($con, "SHOW COLUMNS FROM `waba_tarifas_sede` LIKE 'tipo_tarifa'")) {
+        $stmt = $con->prepare("SELECT tipo_tarifa, valor FROM waba_tarifas_sede WHERE id_sede = ? LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param("i", $id_sede);
+            $stmt->execute();
+            $res_t = $stmt->get_result();
+            if ($res_t && ($row_t = $res_t->fetch_assoc())) {
+                $tarifa_config = $row_t;
             }
+            $stmt->close();
         }
     }
 

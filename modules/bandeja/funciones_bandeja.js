@@ -52,6 +52,32 @@ function getServerNowEpoch() {
     return Math.floor(Date.now() / 1000) + serverClockOffsetSec;
 }
 
+const bandejaInFlight = new Set();
+function acquireBandejaLock(key, $btn, loadingHtml) {
+    if (bandejaInFlight.has(key)) return false;
+    if ($btn && $btn.length && $btn.prop('disabled')) return false;
+    bandejaInFlight.add(key);
+    if ($btn && $btn.length) {
+        $btn.data('orig-html', $btn.html());
+        $btn.prop('disabled', true);
+        if (loadingHtml) {
+            $btn.html(loadingHtml);
+        }
+    }
+    return true;
+}
+
+function releaseBandejaLock(key, $btn, customRestoreHtml) {
+    bandejaInFlight.delete(key);
+    if ($btn && $btn.length) {
+        const orig = customRestoreHtml !== undefined ? customRestoreHtml : $btn.data('orig-html');
+        $btn.prop('disabled', false);
+        if (orig !== undefined) {
+            $btn.html(orig);
+        }
+    }
+}
+
 $(document).ready(function () {
     // --- Sidebar Toggle ---
     $('#toggleSidebar').on('click', function() {
@@ -68,9 +94,9 @@ $(document).ready(function () {
     loadOperadoresFilter();
     loadChats();
 
-    // Tiempo Real con Server-Sent Events (SSE)
+    // Tiempo Real con Server-Sent Events (SSE) integrado en back_bandeja.php
     function iniciarSSE() {
-        const evtSource = new EventSource("sse_updates.php");
+        const evtSource = new EventSource("back_bandeja.php?action=sse_updates");
 
         evtSource.onmessage = function (event) {
             const data = JSON.parse(event.data);
@@ -183,11 +209,12 @@ $(document).ready(function () {
                         list.html('<div class="text-center p-3 text-muted">No hay respuestas rápidas configuradas.</div>');
                     } else {
                         res.data.forEach(r => {
-                            let textEscaped = r.mensaje.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            const safeTitle = escapeHtmlBandeja(r.titulo);
+                            const safeMsg = escapeHtmlBandeja(r.mensaje);
                             let btn = `
-                            <button type="button" class="list-group-item list-group-item-action p-3" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);" onclick="selectTemplate('${textEscaped}')">
-                                <strong class="text-primary"><i class="fa-solid fa-bolt me-1"></i> ${r.titulo}</strong><br>
-                                <small class="text-muted mt-1 d-block">${r.mensaje}</small>
+                            <button type="button" class="list-group-item list-group-item-action p-3 btn-select-quick-tpl" data-template="${safeMsg}" style="border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                                <strong class="text-primary"><i class="fa-solid fa-bolt me-1"></i> ${safeTitle}</strong><br>
+                                <small class="text-muted mt-1 d-block">${safeMsg}</small>
                             </button>`;
                             list.append(btn);
                         });
@@ -211,13 +238,14 @@ $(document).ready(function () {
                         list.html('<tr><td colspan="3" class="text-center text-muted py-3">No hay respuestas del bot configuradas.</td></tr>');
                     } else {
                         res.data.forEach(r => {
-                            let textEscaped = r.mensaje.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            const safeDisp = escapeHtmlBandeja(r.disparador);
+                            const safeMsg = escapeHtmlBandeja(r.mensaje);
                             let row = `
                             <tr>
-                                <td class="fw-bold"><span class="badge bg-light text-dark border">${r.disparador}</span></td>
-                                <td><small class="text-muted d-block text-wrap" style="max-width: 250px;">${r.mensaje}</small></td>
+                                <td class="fw-bold"><span class="badge bg-light text-dark border">${safeDisp}</span></td>
+                                <td><small class="text-muted d-block text-wrap" style="max-width: 250px;">${safeMsg}</small></td>
                                 <td style="text-align: right;">
-                                    <button type="button" class="btn btn-sm btn-light text-primary" onclick="selectTemplate('${textEscaped}')">
+                                    <button type="button" class="btn btn-sm btn-light text-primary btn-select-quick-tpl" data-template="${safeMsg}">
                                         <i class="fa-solid fa-paper-plane"></i>
                                     </button>
                                 </td>
@@ -230,6 +258,10 @@ $(document).ready(function () {
         });
     });
 
+    $(document).on('click', '.btn-select-quick-tpl', function () {
+        selectTemplate($(this).attr('data-template') || '');
+    });
+
     window.selectTemplate = function (text) {
         $('#chatInput').val(text);
         $('#modalTemplates').modal('hide');
@@ -237,7 +269,7 @@ $(document).ready(function () {
     };
 
     window.createNewQuickReply = function() {
-        // Close Bootstrap modal first so it doesn't steal focus
+        if (bandejaInFlight.has('create_qr')) return;
         $('#modalTemplates').modal('hide');
         
         setTimeout(() => {
@@ -257,10 +289,11 @@ $(document).ready(function () {
                     if (!titulo || !mensaje) {
                         Swal.showValidationMessage(`Por favor ingrese título y mensaje`);
                     }
-                    return { titulo: titulo, mensaje: mensaje }
+                    return { titulo: titulo, mensaje: mensaje };
                 }
             }).then((result) => {
                 if (result.isConfirmed) {
+                    if (!acquireBandejaLock('create_qr')) return;
                     $.post('back_bandeja.php', {
                         action: 'create_quick_reply',
                         titulo: result.value.titulo,
@@ -271,17 +304,19 @@ $(document).ready(function () {
                         } else {
                             Swal.fire('Error', res.message, 'error');
                         }
-                    }, 'json');
+                    }, 'json').always(function () {
+                        releaseBandejaLock('create_qr');
+                    });
                 } else {
-                    // Re-open templates modal if they canceled
                     $('#modalTemplates').modal('show');
                 }
             });
-        }, 400); // Wait for Bootstrap modal transition to finish
+        }, 400);
     };
 
     // 3. Attachments
     $('#btnAttach').on('click', function () {
+        if (bandejaInFlight.has('upload_media')) return;
         if (!activeChatId && !activeClientId) {
             Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
             return;
@@ -292,6 +327,10 @@ $(document).ready(function () {
     $('#fileInput').on('change', function () {
         let file = this.files[0];
         if (!file) return;
+        if (!acquireBandejaLock('upload_media', $('#btnAttach'))) {
+            $(this).val('');
+            return;
+        }
 
         let formData = new FormData();
         formData.append('action', 'upload_media');
@@ -337,6 +376,10 @@ $(document).ready(function () {
             error: function () {
                 Swal.fire('Error', 'Fallo al subir archivo', 'error');
                 loadMessages(activeChatId, true);
+            },
+            complete: function () {
+                releaseBandejaLock('upload_media', $('#btnAttach'));
+                updateActiveWindow24hUI();
             }
         });
 
@@ -358,27 +401,21 @@ $(document).ready(function () {
         updateActiveWindow24hUI();
     });
 
-    // Delegación de eventos para la lista de chats dinámica (Respaldo)
+    // Delegación de eventos para la lista de chats dinámica
     $('#chatList').on('click', '.chat-item', function () {
-        const id = $(this).data('id');
-        const cliente_id = $(this).data('cliente-id');
-        const name = $(this).data('name');
-        const phone = $(this).data('phone');
-        const sede = $(this).data('sede');
-        const asesor = $(this).data('asesor');
-        const no_leidos = parseInt($(this).data('no-leidos') || 0);
-        requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
+        window.clickChat(this);
     });
 
-    // Función global para clics móviles y clicks de chat
+    // Función global para clics móviles, deep links y selección de chat
     window.clickChat = function (element) {
-        const id = $(element).data('id');
-        const cliente_id = $(element).data('cliente-id');
-        const name = $(element).data('name');
-        const phone = $(element).data('phone');
-        const sede = $(element).data('sede');
-        const asesor = $(element).data('asesor');
-        const no_leidos = parseInt($(element).data('no-leidos') || 0);
+        const $el = $(element);
+        const id = parseInt($el.attr('data-id') || '0', 10);
+        const cliente_id = parseInt($el.attr('data-cliente-id') || '0', 10);
+        const name = String($el.attr('data-name') || '');
+        const phone = String($el.attr('data-phone') || '');
+        const sede = String($el.attr('data-sede') || '');
+        const asesor = String($el.attr('data-asesor') || '');
+        const no_leidos = parseInt($el.attr('data-no-leidos') || '0', 10);
         requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos);
     };
 
@@ -485,6 +522,8 @@ $(document).ready(function () {
             }
         }).then((result) => {
             if (result.isConfirmed) {
+                const $closeBtn = $('#btnCloseChat');
+                if (!acquireBandejaLock('close_chat', $closeBtn)) return;
                 $.ajax({
                     url: 'back_bandeja.php', type: 'POST', dataType: 'json',
                     data: { 
@@ -505,7 +544,12 @@ $(document).ready(function () {
                             $('#emptyState').removeClass('d-none').css('display', 'flex');
                             $('#modalProfile360').modal('hide');
                             Swal.fire('Cerrado', 'Métricas guardadas correctamente', 'success');
+                        } else {
+                            Swal.fire('Error', res.message || 'No se pudo cerrar la conversación.', 'error');
                         }
+                    },
+                    complete: function () {
+                        releaseBandejaLock('close_chat', $closeBtn);
                     }
                 });
             }
@@ -515,6 +559,8 @@ $(document).ready(function () {
     // 4. Reasignar Chat
     $('#btnReasign').on('click', function () {
         if (!activeChatId || activeChatId === 0) return;
+        const $reasignBtn = $(this);
+        if (!acquireBandejaLock('load_agents_reasign', $reasignBtn)) return;
 
         $.ajax({
             url: 'back_bandeja.php', type: 'POST', dataType: 'json',
@@ -542,6 +588,7 @@ $(document).ready(function () {
                         }
                     }).then((result) => {
                         if (result.isConfirmed) {
+                            if (!acquireBandejaLock('exec_reasign', $reasignBtn)) return;
                             $.ajax({
                                 url: 'back_bandeja.php', type: 'POST', dataType: 'json',
                                 data: { action: 'reassign_chat', conversacion_id: activeChatId, nuevo_agente_id: result.value },
@@ -553,12 +600,20 @@ $(document).ready(function () {
                                         $('#emptyState').removeClass('d-none').css('display', 'flex');
                                         $('#modalProfile360').modal('hide');
                                         Swal.fire('Reasignado', 'La conversación pasó a la cola del otro agente', 'success');
+                                    } else {
+                                        Swal.fire('Error', res2.message || 'No se pudo reasignar.', 'error');
                                     }
+                                },
+                                complete: function () {
+                                    releaseBandejaLock('exec_reasign', $reasignBtn);
                                 }
                             });
                         }
                     });
                 }
+            },
+            complete: function () {
+                releaseBandejaLock('load_agents_reasign', $reasignBtn);
             }
         });
     });
@@ -582,10 +637,11 @@ function loadOperadoresFilter() {
                 const currentVal = filterOperador.val();
                 let html = '<option value="">Todos los Operadores</option>';
                 res.data.forEach(ag => {
-                    html += `<option value="${ag.id}">${ag.nombre_completo}</option>`;
+                    const aid = parseInt(ag.id, 10) || 0;
+                    html += `<option value="${aid}">${escapeHtmlBandeja(ag.nombre_completo)}</option>`;
                 });
                 filterOperador.html(html);
-                if (currentVal && filterOperador.find(`option[value="${currentVal}"]`).length) {
+                if (currentVal && filterOperador.find(`option[value="${parseInt(currentVal, 10) || 0}"]`).length) {
                     filterOperador.val(currentVal);
                 } else {
                     filterOperador.val('');
@@ -600,13 +656,18 @@ let hasMoreChats = false;
 let isLoadingChats = false;
 let currentChatsXHR = null;
 
-// Generador local de avatares SVG en memoria (100% Cero CDN CHK-LAN-01)
+// Generador local de avatares SVG en memoria y sanitización XSS (100% Cero CDN CHK-LAN-01)
 function escapeHtmlBandeja(val) {
     if (val === null || val === undefined) return '';
     return String(val).replace(/[&<>"']/g, function (m) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
     });
 }
+
+function formatSafeMessageHtml(rawText) {
+    return escapeHtmlBandeja(rawText || '').replace(/\r\n|\r|\n/g, '<br>');
+}
+
 const localAvatarCache = {};
 function getLocalAvatarSvg(name) {
     let clean = String(name || 'C').trim();
@@ -646,6 +707,9 @@ function getLocalAvatarSvg(name) {
 function resolveBandejaMediaUrl(rawPath, chatId) {
     let p = String(rawPath || '').replace(/\\\\/g, '/').replace(/\\/g, '/').trim();
     if (!p) return '';
+    if (/^(javascript|data|vbscript|https?|ftp):/i.test(p) || p.indexOf('//') === 0) {
+        return '';
+    }
     if (p.indexOf('/') === -1) {
         return `../../get_media.php?id=${encodeURIComponent(p)}&chat_id=${encodeURIComponent(chatId || 0)}`;
     }
@@ -746,7 +810,7 @@ function loadChats(append = false, targetPage = null, silent = false) {
                 }
             } else {
                 if (!append) {
-                    $('#chatList').html(`<div class="p-3 text-danger text-center"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${response.message}</div>`);
+                    $('#chatList').html(`<div class="p-3 text-danger text-center"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${escapeHtmlBandeja(response.message)}</div>`);
                 }
             }
         },
@@ -755,7 +819,7 @@ function loadChats(append = false, targetPage = null, silent = false) {
             if (status === 'abort' || xhr.status === 401) return;
             console.error("AJAX Error:", status, error, xhr.responseText);
             if (!append) {
-                let resp = xhr.responseText ? xhr.responseText.replace(/</g, '&lt;').substring(0, 200) : error;
+                let resp = xhr.responseText ? escapeHtmlBandeja(xhr.responseText.substring(0, 200)) : escapeHtmlBandeja(error);
                 $('#chatList').html(`<div class="p-3 text-danger text-center" style="word-break: break-word;"><i class="fa-solid fa-database d-block mb-2 fs-3"></i> <b>Error de Servidor:</b><br><small>${resp}</small></div>`);
             }
         }
@@ -786,19 +850,21 @@ function renderChatList(chats, append = false, has_more = false) {
         let name = chat.cliente_nombre ? chat.cliente_nombre : chat.numero_whatsapp;
         let badge = '';
         let unreadDot = '';
-        if (chat.no_leidos > 0) {
+        const unreadNum = parseInt(chat.no_leidos, 10) || 0;
+        if (unreadNum > 0) {
             totalUnread++;
-            unreadDot = `<span class="badge bg-danger rounded-pill" style="margin-left:auto; font-size: 0.7rem;">${chat.no_leidos}</span>`;
+            unreadDot = `<span class="badge bg-danger rounded-pill" style="margin-left:auto; font-size: 0.7rem;">${unreadNum}</span>`;
         }
 
         let isActiveClass = (chat.id == activeChatId && chat.id_cliente == activeClientId) ? 'active' : '';
 
         let lastTime = chat.ultimo_mensaje_ts ? chat.ultimo_mensaje_ts : chat.fecha_inicio;
-        let asesorBadge = chat.nombre_asesor ? `<span class="badge bg-light text-dark rounded-pill px-2 py-0.5 border" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-headset text-muted me-1"></i> ${chat.nombre_asesor}</span>` : '';
+        const safeAsesor = escapeHtmlBandeja(chat.nombre_asesor || '');
+        let asesorBadge = chat.nombre_asesor ? `<span class="badge bg-light text-dark rounded-pill px-2 py-0.5 border" style="font-size: 0.65rem; margin-left: 4px;"><i class="fa-solid fa-headset text-muted me-1"></i> ${safeAsesor}</span>` : '';
         
         let starsHtml = '';
         if (chat.calificacion_calidad && chat.calificacion_calidad > 0) {
-            let numStars = parseInt(chat.calificacion_calidad);
+            let numStars = Math.max(0, Math.min(5, parseInt(chat.calificacion_calidad, 10) || 0));
             let stars = '';
             for (let i = 1; i <= 5; i++) {
                 if (i <= numStars) stars += '<i class="fa-solid fa-star text-warning"></i>';
@@ -807,13 +873,13 @@ function renderChatList(chats, append = false, has_more = false) {
             starsHtml = `<span class="badge bg-light text-dark rounded-pill px-2 py-0.5 border" style="font-size: 0.65rem; margin-left: 4px;" title="Lead Scoring: ${numStars}">${stars}</span>`;
         }
         
-        let estadoLabel = chat.estado;
+        let estadoLabel = String(chat.estado || 'SIN INICIAR');
         let estadoColor = 'bg-secondary';
         if (estadoLabel === 'ESPERA_ASIGNACION' || estadoLabel === 'BOT_RECOPILANDO') estadoColor = 'bg-warning text-dark';
         else if (estadoLabel === 'EN_PROCESO') estadoColor = 'bg-primary';
         else if (estadoLabel === 'CERRADO' || estadoLabel === 'RESUELTO') estadoColor = 'bg-success';
         
-        let estadoBadge = `<span class="badge ${estadoColor} rounded-pill px-2 py-0.5" style="font-size: 0.6rem; margin-left: 4px;">${estadoLabel.replace('_', ' ')}</span>`;
+        let estadoBadge = `<span class="badge ${estadoColor} rounded-pill px-2 py-0.5" style="font-size: 0.6rem; margin-left: 4px;">${escapeHtmlBandeja(estadoLabel.replace(/_/g, ' '))}</span>`;
         
         let tipoBadge = '';
         if (chat.es_campana == 1 || chat.es_campana === '1') {
@@ -854,11 +920,11 @@ function renderChatList(chats, append = false, has_more = false) {
         let dealBadgeHtml = '';
         let stageClass = '';
         if (chat.deal_etapa) {
-            const stClean = String(chat.deal_etapa).toUpperCase();
+            const stClean = String(chat.deal_etapa).toUpperCase().replace(/[^A-Z0-9_]/g, '');
             stageClass = `stage-${stClean}`;
             const montoNum = parseFloat(chat.deal_monto_usd || 0);
             const montoStr = montoNum > 0 ? ` · $${montoNum.toFixed(2)}` : '';
-            dealBadgeHtml = `<span class="kanban-stage-pill ${stageClass}"><i class="bi bi-cash-coin"></i>${formatEtapaShort(stClean)}${montoStr}</span>`;
+            dealBadgeHtml = `<span class="kanban-stage-pill ${stageClass}"><i class="bi bi-cash-coin"></i>${escapeHtmlBandeja(formatEtapaShort(stClean))}${montoStr}</span>`;
         }
 
         const slaSince = parseInt(chat.sla_wait_since_epoch || 0, 10);
@@ -868,18 +934,20 @@ function renderChatList(chats, append = false, has_more = false) {
         const safeName = escapeHtmlBandeja(name);
         const safePhone = escapeHtmlBandeja(chat.numero_whatsapp || '');
         const safeSede = escapeHtmlBandeja(chat.nombre_sede || 'Sede Principal');
-        const safeAsesor = escapeHtmlBandeja(chat.nombre_asesor || '');
         const safeDealEtapa = escapeHtmlBandeja(chat.deal_etapa || '');
+        const safeAvatar = escapeHtmlBandeja(getLocalAvatarSvg(name));
+        const safeFullDate = escapeHtmlBandeja(formatFullDateTime(lastTime));
+        const safeShortDate = escapeHtmlBandeja(formatChatListDate(lastTime));
 
         let html = `
-            <article class="chat-item ${isActiveClass} ${stageClass}" onclick="window.clickChat(this)" style="cursor: pointer;" data-id="${parseInt(chat.id, 10) || 0}" data-cliente-id="${parseInt(chat.id_cliente, 10) || 0}" data-name="${safeName}" data-phone="${safePhone}" data-sede="${safeSede}" data-asesor="${safeAsesor}" data-no-leidos="${parseInt(chat.no_leidos, 10) || 0}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${safeDealEtapa}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? parseFloat(chat.deal_monto_usd) : ''}">
+            <article class="chat-item ${isActiveClass} ${stageClass}" style="cursor: pointer;" data-id="${parseInt(chat.id, 10) || 0}" data-cliente-id="${parseInt(chat.id_cliente, 10) || 0}" data-name="${safeName}" data-phone="${safePhone}" data-sede="${safeSede}" data-asesor="${safeAsesor}" data-no-leidos="${unreadNum}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${safeDealEtapa}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? parseFloat(chat.deal_monto_usd) : ''}">
                 <div class="chat-avatar">
-                    <img src="${getLocalAvatarSvg(name)}" alt="Avatar">
+                    <img src="${safeAvatar}" alt="Avatar">
                 </div>
                 <div class="chat-summary">
                     <div class="chat-top">
                         <h4>${safeName}</h4>
-                        <span class="time" title="${formatFullDateTime(lastTime)}">${formatChatListDate(lastTime)}</span>
+                        <span class="time" title="${safeFullDate}">${safeShortDate}</span>
                     </div>
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${safeSede}</span>
@@ -969,6 +1037,7 @@ function requestSwitchChat(id, cliente_id, name, phone, sede, asesor, no_leidos)
 }
 
 function promptExitUnreadChat(chatCtx, onDone) {
+    const safeCtxName = escapeHtmlBandeja(chatCtx.name);
     Swal.fire({
         title: `¿Qué deseas hacer con esta conversación?`,
         html: `
@@ -976,7 +1045,7 @@ function promptExitUnreadChat(chatCtx, onDone) {
                 <div class="rounded-circle bg-warning bg-opacity-10 text-warning d-inline-flex align-items-center justify-content-center mb-2" style="width: 54px; height: 54px;">
                     <i class="fa-solid fa-envelope-open-text fs-3"></i>
                 </div>
-                <h6 class="fw-bold text-dark mb-1" style="font-size: 1.05rem;">${chatCtx.name}</h6>
+                <h6 class="fw-bold text-dark mb-1" style="font-size: 1.05rem;">${safeCtxName}</h6>
                 <p class="text-muted small mb-0">Revisaste esta conversación que tiene mensajes sin leer.</p>
             </div>
             
@@ -1005,7 +1074,10 @@ function promptExitUnreadChat(chatCtx, onDone) {
                 if (onDone) onDone();
             });
 
-            document.getElementById('btnOptMarkRead').addEventListener('click', () => {
+            document.getElementById('btnOptMarkRead').addEventListener('click', (ev) => {
+                const btnEl = ev.currentTarget;
+                if (btnEl.disabled) return;
+                btnEl.disabled = true;
                 $.post('back_bandeja.php', { action: 'mark_as_read', conversacion_id: chatCtx.id }, function () {
                     loadChats();
                 }, 'json');
@@ -1014,7 +1086,10 @@ function promptExitUnreadChat(chatCtx, onDone) {
                 if (onDone) onDone();
             });
 
-            document.getElementById('btnOptAssignVendor').addEventListener('click', () => {
+            document.getElementById('btnOptAssignVendor').addEventListener('click', (ev) => {
+                const btnEl = ev.currentTarget;
+                if (btnEl.disabled) return;
+                btnEl.disabled = true;
                 Swal.close();
                 promptAssignOperator(chatCtx, function () {
                     pendingExitUnreadChat = null;
@@ -1026,6 +1101,7 @@ function promptExitUnreadChat(chatCtx, onDone) {
 }
 
 function promptAssignOperator(chatCtx, onDone) {
+    if (!acquireBandejaLock('prompt_assign_op')) return;
     $.ajax({
         url: 'back_bandeja.php', type: 'POST', dataType: 'json',
         data: { action: 'get_agents', conversacion_id: chatCtx.id },
@@ -1034,13 +1110,14 @@ function promptAssignOperator(chatCtx, onDone) {
                 let options = '<option value="">-- Selecciona un vendedor/operador --</option>';
                 res.data.forEach(ag => {
                     const onlineTag = (parseInt(ag.en_linea || 0, 10) === 1) ? '🟢 En línea' : '⚪ Desconectado';
-                    options += `<option value="${ag.id}">${ag.nombre_completo} (${onlineTag})</option>`;
+                    options += `<option value="${parseInt(ag.id, 10) || 0}">${escapeHtmlBandeja(ag.nombre_completo)} (${onlineTag})</option>`;
                 });
 
+                const safeCtxName = escapeHtmlBandeja(chatCtx.name);
                 Swal.fire({
                     title: `Asignar Conversación`,
                     html: `
-                        <p class="text-muted small mb-2">Selecciona el vendedor para asignar el chat de <strong>${chatCtx.name}</strong>:</p>
+                        <p class="text-muted small mb-2">Selecciona el vendedor para asignar el chat de <strong>${safeCtxName}</strong>:</p>
                         <select id="swal_assign_agent" class="form-select mb-3">${options}</select>
                     `,
                     showCancelButton: true,
@@ -1057,24 +1134,34 @@ function promptAssignOperator(chatCtx, onDone) {
                     }
                 }).then((result) => {
                     if (result.isConfirmed) {
+                        if (!acquireBandejaLock('exec_prompt_assign')) return;
                         $.post('back_bandeja.php', {
                             action: 'reassign_chat',
                             conversacion_id: chatCtx.id,
                             nuevo_agente_id: result.value
                         }, function (r) {
                             if (r.status === 'success') {
-                                // También marcar como leído al asignar
                                 $.post('back_bandeja.php', { action: 'mark_as_read', conversacion_id: chatCtx.id });
                                 Swal.fire({ icon: 'success', title: 'Asignado', text: 'Se ha asignado el chat y notificado al vendedor.', timer: 1800, showConfirmButton: false });
                                 loadChats();
                             }
                             if (onDone) onDone();
-                        }, 'json');
+                        }, 'json').always(function () {
+                            releaseBandejaLock('exec_prompt_assign');
+                        });
                     } else {
                         if (onDone) onDone();
                     }
                 });
+            } else {
+                if (onDone) onDone();
             }
+        },
+        error: function () {
+            if (onDone) onDone();
+        },
+        complete: function () {
+            releaseBandejaLock('prompt_assign_op');
         }
     });
 }
@@ -1182,7 +1269,7 @@ function loadProfile360() {
             let datalist = $('#existingTagsList');
             datalist.empty();
             res.data.forEach(tag => {
-                datalist.append(`<option value="${tag}">`);
+                datalist.append(`<option value="${escapeHtmlBandeja(tag)}"></option>`);
             });
         }
     }, 'json');
@@ -1198,7 +1285,6 @@ function renderTags(tagsData) {
         try {
             tags = JSON.parse(tagsData);
         } catch(e) {
-            // Fallback for legacy comma-separated
             tags = tagsData.split(',').map(t => t.trim()).filter(t => t);
         }
     } else if (Array.isArray(tagsData)) {
@@ -1206,14 +1292,25 @@ function renderTags(tagsData) {
     }
     
     tags.forEach(t => {
+        const safeTag = escapeHtmlBandeja(t);
         let tagHtml = `<span class="badge bg-primary bg-opacity-10 text-primary rounded-pill px-3 py-2 border border-primary me-1 mb-1">
-            ${t} <i class="fa-solid fa-times ms-1" style="cursor:pointer;" onclick="removeTag('${t}')"></i>
+            ${safeTag} <i class="fa-solid fa-times ms-1 btn-remove-chat-tag" data-tag="${safeTag}" style="cursor:pointer;" title="Quitar etiqueta"></i>
         </span>`;
         container.append(tagHtml);
     });
 }
 
+$(document).on('click', '.btn-remove-chat-tag', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const tagToRemove = $(this).attr('data-tag') || '';
+    if (tagToRemove) {
+        window.removeTag(tagToRemove);
+    }
+});
+
 window.removeTag = function(tagToRemove) {
+    if (bandejaInFlight.has('remove_tag')) return;
     Swal.fire({
         title: '¿Quitar etiqueta?',
         icon: 'question',
@@ -1221,16 +1318,21 @@ window.removeTag = function(tagToRemove) {
         confirmButtonText: 'Sí, quitar'
     }).then((result) => {
         if (result.isConfirmed) {
+            if (!acquireBandejaLock('remove_tag')) return;
             $.post('back_bandeja.php', { action: 'remove_tag', cliente_id: activeClientId, tag: tagToRemove }, function(res) {
                 if (res.status === 'success') loadProfile360();
-            }, 'json');
+            }, 'json').always(function () {
+                releaseBandejaLock('remove_tag');
+            });
         }
     });
 };
 
 $('#btnAddTag').on('click', function() {
+    const $btn = $(this);
     let newTag = $('#newTagInput').val().trim();
     if (!newTag) return;
+    if (!acquireBandejaLock('add_tag', $btn)) return;
     
     $.post('back_bandeja.php', { action: 'add_tag', cliente_id: activeClientId, tag: newTag }, function(res) {
         if (res.status === 'success') {
@@ -1239,7 +1341,9 @@ $('#btnAddTag').on('click', function() {
         } else {
             Swal.fire('Error', res.message, 'error');
         }
-    }, 'json');
+    }, 'json').always(function () {
+        releaseBandejaLock('add_tag', $btn);
+    });
 });
 
 $('#newTagInput').on('keypress', function(e) {
@@ -1250,13 +1354,13 @@ $('#newTagInput').on('keypress', function(e) {
 });
 
 $('#btnSaveProfile').on('click', function() {
+    const $btn = $(this);
     let nombre = $('#profPrevNameInput').val().trim();
     let email = $('#profPrevEmailInput').val().trim();
     
-    $(this).prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-2"></i> Guardando...');
+    if (!acquireBandejaLock('save_profile', $btn, '<i class="fa-solid fa-spinner fa-spin me-2"></i> Guardando...')) return;
     
     $.post('back_bandeja.php', { action: 'save_profile', cliente_id: activeClientId, nombre: nombre, email: email }, function(res) {
-        $('#btnSaveProfile').prop('disabled', false).html('<i class="fa-solid fa-save me-2"></i> Guardar Cambios');
         if (res.status === 'success') {
             Swal.fire({
                 icon: 'success',
@@ -1266,15 +1370,15 @@ $('#btnSaveProfile').on('click', function() {
                 showConfirmButton: false,
                 timer: 3000
             });
-            // Update UI
             $('#chatHeaderName').text(nombre || '+' + $('#profPrevPhone').text().replace('+', ''));
-            loadChats(); // Refresh the sidebar list to show updated names
+            loadChats();
         } else {
             Swal.fire('Error', res.message || 'Ocurrió un error al guardar', 'error');
         }
-    }, 'json').fail(function(xhr) {
-        $('#btnSaveProfile').prop('disabled', false).html('<i class="fa-solid fa-save me-2"></i> Guardar Cambios');
+    }, 'json').fail(function() {
         Swal.fire('Error', 'Error de red o servidor al guardar el perfil.', 'error');
+    }).always(function () {
+        releaseBandejaLock('save_profile', $btn, '<i class="fa-solid fa-save me-2"></i> Guardar Cambios');
     });
 });
 
@@ -1317,7 +1421,7 @@ function renderMessages(messages, scrollToBottom) {
     let lastDateKey = null;
     messages.forEach(msg => {
         let msgHtml = '';
-        let timeLabel = formatTime(msg.timestamp);
+        let timeLabel = escapeHtmlBandeja(formatTime(msg.timestamp));
 
         let parsedDate = parseDateTime(msg.timestamp);
         let dateKey = parsedDate ? `${parsedDate.getFullYear()}-${String(parsedDate.getMonth()+1).padStart(2,'0')}-${String(parsedDate.getDate()).padStart(2,'0')}` : null;
@@ -1328,7 +1432,7 @@ function renderMessages(messages, scrollToBottom) {
                 <div class="date-divider text-center my-3 w-100" style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 15px; margin-bottom: 15px;">
                     <div style="flex: 1; height: 1px; background: #E5E7EB;"></div>
                     <span class="badge bg-light text-secondary border px-3 py-1.5 rounded-pill" style="font-size: 0.75rem; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-                        <i class="fa-regular fa-calendar-days me-1 text-primary"></i> ${formatDateDivider(msg.timestamp)}
+                        <i class="fa-regular fa-calendar-days me-1 text-primary"></i> ${escapeHtmlBandeja(formatDateDivider(msg.timestamp))}
                     </span>
                     <div style="flex: 1; height: 1px; background: #E5E7EB;"></div>
                 </div>
@@ -1339,38 +1443,49 @@ function renderMessages(messages, scrollToBottom) {
         let mediaHtml = '';
         if (msg.tipo === 'IMAGEN' && msg.url_archivo) {
             let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
-            let isSticker = realUrl.endsWith('.webp');
-            let imgStyle = isSticker 
-                ? 'max-width: 120px; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1)); cursor: pointer; transition: transform 0.2s;' 
-                : 'max-height: 200px; width: auto; max-width: 100%; border-radius: 8px; display: block; cursor: pointer; transition: transform 0.2s;';
-            let containerStyle = isSticker
-                ? 'margin-bottom:8px; padding: 10px; text-align: center;'
-                : 'margin-bottom:8px; border-radius:8px; overflow:hidden; background:#E5E7EB; display:flex; align-items:center; justify-content:center;';
-            
-            mediaHtml = `<div style="${containerStyle}"><img src="${realUrl}" style="${imgStyle}" alt="Archivo adjunto" loading="lazy" class="zoomable-media" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'" onclick="Swal.fire({imageUrl: '${realUrl}', imageAlt: 'Archivo adjunto', width: 'auto', padding: 0, showConfirmButton: false, customClass: { popup: 'bg-transparent' }, backdrop: 'rgba(0,0,0,0.8)'})"></div>`;
+            if (realUrl) {
+                const safeRealUrl = escapeHtmlBandeja(realUrl);
+                let isSticker = realUrl.endsWith('.webp');
+                let imgStyle = isSticker 
+                    ? 'max-width: 120px; height: auto; display: block; margin: 0 auto; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.1)); cursor: pointer; transition: transform 0.2s;' 
+                    : 'max-height: 200px; width: auto; max-width: 100%; border-radius: 8px; display: block; cursor: pointer; transition: transform 0.2s;';
+                let containerStyle = isSticker
+                    ? 'margin-bottom:8px; padding: 10px; text-align: center;'
+                    : 'margin-bottom:8px; border-radius:8px; overflow:hidden; background:#E5E7EB; display:flex; align-items:center; justify-content:center;';
+                
+                mediaHtml = `<div style="${containerStyle}"><img src="${safeRealUrl}" data-media-url="${safeRealUrl}" style="${imgStyle}" alt="Archivo adjunto" loading="lazy" class="zoomable-media"></div>`;
+            }
         } else if (msg.tipo === 'DOCUMENTO' && msg.url_archivo) {
             let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
-            mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${realUrl}" target="_blank" style="text-decoration:none; font-weight:bold; color:#111827;">Documento Adjunto</a></div>`;
+            if (realUrl) {
+                const safeRealUrl = escapeHtmlBandeja(realUrl);
+                const docLabel = msg.contenido && msg.contenido !== 'Documento recibido' ? escapeHtmlBandeja(msg.contenido) : 'Documento Adjunto';
+                mediaHtml = `<div style="margin-bottom:8px; padding:10px; border-radius:8px; background:#E5E7EB; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-file-pdf text-danger fs-3"></i> <a href="${safeRealUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; font-weight:bold; color:#111827;">${docLabel}</a></div>`;
+            }
         } else if (msg.tipo === 'AUDIO' && msg.url_archivo) {
             let realUrl = resolveBandejaMediaUrl(msg.url_archivo, activeChatId);
-            mediaHtml = `<div style="margin-bottom:8px;"><audio controls data-src="${realUrl}" class="async-audio" style="max-width: 250px;">Cargando audio...</audio></div>`;
+            if (realUrl) {
+                const safeRealUrl = escapeHtmlBandeja(realUrl);
+                mediaHtml = `<div style="margin-bottom:8px;"><audio controls data-src="${safeRealUrl}" class="async-audio" style="max-width: 250px;">Cargando audio...</audio></div>`;
+            }
         }
         let replyBtn = '';
         if (msg.id_mensaje_meta && (msg.tipo === 'TEXTO' || msg.tipo === 'IMAGEN' || msg.tipo === 'DOCUMENTO' || msg.tipo === 'AUDIO')) {
-            let safeText = (msg.contenido || 'Archivo multimedia').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-            replyBtn = `<i class="fa-solid fa-reply reply-btn" data-meta-id="${msg.id_mensaje_meta}" data-text="${safeText}" style="cursor:pointer; color:#9CA3AF; margin-right:8px;" title="Responder"></i>`;
+            let safeMetaId = escapeHtmlBandeja(msg.id_mensaje_meta);
+            let safeText = escapeHtmlBandeja(msg.contenido || 'Archivo multimedia');
+            replyBtn = `<i class="fa-solid fa-reply reply-btn" data-meta-id="${safeMetaId}" data-text="${safeText}" style="cursor:pointer; color:#9CA3AF; margin-right:8px;" title="Responder"></i>`;
         }
 
         if (msg.origen === 'CLIENTE') {
             msgHtml = `
                 <div class="message client-message" style="align-self: flex-start; background-color: white; border: 1px solid #E5E7EB; border-radius: 18px 18px 18px 2px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); max-width: 80%;">
                     ${mediaHtml}
-                    ${msg.contenido && msg.contenido !== 'Imagen recibida' && msg.contenido !== 'Documento recibido' && msg.contenido !== 'Audio recibido' ? `<p style="margin-bottom:0; color: #111827;">${msg.contenido}</p>` : ''}
+                    ${msg.contenido && msg.contenido !== 'Imagen recibida' && msg.contenido !== 'Documento recibido' && msg.contenido !== 'Audio recibido' ? `<p style="margin-bottom:0; color: #111827;">${formatSafeMessageHtml(msg.contenido)}</p>` : ''}
                     <div style="text-align:right;">${replyBtn}<span class="msg-time">${timeLabel}</span></div>
                 </div>
             `;
         } else if (msg.origen === 'NOTA_INTERNA') {
-            let noteAgent = msg.nombre_agente ? `<div style="font-size: 0.7rem; color: #92400E; font-weight: bold; margin-bottom: 4px;">Por: ${msg.nombre_agente}</div>` : '';
+            let noteAgent = msg.nombre_agente ? `<div style="font-size: 0.7rem; color: #92400E; font-weight: bold; margin-bottom: 4px;">Por: ${escapeHtmlBandeja(msg.nombre_agente)}</div>` : '';
             msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; margin-bottom: 15px; padding-right: 10px;">
                     <div class="msg-bubble" style="
@@ -1385,10 +1500,8 @@ function renderMessages(messages, scrollToBottom) {
                         transform: rotate(-1.5deg);
                         position: relative;
                     ">
-                        <!-- Sombra interna superior para dar volumen -->
                         <div style="position:absolute; top:0; left:0; width:100%; height:15px; background: linear-gradient(rgba(0,0,0,0.06), transparent); border-radius: 2px 2px 0 0;"></div>
                         
-                        <!-- Chincheta (Pushpin) -->
                         <div style="position:absolute; top:-8px; left:50%; transform:translateX(-50%); text-align:center;">
                             <i class="fa-solid fa-thumbtack" style="color:#EF4444; font-size: 1.2rem; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.3));"></i>
                         </div>
@@ -1398,7 +1511,7 @@ function renderMessages(messages, scrollToBottom) {
                         </div>
                         ${noteAgent}
                         
-                        <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${msg.contenido}</p>
+                        <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${formatSafeMessageHtml(msg.contenido)}</p>
                         
                         <div style="text-align: right; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 4px;">
                             <span class="msg-time" style="color:#92400E; font-family: 'Inter', sans-serif; font-size: 0.7rem;">${timeLabel}</span>
@@ -1408,8 +1521,14 @@ function renderMessages(messages, scrollToBottom) {
             `;
         } else if (msg.origen === 'BOT') {
             if (msg.tipo === 'CONTACTO') {
-                let contactName = msg.contenido.substring(18, msg.contenido.indexOf('(')).trim();
-                let contactPhone = msg.contenido.substring(msg.contenido.indexOf('(') + 1, msg.contenido.indexOf(')'));
+                const rawContactStr = String(msg.contenido || '');
+                const openIdx = rawContactStr.indexOf('(');
+                const closeIdx = rawContactStr.indexOf(')');
+                let contactName = openIdx > 18 ? rawContactStr.substring(18, openIdx).trim() : rawContactStr.replace(/^Contacto enviado:\s*/i, '').trim();
+                let contactPhone = (openIdx !== -1 && closeIdx > openIdx) ? rawContactStr.substring(openIdx + 1, closeIdx) : '';
+                const safeContactName = escapeHtmlBandeja(contactName || 'Contacto');
+                const safeContactPhoneDigits = escapeHtmlBandeja(contactPhone.replace(/[^0-9+]/g, ''));
+                const safeContactPhoneDisplay = escapeHtmlBandeja(contactPhone);
 
                 msgHtml = `
                 <div class="message bot-message" style="align-self: flex-end; background-color: white; border: 1px solid #E5E7EB; width: 250px;">
@@ -1417,11 +1536,11 @@ function renderMessages(messages, scrollToBottom) {
                         <div style="display:flex; align-items:center; border-bottom:1px solid #eee; padding-bottom:10px; margin-bottom:10px;">
                             <div style="width:40px;height:40px;border-radius:50%;background:#F3F4F6;display:flex;align-items:center;justify-content:center;color:#374151;font-weight:bold;margin-right:10px;"><i class="fa-solid fa-user"></i></div>
                             <div>
-                                <h6 style="margin:0;font-size:0.9rem;color:#111827;">${contactName}</h6>
+                                <h6 style="margin:0;font-size:0.9rem;color:#111827;">${safeContactName}</h6>
                                 <small style="color:#6B7280;">Sede</small>
                             </div>
                         </div>
-                        <p style="margin-bottom:0;text-align:center;"><a href="tel:${contactPhone}" style="color:#25D366;text-decoration:none;font-weight:600;"><i class="fa-brands fa-whatsapp"></i> ${contactPhone}</a></p>
+                        <p style="margin-bottom:0;text-align:center;"><a href="tel:${safeContactPhoneDigits}" style="color:#25D366;text-decoration:none;font-weight:600;"><i class="fa-brands fa-whatsapp"></i> ${safeContactPhoneDisplay}</a></p>
                         <div style="text-align:right; margin-top:5px;"><span class="msg-time" style="font-size:0.7rem;">${timeLabel} <i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i></span></div>
                     </div>
                 </div>`;
@@ -1431,7 +1550,7 @@ function renderMessages(messages, scrollToBottom) {
                         <div style="font-size: 0.65rem; color: #D97706; margin-bottom: 6px; border-bottom: 1px solid #FDE68A; padding-bottom: 3px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
                             <i class="fa-solid fa-robot"></i> Asistente Virtual
                         </div>
-                        <p style="margin-bottom:0; color: #92400E; font-size: 0.95rem; line-height: 1.4;">${msg.contenido}</p>
+                        <p style="margin-bottom:0; color: #92400E; font-size: 0.95rem; line-height: 1.4;">${formatSafeMessageHtml(msg.contenido)}</p>
                         <div style="text-align: right; margin-top: 4px;">
                             <span class="msg-time" style="color: #B45309; font-size: 0.7rem;">${timeLabel} <i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i></span>
                         </div>
@@ -1442,7 +1561,7 @@ function renderMessages(messages, scrollToBottom) {
             msgHtml = `
                 <div class="system-event">
                     <div class="event-pill">
-                        <i class="fa-solid fa-info-circle"></i> ${msg.contenido} (${timeLabel})
+                        <i class="fa-solid fa-info-circle"></i> ${escapeHtmlBandeja(msg.contenido)} (${timeLabel})
                     </div>
                 </div>
             `;
@@ -1451,8 +1570,10 @@ function renderMessages(messages, scrollToBottom) {
             let colorStlye = msg.origen === 'API_TRANSACCIONAL' ? 'background-color: #ffffff; border: 1px solid #E5E7EB;' : 'background-color: #EFF6FF; border: 1px solid #BFDBFE;';
             let icon = msg.origen === 'API_TRANSACCIONAL' ? '<i class="fa-solid fa-robot text-muted me-1"></i> ' : '';
             
-            let displayContent = msg.contenido || '';
-            let agentNameHtml = (msg.origen === 'AGENTE' && msg.nombre_agente) ? `<div style="font-size: 0.65rem; color: #6B7280; margin-bottom: 6px; border-bottom: 1px solid #BFDBFE; padding-bottom: 2px;"><i class="fa-solid fa-headset"></i> ${msg.nombre_agente}</div>` : '';
+            let displayContent = (msg.tipo === 'DOCUMENTO' && msg.url_archivo)
+                ? ''
+                : `<span>${formatSafeMessageHtml(msg.contenido || '')}</span>`;
+            let agentNameHtml = (msg.origen === 'AGENTE' && msg.nombre_agente) ? `<div style="font-size: 0.65rem; color: #6B7280; margin-bottom: 6px; border-bottom: 1px solid #BFDBFE; padding-bottom: 2px;"><i class="fa-solid fa-headset"></i> ${escapeHtmlBandeja(msg.nombre_agente)}</div>` : '';
             
             // Intelligent Visual Rendering for Templates
             if (msg.contenido && (msg.contenido.startsWith('Envío dinámico de plantilla:') || msg.contenido.startsWith('[TEMPLATE:'))) {
@@ -1473,15 +1594,17 @@ function renderMessages(messages, scrollToBottom) {
                         }
                     }
                     if (tplName && Array.isArray(params)) {
+                        const safeTplName = escapeHtmlBandeja(tplName);
+                        const safeTplTitle = escapeHtmlBandeja(tplName.replace(/_/g, ' '));
                         let idxRendered = String(msg.contenido).indexOf('| Texto:');
                         if (idxRendered !== -1) {
                             let renderedBodyText = String(msg.contenido).substring(idxRendered + 8).trim();
                             displayContent = `
                                 <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
                                     <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${tplName}
+                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${safeTplName}
                                     </div>
-                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B; white-space:pre-line;">${renderedBodyText}</div>
+                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B;">${formatSafeMessageHtml(renderedBodyText)}</div>
                                 </div>
                                 <div style="font-size:0.7rem; color:#9CA3AF; margin-top:6px; display:flex; align-items:center; justify-content:space-between; border-top:1px solid #F3F4F6; padding-top:6px;">
                                     <span>Servicio de mensajería inteligente de STARFI CRM</span>
@@ -1492,11 +1615,11 @@ function renderMessages(messages, scrollToBottom) {
                             displayContent = `
                                 <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
                                     <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${tplName}
+                                        <i class="fa-solid fa-bullhorn"></i> Difusión: ${safeTplName}
                                     </div>
-                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B; white-space:pre-line;">👋¡Hola <strong>${params[0]}</strong>!
-Hoy queremos ${params[1]}.
-Recuerda que en ${params[2]}.
+                                    <div style="font-size:0.9rem; line-height:1.5; color:#1E293B; white-space:pre-line;">👋¡Hola <strong>${escapeHtmlBandeja(params[0])}</strong>!
+Hoy queremos ${escapeHtmlBandeja(params[1])}.
+Recuerda que en ${escapeHtmlBandeja(params[2])}.
 📲 <strong>Responde a este mensaje para obtener más información</strong>👇</div>
                                 </div>
                                 <div style="font-size:0.7rem; color:#9CA3AF; margin-top:6px; display:flex; align-items:center; justify-content:space-between; border-top:1px solid #F3F4F6; padding-top:6px;">
@@ -1508,14 +1631,14 @@ Recuerda que en ${params[2]}.
                             let paramsHtml = params.map((p, i) => `
                                 <div style="display:flex; align-items:baseline; margin-bottom:2px;">
                                     <span style="color:#9CA3AF; font-size:0.75rem; width:15px;">${i+1}.</span> 
-                                    <span style="font-weight:600; color:#374151;">${p}</span>
+                                    <span style="font-weight:600; color:#374151;">${escapeHtmlBandeja(p)}</span>
                                 </div>
                             `).join('');
                             
                             displayContent = `
                                 <div style="border-left: 3px solid #E85B14; padding-left: 12px; margin-bottom: 8px;">
                                     <div style="font-size:0.7rem; color:#E85B14; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
-                                        <i class="fa-solid fa-bolt"></i> Plantilla: ${tplName.replace(/_/g, ' ')}
+                                        <i class="fa-solid fa-bolt"></i> Plantilla: ${safeTplTitle}
                                     </div>
                                     <div style="font-size:0.85rem; line-height:1.4;">
                                         ${paramsHtml}
@@ -1536,22 +1659,20 @@ Recuerda que en ${params[2]}.
                 replyHtml = `
                     <div style="background-color: #DBEAFE; border-left: 3px solid #3B82F6; padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #1E3A8A;">
                         <div style="font-weight: bold; margin-bottom: 2px;"><i class="fa-solid fa-reply"></i> Respondiste a:</div>
-                        <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${msg.reply_to_text}</div>
+                        <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtmlBandeja(msg.reply_to_text)}</div>
                     </div>
                 `;
             }
 
             // Icono de Doble Check
-            let estadoIcon = '<i class="fa-solid fa-clock ms-1" style="color: #9CA3AF;"></i>'; // default
+            let estadoIcon = '<i class="fa-solid fa-clock ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'ENVIADO') estadoIcon = '<i class="fa-solid fa-check ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'ENTREGADO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #9CA3AF;"></i>';
             if (msg.estado_envio === 'LEIDO') estadoIcon = '<i class="fa-solid fa-check-double ms-1" style="color: #60A5FA;"></i>';
             if (msg.estado_envio === 'FALLIDO') {
-                let errorDetail = msg.error_detalle ? msg.error_detalle.replace(/"/g, '&quot;') : 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.';
-                let safeDetailJs = errorDetail.replace(/'/g, "\\'").replace(/\n/g, ' ');
-                
-                estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1 text-danger cursor-pointer" onclick="window.showErrorDetail('${safeDetailJs}')" title="${errorDetail}" style="cursor:pointer; font-size: 0.9rem;"></i>
-                              <i class="fa-solid fa-rotate-right retry-btn ms-1" data-id="${msg.id}" style="cursor:pointer; color:#EF4444;" title="Reintentar Envío"></i>`;
+                const safeErrorDetail = escapeHtmlBandeja(msg.error_detalle || 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.');
+                estadoIcon = `<i class="fa-solid fa-circle-exclamation ms-1 text-danger cursor-pointer btn-show-msg-error" data-error-detail="${safeErrorDetail}" title="${safeErrorDetail}" style="cursor:pointer; font-size: 0.9rem;"></i>
+                              <i class="fa-solid fa-rotate-right retry-btn ms-1" data-id="${parseInt(msg.id, 10) || 0}" style="cursor:pointer; color:#EF4444;" title="Reintentar Envío"></i>`;
             }
 
             msgHtml = `
@@ -1572,7 +1693,6 @@ Recuerda que en ${params[2]}.
         area.append(msgHtml);
     });
     
-    // Async audio fetcher to bypass Cloudflare streaming restrictions
     setTimeout(() => {
         document.querySelectorAll('.async-audio').forEach(audio => {
             if (!audio.src && audio.dataset.src && !audio.dataset.fetching) {
@@ -1594,7 +1714,28 @@ Recuerda que en ${params[2]}.
     if (scrollToBottom) area.scrollTop(area[0].scrollHeight);
 }
 
+$(document).on('click', '.zoomable-media', function (e) {
+    e.stopPropagation();
+    const url = $(this).attr('data-media-url') || '';
+    if (!url) return;
+    Swal.fire({
+        imageUrl: url,
+        imageAlt: 'Archivo adjunto',
+        width: 'auto',
+        padding: 0,
+        showConfirmButton: false,
+        customClass: { popup: 'bg-transparent' },
+        backdrop: 'rgba(0,0,0,0.8)'
+    });
+});
+
+$(document).on('click', '.btn-show-msg-error', function (e) {
+    e.stopPropagation();
+    window.showErrorDetail($(this).attr('data-error-detail') || '');
+});
+
 window.showErrorDetail = function (detail) {
+    const safeDetail = escapeHtmlBandeja(detail || 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.');
     Swal.fire({
         icon: 'error',
         title: 'Motivo del Fallo de Envío',
@@ -1602,7 +1743,7 @@ window.showErrorDetail = function (detail) {
             <div class="text-start p-2" style="font-size: 0.9rem;">
                 <p class="mb-2"><b>Información técnica devuelta por Meta / Servidor:</b></p>
                 <div class="alert alert-danger mb-3" style="font-size: 0.85rem; word-break: break-word; line-height: 1.5;">
-                    <i class="fa-solid fa-triangle-exclamation me-1"></i> ${detail || 'No se pudo entregar el mensaje a través de Meta WhatsApp Cloud API.'}
+                    <i class="fa-solid fa-triangle-exclamation me-1"></i> ${safeDetail}
                 </div>
                 <div class="p-2 rounded bg-light border" style="font-size: 0.8rem; color: #4B5563;">
                     <p class="fw-bold mb-1"><i class="fa-solid fa-lightbulb text-warning me-1"></i> Recomendaciones:</p>
@@ -1624,8 +1765,8 @@ window.currentReplyMetaId = null;
 
 $(document).on('click', '.reply-btn', function(e) {
     e.stopPropagation();
-    window.currentReplyMetaId = $(this).data('meta-id');
-    let text = $(this).data('text');
+    window.currentReplyMetaId = $(this).attr('data-meta-id') || null;
+    let text = String($(this).attr('data-text') || '');
     if (text.length > 50) text = text.substring(0, 47) + '...';
     
     if ($('#replyContextUI').length === 0) {
@@ -1644,20 +1785,23 @@ $(document).on('click', '#cancelReplyBtn', function() {
     window.currentReplyMetaId = null;
     $('#replyContextUI').remove();
 });
+
 // Reintentar Envío de Mensajes Fallidos
 $(document).on('click', '.retry-btn', function(e) {
     e.stopPropagation();
-    const msgId = $(this).data('id');
+    const msgId = parseInt($(this).attr('data-id') || '0', 10);
+    if (msgId <= 0 || bandejaInFlight.has('retry_' + msgId)) return;
     
     Swal.fire({
         title: '¿Reintentar envío?',
-        text: 'Se intentará enviar este mensaje de nuevo a WhatsApp. (Nota: Si es un sticker inválido, volverá a fallar).',
+        text: 'Se intentará enviar este mensaje de nuevo a WhatsApp.',
         icon: 'question',
         showCancelButton: true,
         confirmButtonText: 'Sí, reintentar',
         cancelButtonText: 'Cancelar'
     }).then((result) => {
         if (result.isConfirmed) {
+            if (!acquireBandejaLock('retry_' + msgId)) return;
             $.ajax({
                 url: 'back_bandeja.php',
                 type: 'POST',
@@ -1673,6 +1817,9 @@ $(document).on('click', '.retry-btn', function(e) {
                 },
                 error: function() {
                     Swal.fire('Error', 'Fallo al comunicarse con el servidor.', 'error');
+                },
+                complete: function () {
+                    releaseBandejaLock('retry_' + msgId);
                 }
             });
         }
@@ -1680,6 +1827,7 @@ $(document).on('click', '.retry-btn', function(e) {
 });
 
 function sendMessage() {
+    if (bandejaInFlight.has('send_msg')) return;
     if (activeChatId === null) {
         Swal.fire({ icon: 'warning', text: 'Debes seleccionar una conversación primero.' });
         return;
@@ -1697,10 +1845,15 @@ function sendMessage() {
         return;
     }
 
+    const $sendBtn = $('#sendBtn');
+    if (!acquireBandejaLock('send_msg', $sendBtn)) return;
+
     const replyMetaId = window.currentReplyMetaId;
     const replyText = $('#replyTextPreview').text() || '';
 
     const area = $('#messagesArea');
+    const safeOptimisticText = formatSafeMessageHtml(text);
+    const safeOptimisticReply = escapeHtmlBandeja(replyText);
     
     if (isInternal) {
         area.append(`
@@ -1724,7 +1877,7 @@ function sendMessage() {
                     <div style="font-size:0.7rem; color:#D97706; margin-bottom:6px; margin-top:8px; font-family: 'Inter', sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
                         <i class="fa-solid fa-user-secret"></i> Nota Privada
                     </div>
-                    <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${text}</p>
+                    <p style="margin-bottom:8px; font-size: 0.95rem; line-height: 1.4;">${safeOptimisticText}</p>
                     <div style="text-align: right; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 4px;">
                         <span class="msg-time" style="color:#92400E; font-family: 'Inter', sans-serif; font-size: 0.7rem;"><i class="fa-regular fa-clock"></i> Guardando...</span>
                     </div>
@@ -1735,14 +1888,14 @@ function sendMessage() {
         let replyHtml = replyText ? `
             <div style="background-color: #DBEAFE; border-left: 3px solid #3B82F6; padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #1E3A8A;">
                 <div style="font-weight: bold; margin-bottom: 2px;"><i class="fa-solid fa-reply"></i> Respondiste a:</div>
-                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${replyText}</div>
+                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${safeOptimisticReply}</div>
             </div>
         ` : '';
         area.append(`
             <div class="message bot-message" style="align-self: flex-end; background-color: #EFF6FF; border: 1px solid #BFDBFE;">
                 <div class="msg-bubble" style="background-color: transparent; border:none; padding-bottom:5px;">
                     ${replyHtml}
-                    <p style="margin-bottom:0;">${text}</p>
+                    <p style="margin-bottom:0;">${safeOptimisticText}</p>
                     <span class="msg-time"><i class="fa-regular fa-clock"></i> Enviando...</span>
                 </div>
             </div>
@@ -1751,7 +1904,6 @@ function sendMessage() {
     area.scrollTop(area[0].scrollHeight);
     input.val('');
     
-    // Clear reply UI immediately
     if (replyMetaId) {
         window.currentReplyMetaId = null;
         $('#replyContextUI').remove();
@@ -1764,7 +1916,6 @@ function sendMessage() {
             if (response.status === 'success') {
                 if (activeChatId == 0 && response.new_chat_id) {
                     activeChatId = response.new_chat_id;
-                    // Actualizar el atributo data-id en el DOM para el chat activo
                     $('.chat-item.active').attr('data-id', activeChatId);
                 }
                 loadMessages(activeChatId, true);
@@ -1779,6 +1930,10 @@ function sendMessage() {
             } else {
                 Swal.fire('Error', response.message, 'error');
             }
+        },
+        complete: function () {
+            releaseBandejaLock('send_msg', $sendBtn);
+            updateActiveWindow24hUI();
         }
     });
 }
@@ -1978,6 +2133,8 @@ function initSprint2EnterpriseTools() {
     });
 
     $('#btnSaveQuickSla').on('click', function () {
+        const btn = $(this);
+        if (btn.prop('disabled')) return;
         const vMin = parseInt($('#quickSlaVerdeInput').val() || '5', 10);
         const aMin = parseInt($('#quickSlaAmarilloInput').val() || '15', 10);
         if (vMin < 1 || aMin <= vMin) {
@@ -1985,7 +2142,6 @@ function initSprint2EnterpriseTools() {
             return;
         }
         const sedeSel = parseInt($('#filterSede').val() || '0', 10);
-        const btn = $(this);
         btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...');
         $.post('back_bandeja.php', {
             action: 'save_sla_quick',
@@ -2063,6 +2219,7 @@ function initSprint2EnterpriseTools() {
 
     $('#btnSaveQuickDeal').on('click', function () {
         const btn = $(this);
+        if (btn.prop('disabled')) return;
         const etapa = $('#qdEtapa').val() || 'NUEVO_LEAD';
         const monto = parseFloat($('#qdMontoUsd').val() || '0') || 0;
         const titulo = ($('#qdTitulo').val() || '').trim();
@@ -2229,14 +2386,14 @@ function openMetaReactivateModal(forceSync) {
             metaTemplatesSedeName = res.nombre_sede || 'Nuestra Sede';
             let opts = '';
             metaTemplatesCache.forEach((tpl, idx) => {
-                opts += `<option value="${idx}">${tpl.name} (${tpl.language} · ${tpl.category})</option>`;
+                opts += `<option value="${idx}">${escapeHtmlBandeja(tpl.name)} (${escapeHtmlBandeja(tpl.language)} · ${escapeHtmlBandeja(tpl.category)})</option>`;
             });
             $('#selectMetaOfficialTpl').html(opts).prop('disabled', false);
             $('#btnSendMetaReactivate').prop('disabled', false);
             renderMetaTplSelection(0);
         } else {
             $('#selectMetaOfficialTpl').html('<option value="">Sin plantillas disponibles</option>');
-            $('#metaTplVarsContainer').html(`<div class="alert alert-warning small mb-0">${(res && res.message) ? res.message : 'No se encontraron plantillas aprobadas para esta sede.'}</div>`);
+            $('#metaTplVarsContainer').html(`<div class="alert alert-warning small mb-0">${escapeHtmlBandeja((res && res.message) ? res.message : 'No se encontraron plantillas aprobadas para esta sede.')}</div>`);
         }
     }, 'json').fail(function () {
         $('#metaTplVarsContainer').html('<div class="alert alert-danger small mb-0">Error de red al consultar las plantillas oficiales de Meta.</div>');
@@ -2256,11 +2413,11 @@ function renderMetaTplSelection(idx) {
 
     let badgesHtml = `
         <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2.5 py-1"><i class="fa-solid fa-check-circle me-1"></i>APROBADA</span>
-        <span class="badge bg-light text-dark border rounded-pill px-2.5 py-1">${tpl.category || 'UTILITY'}</span>
-        <span class="badge bg-light text-secondary border rounded-pill px-2.5 py-1">Idioma: ${tpl.language || 'es'}</span>
+        <span class="badge bg-light text-dark border rounded-pill px-2.5 py-1">${escapeHtmlBandeja(tpl.category || 'UTILITY')}</span>
+        <span class="badge bg-light text-secondary border rounded-pill px-2.5 py-1">Idioma: ${escapeHtmlBandeja(tpl.language || 'es')}</span>
     `;
     if (tpl.header_format && tpl.header_format !== 'NONE') {
-        badgesHtml += `<span class="badge bg-info-subtle text-info-emphasis border rounded-pill px-2.5 py-1">Encabezado: ${tpl.header_format}</span>`;
+        badgesHtml += `<span class="badge bg-info-subtle text-info-emphasis border rounded-pill px-2.5 py-1">Encabezado: ${escapeHtmlBandeja(tpl.header_format)}</span>`;
     }
     $('#metaTplMetaBadges').html(badgesHtml);
 
@@ -2275,7 +2432,7 @@ function renderMetaTplSelection(idx) {
         container.append(`
             <div class="mb-2">
                 <label class="form-label small fw-bold text-secondary mb-1">Variable de Encabezado {{1}}</label>
-                <input type="text" id="metaTplHeaderInput" class="form-control form-control-sm" value="${cleanClientName.replace(/"/g, '&quot;')}">
+                <input type="text" id="metaTplHeaderInput" class="form-control form-control-sm" value="${escapeHtmlBandeja(cleanClientName)}">
             </div>
         `);
     }
@@ -2286,20 +2443,21 @@ function renderMetaTplSelection(idx) {
     } else {
         container.append('<label class="form-label fw-bold text-dark small mb-2">2. Completa los parámetros de la plantilla</label>');
         bodyVars.forEach((varNum, i) => {
+            const safeVarNum = parseInt(varNum, 10) || (i + 1);
             let defVal = '';
-            if (varNum === 1) {
+            if (safeVarNum === 1) {
                 defVal = cleanClientName;
-            } else if (tpl.name === 'starfi_difusion_directa' && varNum === 2) {
+            } else if (tpl.name === 'starfi_difusion_directa' && safeVarNum === 2) {
                 defVal = 'retomar tu solicitud pendiente y brindarte atención inmediata';
-            } else if (tpl.name === 'starfi_difusion_directa' && varNum === 3) {
+            } else if (tpl.name === 'starfi_difusion_directa' && safeVarNum === 3) {
                 defVal = `${metaTemplatesSedeName} contamos con disponibilidad inmediata para ayudarte`;
             } else if (Array.isArray(tpl.body_examples) && tpl.body_examples[i]) {
                 defVal = tpl.body_examples[i];
             }
             container.append(`
                 <div class="input-group input-group-sm mb-2">
-                    <span class="input-group-text fw-bold bg-white text-primary">{{${varNum}}}</span>
-                    <input type="text" class="form-control meta-tpl-var-input" data-var="${varNum}" value="${String(defVal).replace(/"/g, '&quot;')}" placeholder="Valor para {{${varNum}}}...">
+                    <span class="input-group-text fw-bold bg-white text-primary">{{${safeVarNum}}}</span>
+                    <input type="text" class="form-control meta-tpl-var-input" data-var="${safeVarNum}" value="${escapeHtmlBandeja(defVal)}" placeholder="Valor para {{${safeVarNum}}}...">
                 </div>
             `);
         });
@@ -2330,6 +2488,8 @@ function buildMetaTplPreviewText(tpl) {
 }
 
 function submitMetaTemplateReactivation() {
+    const btn = $('#btnSendMetaReactivate');
+    if (btn.prop('disabled') || bandejaInFlight.has('send_meta_reactivate')) return;
     const idx = parseInt($('#selectMetaOfficialTpl').val() || '0', 10);
     const tpl = metaTemplatesCache[idx];
     if (!tpl) return;
@@ -2348,8 +2508,7 @@ function submitMetaTemplateReactivation() {
 
     const headerParam = ($('#metaTplHeaderInput').val() || '').trim();
     const previewText = buildMetaTplPreviewText(tpl);
-    const btn = $('#btnSendMetaReactivate');
-    btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando a Meta...');
+    if (!acquireBandejaLock('send_meta_reactivate', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando a Meta...')) return;
 
     $.post('back_bandeja.php', {
         action: 'send_meta_template_reactivate',
@@ -2363,7 +2522,6 @@ function submitMetaTemplateReactivation() {
         body_params: JSON.stringify(params),
         rendered_preview: previewText
     }, function (res) {
-        btn.prop('disabled', false).html('<i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial');
         if (res && res.new_chat_id && (!activeChatId || activeChatId === 0)) {
             activeChatId = parseInt(res.new_chat_id, 10);
             $('.chat-item.active').attr('data-id', activeChatId);
@@ -2383,8 +2541,9 @@ function submitMetaTemplateReactivation() {
             Swal.fire('Aviso de Meta Cloud API', (res && res.message) ? res.message : 'No se pudo entregar la plantilla.', 'error');
         }
     }, 'json').fail(function () {
-        btn.prop('disabled', false).html('<i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial');
         Swal.fire('Error', 'Fallo de conexión al enviar la plantilla oficial.', 'error');
+    }).always(function () {
+        releaseBandejaLock('send_meta_reactivate', btn, '<i class="fa-solid fa-paper-plane me-1"></i> Enviar Plantilla Oficial');
     });
 }
 
@@ -2520,7 +2679,7 @@ function refreshLiveSlaSemaphores(canTriggerAudio) {
             toast: true,
             position: 'bottom-end',
             icon: 'warning',
-            title: `🔴 Alerta SLA (>${aMin} min): ${sampleNames}${extra}`,
+            titleText: `🔴 Alerta SLA (>${aMin} min): ${sampleNames}${extra}`,
             showConfirmButton: false,
             timer: 4500
         });

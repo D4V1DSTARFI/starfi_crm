@@ -4,6 +4,7 @@ requireAuth();
 requirePermission('configuracion');
 $agente = getAgenteInfo();
 $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
+$es_master_view = (intval($agente['id'] ?? 0) === 1 || strtoupper(trim((string)($agente['rol'] ?? ''))) === 'MASTER');
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -22,8 +23,6 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
     <!-- FontAwesome Local -->
     <link rel="stylesheet" href="../../assets/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="../../css/styles.css">
-    <!-- Leaflet CSS Local for Interactive Map Picker -->
-    <link rel="stylesheet" href="../../assets/vendor/leaflet/leaflet.css" />
     
     <style>
         .config-container {
@@ -429,12 +428,12 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                                     <label class="form-label text-dark fw-bold small text-uppercase mb-1">GEMINI API KEY (GOOGLE AI STUDIO)</label>
                                                     <div class="input-group">
                                                         <span class="input-group-text bg-light text-muted border-end-0"><i class="fa-solid fa-key text-success"></i></span>
-                                                        <input type="password" class="form-control form-control-premium border-start-0 border-end-0" id="gema_token" placeholder="AIzaSy...................">
+                                                        <input type="password" class="form-control form-control-premium border-start-0 border-end-0" id="gema_token" autocomplete="new-password" placeholder="AIzaSy...................">
                                                         <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('gema_token')">
                                                             <i class="fa-solid fa-eye" id="gema_token_eye"></i>
                                                         </button>
                                                     </div>
-                                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-lock me-1"></i> Credencial encriptada. Temperatura 0.4 es óptima para respuestas precisas.</small>
+                                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;"><i class="fa-solid fa-lock me-1"></i> Credencial protegida. Temperatura 0.4 es óptima para respuestas precisas.</small>
                                                 </div>
                                             </div>
                                         </div>
@@ -567,7 +566,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                     <div class="card-body p-4">
                                         <h5 class="fw-bold text-dark mb-3"><i class="fa-solid fa-circle-check text-success me-2"></i> Auto-Diagnóstico de Base de Datos y Archivos</h5>
                                         <p class="text-muted small mb-4">Verifica que las tablas críticas existan en la base de datos, que los controladores estén en su lugar y comprueba la conectividad del sistema.</p>
-                                        <button class="btn btn-outline-success fw-bold" onclick="ejecutarDiagnostico()" style="border-radius: 8px;">
+                                        <button id="btnRunDiagnostico" class="btn btn-outline-success fw-bold" onclick="ejecutarDiagnostico()" style="border-radius: 8px;">
                                             <i class="fa-solid fa-circle-play me-2"></i> Ejecutar Diagnóstico
                                         </button>
                                         <div id="resultadoDiagnostico" class="mt-3"></div>
@@ -581,7 +580,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                     <div class="card-body p-4">
                                         <h5 class="fw-bold text-dark mb-3"><i class="fa-brands fa-whatsapp text-primary me-2"></i> Simular Mensaje Entrante (Bandeja)</h5>
                                         <p class="text-muted small mb-4">Simula que un cliente ha enviado un mensaje a tu webhook de WhatsApp. Esto te permite verificar la recepción y visualización instantánea en el Centro de Mensajes.</p>
-                                        <button class="btn btn-outline-primary fw-bold" onclick="ejecutarSimulador()" style="border-radius: 8px;">
+                                        <button id="btnRunSimulador" class="btn btn-outline-primary fw-bold" onclick="ejecutarSimulador()" style="border-radius: 8px;">
                                             <i class="fa-solid fa-paper-plane me-2"></i> Simular Recepción de Mensaje
                                         </button>
                                     </div>
@@ -629,7 +628,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                                 </div>
                                             </div>
                                             <div class="mt-4">
-                                                <button type="button" class="btn btn-starfi-primary fw-bold" onclick="enviarNotificacionPrueba()" style="border-radius: 8px;">
+                                                <button type="button" id="btnSendNotifPrueba" class="btn btn-starfi-primary fw-bold" onclick="enviarNotificacionPrueba()" style="border-radius: 8px;">
                                                     <i class="fa-solid fa-paper-plane me-2"></i> Enviar Notificación de Prueba
                                                 </button>
                                             </div>
@@ -766,14 +765,19 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
         </div>
     </main>
 
-    <?php require __DIR__ . '/modals_configuracion.php'; ?>
+    <div id="configBootData" class="d-none"
+         data-is-master="<?= $es_master_view ? '1' : '0' ?>"
+         data-user-sede="<?= intval($agente['id_sede'] ?? 0) ?>"></div>
+
+    <?php
+    define('STARFI_MODALS_ALLOWED', true);
+    require __DIR__ . '/modals_configuracion.php';
+    ?>
 
     <!-- JavaScript Local Bootstrap -->
     <script src="../../assets/js/bootstrap.bundle.min.js"></script>
     <script src="../../assets/js/jquery-3.7.1.min.js"></script>
     <script src="../../assets/js/sweetalert2.all.min.js"></script>
-    <!-- Leaflet JS Local for Interactive Map -->
-    <script src="../../assets/vendor/leaflet/leaflet.js"></script>
     <script src="funciones_configuracion.js?v=<?= time() ?>"></script>
     </div>
 </body>

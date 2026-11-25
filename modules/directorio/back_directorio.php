@@ -169,10 +169,18 @@ switch ($action) {
             break;
         }
 
-        $colsConvRes = @$con->query("SHOW COLUMNS FROM `conversaciones`");
         $convCols = [];
-        if ($colsConvRes) {
-            while ($rc = $colsConvRes->fetch_assoc()) $convCols[$rc['Field']] = true;
+        $stmtCols = @$con->prepare("SHOW COLUMNS FROM `conversaciones`");
+        if ($stmtCols && $stmtCols->execute()) {
+            $colsConvRes = $stmtCols->get_result();
+            if ($colsConvRes) {
+                while ($rc = $colsConvRes->fetch_assoc()) {
+                    $convCols[$rc['Field']] = true;
+                }
+            }
+            $stmtCols->close();
+        } elseif ($stmtCols) {
+            $stmtCols->close();
         }
         $resComSelect = isset($convCols['resultado_comercial']) ? "conv.resultado_comercial" : "NULL AS resultado_comercial";
         $fecCierreSelect = isset($convCols['fecha_cierre_venta']) ? "conv.fecha_cierre_venta" : "NULL AS fecha_cierre_venta";
@@ -313,7 +321,7 @@ switch ($action) {
 
         // Capturar estado anterior para auditoría formal
         $prevClient = null;
-        $stmtPrev = $con->prepare("SELECT id, id_sede, nombre, numero_whatsapp, direccion, notas_internas, estado FROM clientes_contactos WHERE id = ? LIMIT 1");
+        $stmtPrev = $con->prepare("SELECT id, id_sede, nombre, numero_whatsapp, direccion, notas_internas, etiquetas, estado FROM clientes_contactos WHERE id = ? LIMIT 1");
         if ($stmtPrev) {
             $stmtPrev->bind_param("i", $id);
             $stmtPrev->execute();
@@ -321,11 +329,15 @@ switch ($action) {
             $stmtPrev->close();
         }
 
+        $etiquetas_json = isset($_POST['etiquetas'])
+            ? trim((string)$_POST['etiquetas'])
+            : ($prevClient['etiquetas'] ?? null);
+
         $okUpdate = false;
         if ($numero_whatsapp !== '') {
-            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, numero_whatsapp = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, numero_whatsapp = ?, direccion = ?, notas_internas = ?, etiquetas = ?, id_sede = ? WHERE id = ?");
             if ($stmt) {
-                $stmt->bind_param("ssssii", $nombre, $numero_whatsapp, $direccion, $notas, $id_sede, $id);
+                $stmt->bind_param("sssssii", $nombre, $numero_whatsapp, $direccion, $notas, $etiquetas_json, $id_sede, $id);
                 $okUpdate = $stmt->execute();
                 if (!$okUpdate) {
                     starfi_log_exception('directorio', 'Error UPDATE save_profile con teléfono', ['id' => $id, 'errno' => $stmt->errno]);
@@ -333,9 +345,9 @@ switch ($action) {
                 $stmt->close();
             }
         } else {
-            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, id_sede = ? WHERE id = ?");
+            $stmt = $con->prepare("UPDATE clientes_contactos SET nombre = ?, direccion = ?, notas_internas = ?, etiquetas = ?, id_sede = ? WHERE id = ?");
             if ($stmt) {
-                $stmt->bind_param("sssii", $nombre, $direccion, $notas, $id_sede, $id);
+                $stmt->bind_param("ssssii", $nombre, $direccion, $notas, $etiquetas_json, $id_sede, $id);
                 $okUpdate = $stmt->execute();
                 if (!$okUpdate) {
                     starfi_log_exception('directorio', 'Error UPDATE save_profile sin teléfono', ['id' => $id, 'errno' => $stmt->errno]);

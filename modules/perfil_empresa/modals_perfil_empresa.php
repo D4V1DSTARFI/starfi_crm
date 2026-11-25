@@ -1,8 +1,4 @@
-<?php
-/**
- * Modales del Módulo Perfil de Empresa - STARFI CRM
- */
-?>
+<?php if (!defined('STARFI_MODALS_ALLOWED')) { http_response_code(403); exit('403 Forbidden'); } ?>
 <!-- MODAL MANUAL / GUÍA -->
 <div class="modal fade" id="modalManual" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -114,7 +110,7 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="savePerfilEmpresa()">Guardar Perfil</button>
+                <button type="button" id="btnSavePerfilEmpresa" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="savePerfilEmpresa(this)">Guardar Perfil</button>
             </div>
         </div>
     </div>
@@ -166,7 +162,7 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveFirmante()">Guardar Firmante</button>
+                <button type="button" id="btnSaveFirmante" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveFirmante(this)">Guardar Firmante</button>
             </div>
         </div>
     </div>
@@ -208,7 +204,7 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveRegistro()">Guardar Registro</button>
+                <button type="button" id="btnSaveRegistro" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveRegistro(this)">Guardar Registro</button>
             </div>
         </div>
     </div>
@@ -243,7 +239,7 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveExpediente()">Adjuntar Archivo</button>
+                <button type="button" id="btnSaveExpediente" class="btn btn-primary px-4 fw-semibold" style="background-color: var(--primary); border-color: var(--primary);" onclick="saveExpediente(this)">Adjuntar Archivo</button>
             </div>
         </div>
     </div>
