@@ -675,7 +675,7 @@ $(document).ready(function () {
                         <option value="NO_INTERESADO">No Interesado / Spam</option>
                         <option value="OTRO">Otro... (Especificar)</option>
                     </select>
-                    <input type="text" id="motivo_cierre_custom" class="form-control mb-3" placeholder="Escribe el nuevo motivo..." style="display:none;">
+                    <input type="text" id="motivo_cierre_custom" autocomplete="off" class="form-control mb-3" placeholder="Escribe el nuevo motivo..." style="display:none;">
 
                     <label class="form-label text-muted fw-bold" style="font-size: 0.85rem;">Calificación del Cliente (Lead Scoring)</label>
                     <div class="d-flex justify-content-between mb-3">
@@ -702,7 +702,7 @@ $(document).ready(function () {
                     </div>
 
                     <label class="form-label text-muted fw-bold" style="font-size: 0.85rem;">Observación (Opcional)</label>
-                    <textarea id="observacion_cierre_modal" class="form-control" rows="2" placeholder="Deja una reseña sobre el cliente o detalles de la atención..."></textarea>
+                    <textarea id="observacion_cierre_modal" autocomplete="off" class="form-control" rows="2" placeholder="Deja una reseña sobre el cliente o detalles de la atención..."></textarea>
                     
                     <div class="form-check mt-3 mb-1 text-start">
                         <input class="form-check-input" type="checkbox" id="enviar_csat" value="1" checked>
@@ -1445,6 +1445,9 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor, no_leidos)
     }
     $('#iaSummaryCard').removeClass('active');
     $('#iaSummaryBulletsList').empty();
+    if (typeof cancelActiveVoiceRecording === 'function') {
+        cancelActiveVoiceRecording(true);
+    }
     refreshIaSuggestBtnLabel();
     updateActiveWindow24hUI();
     updateHeaderDealChip(activeDealInfo);
@@ -1930,7 +1933,10 @@ Recuerda que en ${escapeHtmlBandeja(params[2])}.
             if (!audio.src && audio.dataset.src && !audio.dataset.fetching) {
                 audio.dataset.fetching = 'true';
                 fetch(audio.dataset.src)
-                    .then(res => res.blob())
+                    .then(res => {
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        return res.blob();
+                    })
                     .then(blob => {
                         audio.src = URL.createObjectURL(blob);
                         audio.innerHTML = '';
@@ -2664,7 +2670,7 @@ function renderMetaTplSelection(idx) {
         container.append(`
             <div class="mb-2">
                 <label class="form-label small fw-bold text-secondary mb-1">Variable de Encabezado {{1}}</label>
-                <input type="text" id="metaTplHeaderInput" class="form-control form-control-sm" value="${escapeHtmlBandeja(cleanClientName)}">
+                <input type="text" id="metaTplHeaderInput" autocomplete="off" class="form-control form-control-sm" value="${escapeHtmlBandeja(cleanClientName)}">
             </div>
         `);
     }
@@ -2689,7 +2695,7 @@ function renderMetaTplSelection(idx) {
             container.append(`
                 <div class="input-group input-group-sm mb-2">
                     <span class="input-group-text fw-bold bg-white text-primary">{{${safeVarNum}}}</span>
-                    <input type="text" class="form-control meta-tpl-var-input" data-var="${safeVarNum}" value="${escapeHtmlBandeja(defVal)}" placeholder="Valor para {{${safeVarNum}}}...">
+                    <input type="text" autocomplete="off" class="form-control meta-tpl-var-input" data-var="${safeVarNum}" value="${escapeHtmlBandeja(defVal)}" placeholder="Valor para {{${safeVarNum}}}...">
                 </div>
             `);
         });
@@ -2951,4 +2957,685 @@ function playSlaAlertChime() {
     } catch (e) {
         // Ignorar bloqueo de autoplay del navegador antes de la primera interacción
     }
+}
+
+// ============================================================================
+// [SPRINT 4: OMN-01] GRABACIÓN Y ENVÍO DE NOTAS DE VOZ (MediaRecorder API)
+// ============================================================================
+let activeVoiceRecorder = null;
+let activeVoiceStream = null;
+let activeVoiceChunks = [];
+let activeVoiceStartMs = 0;
+let activeVoiceTimerInterval = null;
+let activeVoiceMime = '';
+let activeVoiceDiscard = false;
+
+function detectSupportedVoiceMime() {
+    if (typeof window.MediaRecorder === 'undefined') {
+        return { mime: '', ext: 'ogg' };
+    }
+    const candidates = [
+        { mime: 'audio/ogg;codecs=opus', ext: 'ogg', cleanMime: 'audio/ogg' },
+        { mime: 'audio/ogg', ext: 'ogg', cleanMime: 'audio/ogg' },
+        { mime: 'audio/mp4;codecs=mp4a.40.2', ext: 'm4a', cleanMime: 'audio/mp4' },
+        { mime: 'audio/mp4', ext: 'm4a', cleanMime: 'audio/mp4' },
+        { mime: 'audio/mpeg', ext: 'mp3', cleanMime: 'audio/mpeg' },
+        { mime: 'audio/webm;codecs=opus', ext: 'webm', cleanMime: 'audio/webm' },
+        { mime: 'audio/webm', ext: 'webm', cleanMime: 'audio/webm' }
+    ];
+    for (let i = 0; i < candidates.length; i++) {
+        try {
+            if (!MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(candidates[i].mime)) {
+                return candidates[i];
+            }
+        } catch (e) {}
+    }
+    return { mime: '', ext: 'webm', cleanMime: 'audio/webm' };
+}
+
+function stopVoiceStreamTracks() {
+    if (activeVoiceTimerInterval) {
+        clearInterval(activeVoiceTimerInterval);
+        activeVoiceTimerInterval = null;
+    }
+    if (activeVoiceStream) {
+        try {
+            activeVoiceStream.getTracks().forEach(function (t) { t.stop(); });
+        } catch (e) {}
+        activeVoiceStream = null;
+    }
+}
+
+function resetVoiceRecorderUI() {
+    $('#voiceRecorderBar').removeClass('active');
+    $('#voiceRecordTimer').text('00:00');
+    $('#inputBoxContainer').show();
+    $('#btnVoiceSend').prop('disabled', false).html('<i class="fa-solid fa-paper-plane me-1"></i> Enviar Nota');
+    $('#btnVoiceCancel').prop('disabled', false);
+}
+
+function cancelActiveVoiceRecording(silent) {
+    activeVoiceDiscard = true;
+    if (activeVoiceRecorder && activeVoiceRecorder.state !== 'inactive') {
+        try {
+            activeVoiceRecorder.stop();
+        } catch (e) {}
+    }
+    activeVoiceRecorder = null;
+    activeVoiceChunks = [];
+    stopVoiceStreamTracks();
+    resetVoiceRecorderUI();
+    if (!silent) {
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'info',
+            title: 'Grabación de voz descartada',
+            showConfirmButton: false,
+            timer: 1600
+        });
+    }
+}
+
+function uploadRecordedVoiceBlob(blob, ext, cleanMime, durationSec) {
+    const $btnSend = $('#btnVoiceSend');
+    if (!blob || blob.size <= 0) {
+        resetVoiceRecorderUI();
+        Swal.fire('Aviso', 'No se capturó audio del micrófono. Intenta nuevamente.', 'warning');
+        return;
+    }
+    if (blob.size > 5 * 1024 * 1024) {
+        resetVoiceRecorderUI();
+        Swal.fire('Límite excedido', 'La nota de voz supera el máximo permitido de 5 MB.', 'warning');
+        return;
+    }
+    if (!acquireBandejaLock('send_voice_note', $btnSend, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Enviando...')) {
+        return;
+    }
+    $('#btnVoiceCancel').prop('disabled', true);
+
+    const formData = new FormData();
+    formData.append('action', 'upload_media');
+    formData.append('is_voice_note', '1');
+    formData.append('voice_duration_sec', String(Math.max(1, durationSec)));
+    formData.append('conversacion_id', String(activeChatId || 0));
+    formData.append('cliente_id', String(activeClientId || 0));
+    if (window.currentReplyMetaId) {
+        formData.append('reply_to_meta_id', window.currentReplyMetaId);
+        formData.append('reply_to_text', $('#replyTextPreview').text() || '');
+    }
+    const voiceFileName = 'nota_voz_' + Date.now() + '.' + (ext || 'ogg');
+    formData.append('file', blob, voiceFileName);
+
+    $.ajax({
+        url: 'back_bandeja.php',
+        type: 'POST',
+        data: formData,
+        contentType: false,
+        processData: false,
+        dataType: 'json',
+        success: function (response) {
+            resetVoiceRecorderUI();
+            if (window.currentReplyMetaId) {
+                window.currentReplyMetaId = null;
+                $('#replyContextUI').remove();
+            }
+            if (response && response.status === 'success') {
+                if (activeChatId == 0 && response.new_chat_id) {
+                    activeChatId = response.new_chat_id;
+                    $('.chat-item.active').attr('data-id', activeChatId);
+                }
+                loadMessages(activeChatId, true);
+                loadChats(false, currentChatPage, true);
+                if (response.estado_envio === 'FALLIDO' && response.warning) {
+                    Swal.fire('Aviso de Meta Cloud API', response.warning, 'warning');
+                }
+            } else if (response && response.code === 'WINDOW_24H_EXPIRED') {
+                activeWindowExpiresAtEpoch = 0;
+                updateActiveWindow24hUI();
+                loadMessages(activeChatId, true);
+                promptWindow24hExpiredModal(response.message);
+            } else {
+                Swal.fire('Error', (response && response.message) ? response.message : 'No se pudo enviar la nota de voz.', 'error');
+            }
+        },
+        error: function () {
+            resetVoiceRecorderUI();
+            Swal.fire('Error', 'Fallo de red al subir la nota de voz.', 'error');
+        },
+        complete: function () {
+            releaseBandejaLock('send_voice_note', $btnSend, '<i class="fa-solid fa-paper-plane me-1"></i> Enviar Nota');
+            $('#btnVoiceCancel').prop('disabled', false);
+            updateActiveWindow24hUI();
+        }
+    });
+}
+
+function startBrowserVoiceRecording() {
+    if (bandejaInFlight.has('send_voice_note')) return;
+    if (activeChatId === null && !activeClientId) {
+        Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
+        return;
+    }
+    if (activeWindowExpiresAtEpoch <= getServerNowEpoch()) {
+        updateActiveWindow24hUI();
+        promptWindow24hExpiredModal('La ventana gratuita de 24h de Meta ha expirado. Envía una Plantilla Oficial Meta antes de enviar notas de voz.');
+        return;
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function' || typeof window.MediaRecorder === 'undefined') {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Micrófono no disponible',
+            text: 'Tu navegador requiere contexto seguro (HTTPS o localhost) y soporte de MediaRecorder API para capturar notas de voz.'
+        });
+        return;
+    }
+
+    const $micBtn = $('#btnVoiceRecord');
+    $micBtn.prop('disabled', true);
+
+    navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+        }
+    }).then(function (stream) {
+        $micBtn.prop('disabled', false);
+        activeVoiceStream = stream;
+        activeVoiceChunks = [];
+        activeVoiceDiscard = false;
+
+        const spec = detectSupportedVoiceMime();
+        activeVoiceMime = spec.cleanMime || 'audio/ogg';
+        const recorderOpts = spec.mime ? { mimeType: spec.mime } : undefined;
+        const recorder = recorderOpts ? new MediaRecorder(stream, recorderOpts) : new MediaRecorder(stream);
+        activeVoiceRecorder = recorder;
+        activeVoiceStartMs = Date.now();
+
+        recorder.ondataavailable = function (ev) {
+            if (ev.data && ev.data.size > 0) {
+                activeVoiceChunks.push(ev.data);
+            }
+        };
+
+        recorder.onstop = function () {
+            const elapsedSec = Math.max(1, Math.round((Date.now() - activeVoiceStartMs) / 1000));
+            const shouldDiscard = activeVoiceDiscard;
+            const chunksCopy = activeVoiceChunks.slice();
+            activeVoiceChunks = [];
+            activeVoiceRecorder = null;
+            stopVoiceStreamTracks();
+
+            if (shouldDiscard) {
+                resetVoiceRecorderUI();
+                return;
+            }
+            const finalType = recorder.mimeType || spec.cleanMime || 'audio/ogg';
+            const voiceBlob = new Blob(chunksCopy, { type: finalType });
+            uploadRecordedVoiceBlob(voiceBlob, spec.ext || 'ogg', spec.cleanMime || 'audio/ogg', elapsedSec);
+        };
+
+        $('#inputBoxContainer').hide();
+        $('#voiceRecordTimer').text('00:00');
+        $('#voiceRecorderBar').addClass('active');
+
+        recorder.start(250);
+        activeVoiceTimerInterval = setInterval(function () {
+            const sec = Math.max(0, Math.floor((Date.now() - activeVoiceStartMs) / 1000));
+            const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+            const ss = String(sec % 60).padStart(2, '0');
+            $('#voiceRecordTimer').text(mm + ':' + ss);
+            // Auto-detener a los 4m 55s para garantizar cumplimiento del tope de 5 MB
+            if (sec >= 295 && activeVoiceRecorder && activeVoiceRecorder.state === 'recording') {
+                activeVoiceDiscard = false;
+                activeVoiceRecorder.stop();
+            }
+        }, 500);
+    }).catch(function (err) {
+        $micBtn.prop('disabled', false);
+        stopVoiceStreamTracks();
+        const errName = (err && err.name) ? err.name : '';
+        let msg = 'No fue posible acceder al micrófono del equipo.';
+        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+            msg = 'Permiso de micrófono denegado. Habilita el acceso al micrófono en la barra de direcciones del navegador.';
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+            msg = 'No se detectó ningún micrófono conectado a este equipo.';
+        }
+        Swal.fire({ icon: 'error', title: 'Acceso al Micrófono', text: msg });
+    });
+}
+
+$(document).ready(function () {
+    $('#btnVoiceRecord').on('click', function () {
+        startBrowserVoiceRecording();
+    });
+    $('#btnVoiceCancel').on('click', function () {
+        cancelActiveVoiceRecording(false);
+    });
+    $('#btnVoiceSend').on('click', function () {
+        if (!activeVoiceRecorder || activeVoiceRecorder.state === 'inactive') {
+            return;
+        }
+        activeVoiceDiscard = false;
+        $(this).prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin me-1"></i> Procesando...');
+        try {
+            activeVoiceRecorder.stop();
+        } catch (e) {
+            cancelActiveVoiceRecording(true);
+        }
+    });
+
+    // Inicializar herramientas Sprint 4 ([OMN-02] Agenda por Cliente + [OMN-03] Cotizador Rápido PDF)
+    initSprint4AgendaAndQuotes();
+});
+
+// ============================================================================
+// [SPRINT 4: OMN-02 & OMN-03] AGENDA COMERCIAL POR CLIENTE Y COTIZADOR RÁPIDO PDF
+// ============================================================================
+function getDefaultAgendaDateTimeLocal() {
+    const dt = new Date(Date.now() + 3600 * 1000);
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + 'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+}
+
+function updateClientTasksHeaderBadge(pendingCnt, overdueCnt) {
+    const $badge = $('#badgeClientTasksCount');
+    if (!$badge.length) return;
+    const p = parseInt(pendingCnt || 0, 10);
+    const o = parseInt(overdueCnt || 0, 10);
+    if (p > 0) {
+        $badge.text(p > 99 ? '99+' : String(p)).show();
+        $badge.removeClass('bg-danger bg-primary').addClass(o > 0 ? 'bg-danger' : 'bg-primary');
+    } else {
+        $badge.hide();
+    }
+}
+
+function loadClientTasksForActiveChat(renderInModal) {
+    if (!activeClientId && !activeChatId) {
+        updateClientTasksHeaderBadge(0, 0);
+        return;
+    }
+    if (renderInModal) {
+        $('#agClientTasksList').html('<div class="text-center text-muted py-4 small"><i class="fa-solid fa-spinner fa-spin me-2"></i>Cargando agenda del cliente...</div>');
+    }
+    $.post('back_bandeja.php', {
+        action: 'agenda_list_client',
+        cliente_id: activeClientId || 0,
+        conversacion_id: activeChatId || 0
+    }, function (res) {
+        if (!res || res.status !== 'success') {
+            if (renderInModal) {
+                $('#agClientTasksList').html(`<div class="alert alert-warning small mb-0">${escapeHtmlBandeja((res && res.message) ? res.message : 'No se pudo consultar la agenda.')}</div>`);
+            }
+            return;
+        }
+        updateClientTasksHeaderBadge(res.pending_count || 0, res.overdue_count || 0);
+        $('#agClientTasksSummaryBadge').text(`${parseInt(res.pending_count || 0, 10)} pendientes`);
+        if (renderInModal || $('#modalAgendaCliente').hasClass('show')) {
+            renderClientAgendaTasksList(res.tasks || []);
+        }
+    }, 'json');
+}
+
+window.refreshBandejaClientAgendaIfOpen = function () {
+    if (activeChatId || activeClientId) {
+        loadClientTasksForActiveChat($('#modalAgendaCliente').hasClass('show'));
+    }
+};
+
+function renderClientAgendaTasksList(tasks) {
+    const $box = $('#agClientTasksList');
+    if (!$box.length) return;
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+        $box.html('<div class="text-center text-muted py-4 small"><i class="fa-regular fa-calendar-check fs-3 d-block mb-2 opacity-50"></i>Este cliente aún no tiene tareas ni recordatorios registrados.</div>');
+        return;
+    }
+    let html = '';
+    tasks.forEach(function (t) {
+        const tid = parseInt(t.id, 10) || 0;
+        const isDone = t.estado === 'COMPLETADA';
+        let badgeCls = 'bg-light text-secondary border';
+        let badgeTxt = 'En tiempo';
+        if (isDone) {
+            badgeCls = 'bg-success-subtle text-success border border-success-subtle';
+            badgeTxt = 'Completada';
+        } else if (t.urgencia_tiempo === 'VENCIDA') {
+            badgeCls = 'bg-danger-subtle text-danger border border-danger-subtle';
+            badgeTxt = 'Vencida';
+        } else if (t.urgencia_tiempo === 'PROXIMA') {
+            badgeCls = 'bg-warning-subtle text-warning-emphasis border border-warning-subtle';
+            badgeTxt = 'Próxima';
+        }
+
+        const descHtml = t.descripcion
+            ? `<div class="text-muted mt-1" style="font-size:0.76rem; white-space:pre-line;">${escapeHtmlBandeja(t.descripcion)}</div>`
+            : '';
+        const actionsHtml = isDone
+            ? `<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 btn-client-task-op" data-id="${tid}" data-op="REABRIR" style="font-size:0.72rem;">Reabrir</button>`
+            : `<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 btn-client-task-op" data-id="${tid}" data-op="POSPONER" style="font-size:0.72rem;" title="Posponer 30 minutos">+30m</button>
+               <button type="button" class="btn btn-sm btn-success py-0 px-2 btn-client-task-op" data-id="${tid}" data-op="COMPLETAR" style="font-size:0.72rem;" title="Marcar completada"><i class="fa-solid fa-check me-1"></i>Listo</button>
+               <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 btn-client-task-op" data-id="${tid}" data-op="CANCELAR" style="font-size:0.72rem;" title="Cancelar"><i class="fa-solid fa-trash-can"></i></button>`;
+
+        html += `
+            <div class="p-2.5 mb-2 rounded-3 border ${isDone ? 'bg-light opacity-75' : 'bg-white'}" style="padding:10px 12px;">
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                    <div class="fw-bold text-dark" style="font-size:0.84rem; ${isDone ? 'text-decoration:line-through;' : ''}">
+                        [${escapeHtmlBandeja(t.tipo)} · ${escapeHtmlBandeja(t.prioridad)}] ${escapeHtmlBandeja(t.titulo)}
+                    </div>
+                    <span class="badge rounded-pill ${badgeCls}" style="font-size:0.66rem;">${badgeTxt}</span>
+                </div>
+                ${descHtml}
+                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mt-2 pt-1 border-top">
+                    <span class="text-muted" style="font-size:0.73rem;">
+                        <i class="fa-regular fa-clock me-1"></i>${escapeHtmlBandeja(t.fecha_vencimiento_fmt)} · <i class="fa-regular fa-user ms-1 me-1"></i>${escapeHtmlBandeja(t.agente_nombre)}
+                    </span>
+                    <div class="d-inline-flex align-items-center gap-1">${actionsHtml}</div>
+                </div>
+            </div>
+        `;
+    });
+    $box.html(html);
+}
+
+function buildQuoteItemRowHtml(desc, qty, unitPrice) {
+    const safeDesc = escapeHtmlBandeja(desc || '');
+    const safeQty = (qty !== undefined && qty !== null) ? Number(qty) : 1;
+    const safeUnit = (unitPrice !== undefined && unitPrice !== null) ? Number(unitPrice).toFixed(2) : '0.00';
+    return `
+        <tr class="qq-item-row">
+            <td style="padding:8px 12px;">
+                <input type="text" autocomplete="off" class="form-control form-control-sm qq-item-desc" maxlength="250" value="${safeDesc}" placeholder="Ej: Lámina MDF 18mm Melamina Blanca">
+            </td>
+            <td>
+                <input type="number" step="0.01" min="0.01" autocomplete="off" class="form-control form-control-sm text-center qq-item-qty" value="${safeQty}">
+            </td>
+            <td>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" step="0.01" min="0" autocomplete="off" class="form-control qq-item-unit" value="${safeUnit}">
+                </div>
+            </td>
+            <td class="text-end fw-bold text-dark qq-item-subtotal" style="padding-right:12px;">$0.00</td>
+            <td class="text-center">
+                <button type="button" class="btn btn-sm text-danger p-1 btn-remove-qq-row" title="Eliminar fila"><i class="fa-solid fa-trash-can"></i></button>
+            </td>
+        </tr>
+    `;
+}
+
+function recalculateQuickQuoteModalTotals() {
+    let subtotal = 0;
+    $('#qqItemsTbody .qq-item-row').each(function () {
+        const $r = $(this);
+        const qty = Math.max(0, parseFloat($r.find('.qq-item-qty').val() || '0') || 0);
+        const unit = Math.max(0, parseFloat($r.find('.qq-item-unit').val() || '0') || 0);
+        const line = Math.round(qty * unit * 100) / 100;
+        subtotal += line;
+        $r.find('.qq-item-subtotal').text('$' + line.toFixed(2));
+    });
+    subtotal = Math.round(subtotal * 100) / 100;
+    const descRaw = Math.max(0, parseFloat($('#qqDescuentoUsd').val() || '0') || 0);
+    const descuento = Math.min(subtotal, Math.round(descRaw * 100) / 100);
+    const base = Math.max(0, Math.round((subtotal - descuento) * 100) / 100);
+    const aplicaIva = $('#qqAplicaIva').is(':checked');
+    const iva = aplicaIva ? (Math.round(base * 16) / 100) : 0;
+    const total = Math.round((base + iva) * 100) / 100;
+
+    $('#qqSumSubtotal').text('$' + subtotal.toFixed(2) + ' USD');
+    $('#qqSumDescuento').text('-$' + descuento.toFixed(2) + ' USD');
+    $('#qqSumIva').text('$' + iva.toFixed(2) + ' USD');
+    $('#qqSumTotal').text('$' + total.toFixed(2) + ' USD');
+}
+
+function openQuickQuotePdfModal() {
+    if (activeChatId === null && !activeClientId) {
+        Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
+        return;
+    }
+    if (activeWindowExpiresAtEpoch <= getServerNowEpoch()) {
+        updateActiveWindow24hUI();
+        promptWindow24hExpiredModal('La ventana gratuita de 24h de Meta está cerrada. Reactiva primero la conversación con una Plantilla Oficial Meta antes de despachar la cotización PDF por WhatsApp.');
+        return;
+    }
+
+    const cliName = ($('#chatHeaderName').text() || '').trim();
+    const cliPhone = ($('#chatHeaderPhone').text() || '').trim();
+    const sedeName = ($('#chatHeaderSede span').text() || '').trim() || 'Sede Activa';
+    $('#qqClientDisplay').text(cliName + (cliPhone ? ` (${cliPhone})` : ''));
+    $('#qqSedeDisplay').text(sedeName);
+
+    const $tbody = $('#qqItemsTbody');
+    if ($tbody.children('.qq-item-row').length === 0) {
+        const defDesc = (activeDealInfo && activeDealInfo.titulo && !activeDealInfo.titulo.startsWith('Oportunidad -') && !activeDealInfo.titulo.startsWith('Cotización '))
+            ? activeDealInfo.titulo
+            : '';
+        const defMonto = (activeDealInfo && parseFloat(activeDealInfo.monto_estimado_usd || 0) > 0)
+            ? parseFloat(activeDealInfo.monto_estimado_usd)
+            : 0;
+        $tbody.html(buildQuoteItemRowHtml(defDesc, 1, defMonto));
+    }
+    recalculateQuickQuoteModalTotals();
+    $('#modalQuickQuotePdf').modal('show');
+}
+
+function initSprint4AgendaAndQuotes() {
+    // Asegurar autocomplete="off" también en elementos dinámicos creados por JS (CHK-UIX-08)
+    $(document).on('shown.bs.modal', '.modal', function () {
+        $(this).find('input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]), textarea').attr('autocomplete', 'off');
+    });
+
+    // Sincronizar contador de tareas del cliente al cambiar de conversación + soporte de deep-link ?chat_id=
+    $(document).on('click', '#chatList .chat-item', function () {
+        setTimeout(function () {
+            loadClientTasksForActiveChat(false);
+        }, 120);
+    });
+
+    setTimeout(function () {
+        try {
+            const urlParams = new URLSearchParams(window.location.search);
+            const targetChatId = parseInt(urlParams.get('chat_id') || '0', 10);
+            if (targetChatId > 0 && !window.__starfiDeepLinkHandled) {
+                const $targetItem = $(`#chatList .chat-item[data-id="${targetChatId}"]`).first();
+                if ($targetItem.length) {
+                    window.__starfiDeepLinkHandled = true;
+                    window.clickChat($targetItem[0]);
+                }
+            }
+        } catch (e) {}
+    }, 900);
+
+    // [OMN-02] Abrir modal Agenda Comercial del Cliente
+    $('#btnHeaderClientAgenda').on('click', function () {
+        if (activeChatId === null && !activeClientId) {
+            Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
+            return;
+        }
+        const cliName = ($('#chatHeaderName').text() || '').trim();
+        $('#agendaClientSubtitle').text('Cliente: ' + (cliName || 'Seleccionado'));
+        if (!$('#agTaskFechaVenc').val()) {
+            $('#agTaskFechaVenc').val(getDefaultAgendaDateTimeLocal());
+        }
+        $('#modalAgendaCliente').modal('show');
+        loadClientTasksForActiveChat(true);
+    });
+
+    // [OMN-02] Crear tarea para el cliente activo
+    $('#btnSaveClientTask').on('click', function () {
+        const $btn = $(this);
+        const titulo = ($('#agTaskTitulo').val() || '').trim();
+        const fechaVenc = ($('#agTaskFechaVenc').val() || '').trim();
+        if (titulo.length < 3 || !fechaVenc) {
+            Swal.fire('Validación', 'Ingresa el título (mín. 3 caracteres) y la fecha/hora del recordatorio.', 'warning');
+            return;
+        }
+        if (!acquireBandejaLock('create_client_task', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Guardando...')) return;
+
+        $.post('back_bandeja.php', {
+            action: 'agenda_create_task',
+            cliente_id: activeClientId || 0,
+            conversacion_id: activeChatId || 0,
+            titulo: titulo,
+            tipo: $('#agTaskTipo').val() || 'SEGUIMIENTO',
+            prioridad: $('#agTaskPrioridad').val() || 'MEDIA',
+            fecha_vencimiento: fechaVenc,
+            recordatorio_min_antes: $('#agTaskRecordatorioMin').val() || '15',
+            descripcion: ($('#agTaskDescripcion').val() || '').trim()
+        }, function (res) {
+            if (res && res.status === 'success') {
+                $('#agTaskTitulo').val('');
+                $('#agTaskDescripcion').val('');
+                $('#agTaskFechaVenc').val(getDefaultAgendaDateTimeLocal());
+                loadClientTasksForActiveChat(true);
+                if (activeChatId) loadMessages(activeChatId, true);
+                if (typeof window.starfiRefreshTopbarAgenda === 'function') {
+                    window.starfiRefreshTopbarAgenda();
+                }
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: res.message || 'Recordatorio agendado',
+                    showConfirmButton: false,
+                    timer: 2200
+                });
+            } else {
+                Swal.fire('Aviso', (res && res.message) ? res.message : 'No se pudo crear la tarea.', 'warning');
+            }
+        }, 'json').fail(function () {
+            Swal.fire('Error', 'Fallo de red al agendar el recordatorio.', 'error');
+        }).always(function () {
+            releaseBandejaLock('create_client_task', $btn, '<i class="fa-solid fa-bell me-1"></i> Agendar Recordatorio');
+        });
+    });
+
+    // [OMN-02] Acciones rápidas sobre tareas del cliente (Completar, Posponer, Reabrir, Cancelar)
+    $(document).on('click', '.btn-client-task-op', function () {
+        const $btn = $(this);
+        const tid = parseInt($btn.attr('data-id') || '0', 10);
+        const op = $btn.attr('data-op') || 'COMPLETAR';
+        if (tid <= 0) return;
+        if (!acquireBandejaLock('op_client_task_' + tid, $btn)) return;
+
+        $.post('back_bandeja.php', {
+            action: 'agenda_update_task',
+            task_id: tid,
+            operacion: op,
+            snooze_min: 30
+        }, function (res) {
+            if (res && res.status === 'success') {
+                loadClientTasksForActiveChat(true);
+                if (activeChatId && op === 'COMPLETAR') loadMessages(activeChatId, true);
+                if (typeof window.starfiRefreshTopbarAgenda === 'function') {
+                    window.starfiRefreshTopbarAgenda();
+                }
+            } else {
+                Swal.fire('Aviso', (res && res.message) ? res.message : 'No se pudo actualizar la tarea.', 'warning');
+            }
+        }, 'json').always(function () {
+            releaseBandejaLock('op_client_task_' + tid, $btn);
+        });
+    });
+
+    // [OMN-03] Cotizador Rápido PDF en el Chat
+    $('#btnQuickQuotePdf').on('click', function () {
+        openQuickQuotePdfModal();
+    });
+
+    $('#btnAddQuoteItemRow').on('click', function () {
+        $('#qqItemsTbody').append(buildQuoteItemRowHtml('', 1, 0));
+        recalculateQuickQuoteModalTotals();
+    });
+
+    $(document).on('click', '.btn-remove-qq-row', function () {
+        if ($('#qqItemsTbody .qq-item-row').length <= 1) {
+            $('#qqItemsTbody .qq-item-desc').val('');
+            $('#qqItemsTbody .qq-item-qty').val('1');
+            $('#qqItemsTbody .qq-item-unit').val('0.00');
+        } else {
+            $(this).closest('.qq-item-row').remove();
+        }
+        recalculateQuickQuoteModalTotals();
+    });
+
+    $(document).on('input change', '.qq-item-qty, .qq-item-unit, #qqDescuentoUsd, #qqAplicaIva', function () {
+        recalculateQuickQuoteModalTotals();
+    });
+
+    $('#btnEmitAndSendQuotePdf').on('click', function () {
+        const $btn = $(this);
+        const items = [];
+        $('#qqItemsTbody .qq-item-row').each(function () {
+            const $r = $(this);
+            const desc = ($r.find('.qq-item-desc').val() || '').trim();
+            const qty = parseFloat($r.find('.qq-item-qty').val() || '0') || 0;
+            const unit = parseFloat($r.find('.qq-item-unit').val() || '0') || 0;
+            if (desc !== '' && qty > 0 && unit >= 0) {
+                items.push({ descripcion: desc, cantidad: qty, precio_unitario_usd: unit });
+            }
+        });
+
+        if (items.length === 0) {
+            Swal.fire('Cotización incompleta', 'Agrega al menos un producto o servicio con descripción y cantidad válida.', 'warning');
+            return;
+        }
+
+        const origHtml = '<i class="fa-brands fa-whatsapp me-1"></i> Generar PDF, Enviar a WhatsApp y Registrar en Pipeline';
+        if (!acquireBandejaLock('emit_quick_quote_pdf', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Generando PDF y enviando...')) return;
+
+        $.post('back_bandeja.php', {
+            action: 'emit_quick_quote_pdf',
+            conversacion_id: activeChatId || 0,
+            cliente_id: activeClientId || 0,
+            items: JSON.stringify(items),
+            validez_dias: parseInt($('#qqValidezDias').val() || '7', 10),
+            descuento_usd: parseFloat($('#qqDescuentoUsd').val() || '0') || 0,
+            aplica_iva: $('#qqAplicaIva').is(':checked') ? 1 : 0,
+            iva_pct: 16,
+            condiciones: ($('#qqCondiciones').val() || '').trim(),
+            notas: ($('#qqNotas').val() || '').trim(),
+            send_whatsapp: 1
+        }, function (res) {
+            if (res && res.status === 'success') {
+                $('#modalQuickQuotePdf').modal('hide');
+                $('#qqItemsTbody').empty();
+                $('#qqNotas').val('');
+                $('#qqDescuentoUsd').val('0.00');
+                if (res.deal) {
+                    activeDealInfo = res.deal;
+                    updateHeaderDealChip(activeDealInfo);
+                }
+                if (activeChatId) loadMessages(activeChatId, true);
+                loadChats(false, currentChatPage, true);
+
+                const totalStr = parseFloat(res.total_usd || 0).toFixed(2);
+                const dlLink = res.download_url
+                    ? `<div class="mt-2"><a href="${escapeHtmlBandeja(res.download_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary rounded-pill px-3"><i class="fa-solid fa-file-pdf me-1"></i> Ver / Descargar PDF (${escapeHtmlBandeja(res.codigo_cotizacion)})</a></div>`
+                    : '';
+                const warnHtml = res.wa_warning
+                    ? `<div class="alert alert-warning small mt-2 mb-0">${escapeHtmlBandeja(res.wa_warning)}</div>`
+                    : '';
+
+                Swal.fire({
+                    icon: 'success',
+                    title: '¡Cotización Emitida!',
+                    html: `Se generó <b>${escapeHtmlBandeja(res.codigo_cotizacion)}</b> por <b>$${totalStr} USD</b> y se actualizó el Embudo a <b>Cotizado</b>.${dlLink}${warnHtml}`,
+                    confirmButtonColor: '#E85B14'
+                });
+            } else if (res && res.code === 'WINDOW_24H_EXPIRED') {
+                $('#modalQuickQuotePdf').modal('hide');
+                activeWindowExpiresAtEpoch = 0;
+                updateActiveWindow24hUI();
+                promptWindow24hExpiredModal(res.message);
+            } else {
+                Swal.fire('Error', (res && res.message) ? res.message : 'No se pudo generar la cotización.', 'error');
+            }
+        }, 'json').fail(function () {
+            Swal.fire('Error', 'Fallo de red al procesar la cotización PDF.', 'error');
+        }).always(function () {
+            releaseBandejaLock('emit_quick_quote_pdf', $btn, origHtml);
+        });
+    });
 }

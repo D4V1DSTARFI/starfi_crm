@@ -404,6 +404,75 @@ function renderSidebar($active = '') {
 }
 
 /**
+ * Renderiza el widget global de Agenda Comercial y Alertas en Tiempo Real para la barra superior ([OMN-02]).
+ * Compatible con todos los módulos (../../) y con el Dashboard raíz (./).
+ */
+function starfi_render_topbar_agenda_widget($baseRelPrefix = null) {
+    if ($baseRelPrefix === null) {
+        $baseRelPrefix = starfi_base_rel_prefix();
+    }
+    $endpointUrl = $baseRelPrefix . 'index.php';
+    $bandejaUrl = $baseRelPrefix . 'modules/bandeja/bandeja.php';
+    $scriptUrl = $baseRelPrefix . 'assets/js/starfi_topbar_agenda.js?v=401';
+
+    $html  = '<style>'
+        . '@keyframes starfiBellPulse{0%{box-shadow:0 0 0 0 rgba(232,91,20,.45)}70%{box-shadow:0 0 0 7px rgba(232,91,20,0)}100%{box-shadow:0 0 0 0 rgba(232,91,20,0)}}'
+        . '#btnTopbarAgendaBell.has-urgent-tasks{border-color:#FDBA74 !important;background:#FFF7ED !important;color:#EA580C !important;animation:starfiBellPulse 2s infinite;}'
+        . '</style>';
+    $html .= '<div class="dropdown" id="starfiTopbarAgendaWrap" data-endpoint="' . htmlspecialchars($endpointUrl, ENT_QUOTES, 'UTF-8') . '" data-bandeja-url="' . htmlspecialchars($bandejaUrl, ENT_QUOTES, 'UTF-8') . '">';
+    $html .= '    <button class="btn btn-light border position-relative d-inline-flex align-items-center justify-content-center" type="button" id="btnTopbarAgendaBell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Agenda Comercial y Recordatorios en Tiempo Real" style="width:38px;height:38px;border-radius:10px;color:#334155;">';
+    $html .= '        <i class="fa-solid fa-bell" style="font-size:0.95rem;"></i>';
+    $html .= '        <span id="topbarAgendaBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-white" style="display:none;font-size:0.65rem;padding:3px 6px;background-color:#DC2626;">0</span>';
+    $html .= '    </button>';
+    $html .= '    <div class="dropdown-menu dropdown-menu-end p-0 shadow-lg border-0 overflow-hidden" id="topbarAgendaDropdown" style="width:360px;max-width:92vw;border-radius:16px;z-index:1080;">';
+    $html .= '        <div class="px-3 py-2.5 text-white d-flex align-items-center justify-content-between" style="padding:12px 15px;background:linear-gradient(135deg,#1E293B,#334155);">';
+    $html .= '            <div>';
+    $html .= '                <div class="fw-bold" style="font-size:0.86rem;"><i class="fa-solid fa-calendar-check me-1" style="color:#FF8A4D;"></i> Agenda Comercial</div>';
+    $html .= '                <div id="topbarAgendaSummaryText" style="font-size:0.7rem;color:#CBD5E1;">Cargando recordatorios...</div>';
+    $html .= '            </div>';
+    $html .= '            <button type="button" class="btn btn-sm fw-bold text-white px-2.5 py-1" id="btnToggleTopbarQuickForm" style="background:#E85B14;border:none;border-radius:999px;font-size:0.72rem;">';
+    $html .= '                <i class="fa-solid fa-plus me-1"></i> Agendar';
+    $html .= '            </button>';
+    $html .= '        </div>';
+    $html .= '        <div id="topbarQuickFormWrap" class="p-3 bg-light border-bottom" style="display:none;">';
+    $html .= '            <form id="topbarQuickTaskForm" autocomplete="off">';
+    $html .= '                <div class="mb-2">';
+    $html .= '                    <input type="text" id="topbarQuickTaskTitulo" autocomplete="off" class="form-control form-control-sm" maxlength="200" placeholder="Ej: Llamar para cerrar cotización..." required>';
+    $html .= '                </div>';
+    $html .= '                <div class="row g-1 mb-2">';
+    $html .= '                    <div class="col-7"><input type="datetime-local" id="topbarQuickTaskVenc" autocomplete="off" class="form-control form-control-sm" required></div>';
+    $html .= '                    <div class="col-5">';
+    $html .= '                        <select id="topbarQuickTaskTipo" class="form-select form-select-sm">';
+    $html .= '                            <option value="SEGUIMIENTO">Seguimiento</option>';
+    $html .= '                            <option value="LLAMADA">Llamada</option>';
+    $html .= '                            <option value="COTIZACION">Cotización</option>';
+    $html .= '                            <option value="REUNION">Reunión</option>';
+    $html .= '                            <option value="COBRO">Cobro</option>';
+    $html .= '                        </select>';
+    $html .= '                    </div>';
+    $html .= '                </div>';
+    $html .= '                <div class="d-flex align-items-center justify-content-between gap-2">';
+    $html .= '                    <select id="topbarQuickTaskPrio" class="form-select form-select-sm" style="max-width:130px;">';
+    $html .= '                        <option value="MEDIA">Prioridad Media</option>';
+    $html .= '                        <option value="ALTA">Alta</option>';
+    $html .= '                        <option value="URGENTE">Urgente</option>';
+    $html .= '                        <option value="BAJA">Baja</option>';
+    $html .= '                    </select>';
+    $html .= '                    <button type="submit" id="btnSaveTopbarQuickTask" class="btn btn-sm text-white fw-bold px-3" style="background:#E85B14;border:none;border-radius:8px;">Guardar</button>';
+    $html .= '                </div>';
+    $html .= '                <div id="topbarQuickTaskFeedback" class="small text-muted mt-1"></div>';
+    $html .= '            </form>';
+    $html .= '        </div>';
+    $html .= '        <div id="topbarAgendaItemsList" style="max-height:320px;overflow-y:auto;background:#ffffff;">';
+    $html .= '            <div class="text-center text-muted py-4 small">Consultando agenda...</div>';
+    $html .= '        </div>';
+    $html .= '    </div>';
+    $html .= '</div>';
+    $html .= '<script src="' . htmlspecialchars($scriptUrl, ENT_QUOTES, 'UTF-8') . '" defer></script>';
+    return $html;
+}
+
+/**
  * Renderiza el encabezado superior (Navbar) en todos los módulos de STARFI CRM.
  * @param string $title Título del módulo para mostrar en la cabecera.
  */
@@ -428,6 +497,7 @@ function renderHeader($title = '') {
     echo '                <h5 class="mb-0 fw-bold text-starfi-dark d-none d-md-inline" style="font-size: 1.1rem;">' . htmlspecialchars($title) . '</h5>';
     echo '            </div>';
     echo '            <div class="d-flex align-items-center gap-3 ms-auto">';
+    echo                  starfi_render_topbar_agenda_widget('../../');
     echo '                <a href="../../index.php" class="btn btn-outline-secondary btn-sm px-3 py-1.5 fw-semibold d-flex align-items-center gap-1" style="border-radius: 8px; font-size: 0.85rem; border-color: #CBD5E1; color: #475569;">';
     echo '                    <i class="fa-solid fa-arrow-left"></i> Volver al Dashboard';
     echo '                </a>';

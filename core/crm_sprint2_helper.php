@@ -8,6 +8,72 @@
  * - Sincronización de Oportunidades Kanban USD con aislamiento estricto Multi-Sede y FOR UPDATE ([COM-02])
  */
 
+if (!function_exists('starfi_detect_safe_chat_media')) {
+    /**
+     * Valida los bytes reales de un archivo multimedia de chat mediante finfo(FILEINFO_MIME_TYPE),
+     * soportando adjuntos estándar y Notas de Voz grabadas con MediaRecorder ([OMN-01]).
+     *
+     * @param string $filePath    Ruta temporal o local del archivo.
+     * @param bool   $isVoiceNote true cuando proviene del grabador de voz del navegador.
+     * @return array|null ['ext' => string, 'mime' => string, 'tipo_bd' => string, 'meta_type' => string] o null si es inseguro/no permitido.
+     */
+    function starfi_detect_safe_chat_media($filePath, $isVoiceNote = false) {
+        if (!is_string($filePath) || $filePath === '' || !is_file($filePath) || !is_readable($filePath)) {
+            return null;
+        }
+        $size = @filesize($filePath);
+        if ($size === false || $size <= 0 || $size > 5 * 1024 * 1024) {
+            return null;
+        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $rawMime = strtolower(trim((string)($finfo->file($filePath) ?: '')));
+        if ($rawMime === '') {
+            return null;
+        }
+
+        if ($isVoiceNote) {
+            $voiceMap = [
+                'audio/ogg'        => ['ext' => 'ogg',  'mime' => 'audio/ogg',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/opus'       => ['ext' => 'ogg',  'mime' => 'audio/ogg',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/x-opus+ogg' => ['ext' => 'ogg',  'mime' => 'audio/ogg',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'application/ogg'  => ['ext' => 'ogg',  'mime' => 'audio/ogg',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'video/ogg'        => ['ext' => 'ogg',  'mime' => 'audio/ogg',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/mpeg'       => ['ext' => 'mp3',  'mime' => 'audio/mpeg', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/mp3'        => ['ext' => 'mp3',  'mime' => 'audio/mpeg', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/mp4'        => ['ext' => 'm4a',  'mime' => 'audio/mp4',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'video/mp4'        => ['ext' => 'm4a',  'mime' => 'audio/mp4',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/x-m4a'      => ['ext' => 'm4a',  'mime' => 'audio/mp4',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/m4a'        => ['ext' => 'm4a',  'mime' => 'audio/mp4',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/aac'        => ['ext' => 'aac',  'mime' => 'audio/aac',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/x-aac'      => ['ext' => 'aac',  'mime' => 'audio/aac',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/amr'        => ['ext' => 'amr',  'mime' => 'audio/amr',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/wav'        => ['ext' => 'wav',  'mime' => 'audio/wav',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/x-wav'      => ['ext' => 'wav',  'mime' => 'audio/wav',  'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'audio/webm'       => ['ext' => 'webm', 'mime' => 'audio/webm', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+                'video/webm'       => ['ext' => 'webm', 'mime' => 'audio/webm', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+            ];
+            return $voiceMap[$rawMime] ?? null;
+        }
+
+        $stdMap = [
+            'image/jpeg'      => ['ext' => 'jpg',  'mime' => 'image/jpeg',      'tipo_bd' => 'IMAGEN',    'meta_type' => 'image'],
+            'image/png'       => ['ext' => 'png',  'mime' => 'image/png',       'tipo_bd' => 'IMAGEN',    'meta_type' => 'image'],
+            'image/webp'      => ['ext' => 'webp', 'mime' => 'image/webp',      'tipo_bd' => 'IMAGEN',    'meta_type' => 'sticker'],
+            'application/pdf' => ['ext' => 'pdf',  'mime' => 'application/pdf', 'tipo_bd' => 'DOCUMENTO', 'meta_type' => 'document'],
+            'video/mp4'       => ['ext' => 'mp4',  'mime' => 'video/mp4',       'tipo_bd' => 'DOCUMENTO', 'meta_type' => 'video'],
+            'audio/ogg'       => ['ext' => 'ogg',  'mime' => 'audio/ogg',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'application/ogg' => ['ext' => 'ogg',  'mime' => 'audio/ogg',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/mpeg'      => ['ext' => 'mp3',  'mime' => 'audio/mpeg',      'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/mp3'       => ['ext' => 'mp3',  'mime' => 'audio/mpeg',      'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/mp4'       => ['ext' => 'm4a',  'mime' => 'audio/mp4',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/x-m4a'     => ['ext' => 'm4a',  'mime' => 'audio/mp4',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/aac'       => ['ext' => 'aac',  'mime' => 'audio/aac',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+            'audio/amr'       => ['ext' => 'amr',  'mime' => 'audio/amr',       'tipo_bd' => 'AUDIO',     'meta_type' => 'audio'],
+        ];
+        return $stdMap[$rawMime] ?? null;
+    }
+}
+
 if (!function_exists('starfi_db_schema_hash')) {
     function starfi_db_schema_hash($con) {
         static $cached = [];

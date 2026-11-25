@@ -1,8 +1,8 @@
-# STARFI CRM - Blindaje de Directorios y Archivos Sensibles (SEC-04)
+# STARFI CRM - Blindaje de Directorios y Archivos Sensibles (SEC-04 / OMN-04)
 Options -Indexes
 
-# Bloquear acceso directo a archivos sensibles (.env, dumps SQL, logs, binarios)
-<FilesMatch "(^\.env|^\.git|\.(sql|log|exe|ini|bak|sh)$)">
+# Bloquear acceso directo a archivos sensibles (.env, dumps SQL, logs, binarios y scripts temporales en raíz)
+<FilesMatch "(^\.env|^\.git|^(scratch|test|tmp|debug|dump|export_databases|print_all_rows).*\.php$|\.(sql|log|exe|ini|bak|sh|resolved)$)">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -12,9 +12,10 @@ Options -Indexes
     </IfModule>
 </FilesMatch>
 
-# Bloquear navegación directa a carpetas internas
+# Bloquear navegación directa a carpetas internas y de desarrollo
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(logs|config|core|database|includes|\.git)(/|$) - [F,L]
+    RewriteRule ^(logs|config|core|database|includes|scratch|\.agents|\.git)(/|$) - [F,L]
 </IfModule>
+
 

@@ -60,8 +60,18 @@ function stream_file($file, $requested_mime = null) {
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $detected_mime = strtolower(trim((string)($finfo->file($file) ?: 'application/octet-stream')));
     $ext_lower = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
-    if ($ext_lower === 'ogg' && in_array($detected_mime, ['audio/ogg', 'application/ogg', 'video/ogg'], true)) {
+    if ($ext_lower === 'ogg' && in_array($detected_mime, ['audio/ogg', 'audio/opus', 'audio/x-opus+ogg', 'application/ogg', 'video/ogg'], true)) {
         $detected_mime = 'audio/ogg';
+    } elseif ($ext_lower === 'm4a' && in_array($detected_mime, ['audio/mp4', 'video/mp4', 'audio/x-m4a', 'audio/m4a'], true)) {
+        $detected_mime = 'audio/mp4';
+    } elseif ($ext_lower === 'mp3' && in_array($detected_mime, ['audio/mpeg', 'audio/mp3'], true)) {
+        $detected_mime = 'audio/mpeg';
+    } elseif ($ext_lower === 'aac' && in_array($detected_mime, ['audio/aac', 'audio/x-aac'], true)) {
+        $detected_mime = 'audio/aac';
+    } elseif ($ext_lower === 'wav' && in_array($detected_mime, ['audio/wav', 'audio/x-wav'], true)) {
+        $detected_mime = 'audio/wav';
+    } elseif ($ext_lower === 'webm' && in_array($detected_mime, ['audio/webm', 'video/webm'], true)) {
+        $detected_mime = 'audio/webm';
     }
 
     $safe_inline_mimes = [
@@ -69,6 +79,13 @@ function stream_file($file, $requested_mime = null) {
         'image/png',
         'image/webp',
         'audio/ogg',
+        'audio/opus',
+        'audio/mpeg',
+        'audio/mp4',
+        'audio/aac',
+        'audio/amr',
+        'audio/wav',
+        'audio/webm',
         'video/mp4',
         'application/pdf',
     ];

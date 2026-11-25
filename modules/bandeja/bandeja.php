@@ -510,6 +510,70 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             background-color: #F5F3FF !important;
             color: #5B21B6 !important;
         }
+
+        /* [SPRINT 4: OMN-01] Grabadora de Notas de Voz MediaRecorder */
+        .voice-mic-btn {
+            background-color: #F1F5F9 !important;
+            color: #475569 !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 50% !important;
+            width: 38px !important;
+            height: 38px !important;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 6px;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+        .voice-mic-btn:hover:not(:disabled) {
+            background-color: #FEF2F2 !important;
+            color: #DC2626 !important;
+            border-color: #FECACA !important;
+            transform: scale(1.05);
+        }
+        .voice-recorder-bar {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            background: linear-gradient(135deg, #FEF2F2 0%, #FFF7ED 100%);
+            border: 1px solid #FECACA;
+            border-radius: 24px;
+            padding: 8px 14px;
+        }
+        .voice-recorder-bar.active {
+            display: flex;
+        }
+        .voice-rec-dot {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background-color: #EF4444;
+            display: inline-block;
+            animation: pulseSlaRed 1.2s infinite;
+        }
+        .voice-wave-bars {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            height: 18px;
+        }
+        .voice-wave-bars span {
+            width: 3px;
+            border-radius: 2px;
+            background-color: #E85B14;
+            animation: voiceWaveAnim 0.9s ease-in-out infinite;
+        }
+        .voice-wave-bars span:nth-child(1) { height: 7px; animation-delay: 0.0s; }
+        .voice-wave-bars span:nth-child(2) { height: 14px; animation-delay: 0.15s; }
+        .voice-wave-bars span:nth-child(3) { height: 18px; animation-delay: 0.3s; }
+        .voice-wave-bars span:nth-child(4) { height: 11px; animation-delay: 0.45s; }
+        .voice-wave-bars span:nth-child(5) { height: 16px; animation-delay: 0.6s; }
+        @keyframes voiceWaveAnim {
+            0%, 100% { transform: scaleY(0.45); opacity: 0.65; }
+            50% { transform: scaleY(1); opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -676,8 +740,15 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                     </div>
                     <div class="conv-actions">
+                        <button type="button" class="btn btn-sm rounded-pill fw-bold text-white me-1" id="btnQuickQuotePdf" style="background: linear-gradient(135deg, #E85B14 0%, #FF7A33 100%); border: none; font-size: 0.76rem; padding: 6px 12px; box-shadow: 0 3px 10px rgba(232,91,20,0.22);" title="Cotizador Rápido PDF membretado por sede con envío a WhatsApp y registro en Embudo">
+                            <i class="fa-solid fa-file-invoice-dollar me-1"></i> Cotizar PDF
+                        </button>
                         <button type="button" class="btn btn-sm rounded-pill fw-bold btn-ia-copilot me-1" id="btnIaSummarize" title="Resumen ejecutivo en 3 viñetas con IA antes de intervenir">
                             <i class="fa-solid fa-wand-magic-sparkles me-1"></i> Resumir IA
+                        </button>
+                        <button class="icon-btn position-relative" title="Tareas, Recordatorios y Agenda Comercial del Cliente" id="btnHeaderClientAgenda" style="color:#0EA5E9 !important;">
+                            <i class="fa-solid fa-calendar-check"></i>
+                            <span id="badgeClientTasksCount" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display:none; font-size:0.62rem; padding:2px 5px;">0</span>
                         </button>
                         <button class="icon-btn" title="Reactivar con Plantilla Oficial Meta" id="btnHeaderMetaTemplate" style="color:#E85B14 !important;"><i class="fa-brands fa-whatsapp"></i></button>
                         <button class="icon-btn" title="Ver Perfil 360" id="btnToggleProfile"><i class="fa-solid fa-id-card"></i></button>
@@ -745,8 +816,25 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                             </button>
                         </div>
                     </div>
+                    <div id="voiceRecorderBar" class="voice-recorder-bar mb-1">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="voice-rec-dot"></span>
+                            <div class="voice-wave-bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+                            <span class="fw-bold text-danger" id="voiceRecordTimer" style="font-variant-numeric: tabular-nums; font-size: 0.92rem;">00:00</span>
+                            <span class="text-muted small d-none d-sm-inline" id="voiceRecordStatusLabel">Grabando nota de voz...</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-danger rounded-pill px-3 fw-semibold" id="btnVoiceCancel" title="Cancelar grabación">
+                                <i class="fa-solid fa-trash-can me-1"></i> Cancelar
+                            </button>
+                            <button type="button" class="btn btn-sm text-white rounded-pill px-3 fw-bold shadow-sm" id="btnVoiceSend" style="background: linear-gradient(135deg, #E85B14, #FF7A33); border: none;" title="Detener y enviar nota de voz">
+                                <i class="fa-solid fa-paper-plane me-1"></i> Enviar Nota
+                            </button>
+                        </div>
+                    </div>
                     <div class="input-box" id="inputBoxContainer">
                         <textarea autocomplete="off" placeholder="Escribe un mensaje..." rows="1" id="chatInput"></textarea>
+                        <button type="button" class="voice-mic-btn" id="btnVoiceRecord" title="Grabar Nota de Voz (MediaRecorder)"><i class="fa-solid fa-microphone"></i></button>
                         <button class="send-btn" id="sendBtn"><i class="fa-solid fa-paper-plane"></i></button>
                     </div>
                 </footer>

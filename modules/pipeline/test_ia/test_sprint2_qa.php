@@ -717,10 +717,14 @@ qa_check("Conexión activa a Base de Datos Core", (bool)$con);
 
 if ($con) {
     // Asegurar esquemas ANTES de abrir la transacción para que ningún DDL haga commit implícito
+    require_once $root . '/core/services/CommercialAgendaService.php';
+    require_once $root . '/core/services/QuickQuotePdfService.php';
     starfi_ensure_sprint2_schema($con);
     starfi_ensure_audit_schema($con);
     ensureWabaBillingSchema($con);
     ensureCampaignTables($con);
+    CommercialAgendaService::ensureSchema($con);
+    QuickQuotePdfService::ensureSchema($con);
 
     $con->begin_transaction();
     starfi_tx_set_active($con, true);
@@ -1072,9 +1076,9 @@ if ($con) {
             !empty($dripSaveRes['ok']) && is_array($dripSaveRes['rule'] ?? null) && intval($dripSaveRes['rule']['drip_horas_espera']) === 18
         );
 
-        // (d) QA-BUG-CRM5-04 (CHK-UIX-08): 0 inputs/textareas operativos sin autocomplete="off" en bandeja.php, campanas.php y modals_campanas.php
+        // (d) QA-BUG-CRM5-04 (CHK-UIX-08): 0 inputs/textareas operativos sin autocomplete="off" en bandeja.php, modals_bandeja.php, index.php, campanas.php y modals_campanas.php
         $missingInputAuto = [];
-        foreach (['modules/bandeja/bandeja.php', 'modules/campanas/campanas.php', 'modules/campanas/modals_campanas.php'] as $uiRel) {
+        foreach (['modules/bandeja/bandeja.php', 'modules/bandeja/modals_bandeja.php', 'index.php', 'modules/campanas/campanas.php', 'modules/campanas/modals_campanas.php'] as $uiRel) {
             $uiSrc = (string)file_get_contents($root . '/' . $uiRel);
             if (preg_match_all('/<(input|textarea)\b[^>]*>/is', $uiSrc, $uiMatches, PREG_OFFSET_CAPTURE)) {
                 foreach ($uiMatches[0] as $hitUi) {
@@ -1093,9 +1097,166 @@ if ($con) {
         if (preg_match('/class="form-control mtb-var-example"/', $jsCampSrc) && !preg_match('/autocomplete="off"\s+class="form-control mtb-var-example"/', $jsCampSrc)) {
             $missingInputAuto[] = 'modules/campanas/funciones_campanas.js:.mtb-var-example';
         }
-        qa_check("QA-BUG-CRM5-04 (CHK-UIX-08): 100% de inputs y textareas operativos en Bandeja y Campañas incluyen autocomplete=\"off\"",
+        qa_check("QA-BUG-CRM5-04 (CHK-UIX-08): 100% de inputs y textareas operativos en Bandeja, Modales, Index y Campañas incluyen autocomplete=\"off\"",
             empty($missingInputAuto),
             implode(', ', $missingInputAuto)
+        );
+
+        // =====================================================================
+        // 9. Pruebas Funcionales y Transaccionales OT-STARFI-2026-11 SPRINT 4 ([OMN-01] .. [OMN-04])
+        // =====================================================================
+
+        // [OMN-01] Notas de Voz desde el Navegador (MediaRecorder API + finfo magic bytes + get_media.php)
+        $tmpWebmVoice = tempnam(sys_get_temp_dir(), 'qa_voice_');
+        $tmpFakeAudio = tempnam(sys_get_temp_dir(), 'qa_fake_');
+        // Cabecera EBML válida de contenedor WebM generado por MediaRecorder en navegadores Chromium/Firefox
+        $ebmlWebmBytes = "\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01\x42\xF7\x81\x01\x42\xF2\x81\x04\x42\xF3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02";
+        file_put_contents($tmpWebmVoice, $ebmlWebmBytes);
+        file_put_contents($tmpFakeAudio, "<html><script>alert(1)</script></html>");
+        $specVoice = starfi_detect_safe_chat_media($tmpWebmVoice, true);
+        $realOggSample = $root . '/assets/uploads/media_1314266393831065.ogg';
+        $specRealOgg = is_file($realOggSample) ? starfi_detect_safe_chat_media($realOggSample, true) : $specVoice;
+        $specFake = starfi_detect_safe_chat_media($tmpFakeAudio, true);
+        @unlink($tmpWebmVoice);
+        @unlink($tmpFakeAudio);
+
+        $bandejaJsSrc = (string)file_get_contents($root . '/modules/bandeja/funciones_bandeja.js');
+        $getMediaSrc = (string)file_get_contents($root . '/get_media.php');
+        qa_check("[OMN-01] starfi_detect_safe_chat_media() valida magic bytes reales de Nota de Voz (OGG/WebM MediaRecorder) y bloquea payloads HTML/XSS disfrazados",
+            is_array($specVoice) && ($specVoice['tipo_bd'] ?? '') === 'AUDIO' && ($specVoice['meta_type'] ?? '') === 'audio' &&
+            is_array($specRealOgg) && ($specRealOgg['tipo_bd'] ?? '') === 'AUDIO' &&
+            $specFake === null
+        );
+        qa_check("[OMN-01] Bandeja integra MediaRecorder API (#btnVoiceRecord, #voiceRecorderBar), auditoría ENVIAR_NOTA_VOZ y MIME seguros en get_media.php",
+            strpos($bandejaViewSrc, 'btnVoiceRecord') !== false &&
+            strpos($bandejaViewSrc, 'voiceRecorderBar') !== false &&
+            strpos($bandejaJsSrc, 'MediaRecorder') !== false &&
+            strpos($bandejaBackSrc, 'ENVIAR_NOTA_VOZ') !== false &&
+            strpos($getMediaSrc, "'audio/mp4'") !== false &&
+            strpos($getMediaSrc, "'audio/mpeg'") !== false
+        );
+
+        // [OMN-02] Tareas, Recordatorios y Agenda Comercial por Cliente + Alertas Topbar en Tiempo Real
+        $agAlfaMock = ['id' => 99951, 'rol' => 'OPERADOR', 'id_sede' => 9951];
+        $agBetaMock = ['id' => 99952, 'rol' => 'OPERADOR', 'id_sede' => 9952];
+
+        // Intento cross-sede: Operador de Sede Beta intentando agendar en conversación de Sede Alfa -> HTTP 403
+        $crossAgenda = CommercialAgendaService::createTask($con, $agBetaMock, [
+            'conversacion_id'        => $cvAlfa,
+            'cliente_id'             => $cAlfa,
+            'titulo'                 => 'Intento intrusivo cross-sede',
+            'tipo'                   => 'LLAMADA',
+            'prioridad'              => 'ALTA',
+            'fecha_vencimiento'      => date('Y-m-d H:i:s', time() + 600),
+            'recordatorio_min_antes' => 15,
+        ]);
+
+        // Creación legítima en Sede Alfa con vencimiento dentro de 10 min (<= recordatorio_min_antes 15m -> dispara alerta en tiempo real)
+        $okAgenda = CommercialAgendaService::createTask($con, $agAlfaMock, [
+            'conversacion_id'        => $cvAlfa,
+            'cliente_id'             => $cAlfa,
+            'titulo'                 => 'Llamar a Cliente Alfa para cierre MDF',
+            'tipo'                   => 'COTIZACION',
+            'prioridad'              => 'URGENTE',
+            'fecha_vencimiento'      => date('Y-m-d H:i:s', time() + 600),
+            'recordatorio_min_antes' => 15,
+            'descripcion'            => 'Confirmar orden de 15 láminas MDF',
+        ]);
+        $taskAlfaId = intval($okAgenda['task_id'] ?? 0);
+
+        $feedAlfa = CommercialAgendaService::getTopbarAlertsAndAgenda($con, $agAlfaMock, true);
+        $feedBeta = CommercialAgendaService::getTopbarAlertsAndAgenda($con, $agBetaMock, false);
+        $doneAgenda = CommercialAgendaService::updateTaskStatus($con, $agAlfaMock, $taskAlfaId, 'COMPLETAR');
+        $authSrc = (string)file_get_contents($root . '/core/auth.php');
+
+        qa_check("[OMN-02] CommercialAgendaService aplica aislamiento Multi-Sede (HTTP 403 cross-sede), dispara alertas Topbar en tiempo real y completa tareas con auditoría",
+            empty($crossAgenda['ok']) && intval($crossAgenda['http_code'] ?? 0) === 403 &&
+            !empty($okAgenda['ok']) && $taskAlfaId > 0 &&
+            !empty($feedAlfa['ok']) && intval($feedAlfa['due_soon_count'] ?? 0) >= 1 && count($feedAlfa['newly_triggered'] ?? []) >= 1 &&
+            intval($feedBeta['total_pending'] ?? 0) === 0 &&
+            !empty($doneAgenda['ok']) && ($doneAgenda['estado'] ?? '') === 'COMPLETADA' &&
+            strpos($authSrc, 'starfi_render_topbar_agenda_widget') !== false &&
+            is_file($root . '/assets/js/starfi_topbar_agenda.js')
+        );
+
+        // [OMN-03] Cotizador Rápido PDF Membretado por Sede + Envío Chat + Registro Automático en Pipeline USD
+        // Asegurar mensaje reciente del cliente para ventana 24h abierta en $cvAlfa
+        $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, timestamp) VALUES ($cvAlfa, 'CLIENTE', 'TEXTO', 'Envíame la cotización formal en PDF por favor', NOW())");
+        // Configurar token local simulado 'temp_token' en línea Alfa para no invocar red externa durante el test
+        $con->query("UPDATE lineas_whatsapp SET meta_token = 'temp_token' WHERE id = $lAlfa");
+
+        $crossQuote = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agBetaMock, [
+            'conversacion_id' => $cvAlfa,
+            'cliente_id'      => $cAlfa,
+            'items'           => [['descripcion' => 'Ítem no autorizado', 'cantidad' => 1, 'precio_unitario_usd' => 100]],
+        ], true);
+
+        $okQuote = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agAlfaMock, [
+            'conversacion_id' => $cvAlfa,
+            'cliente_id'      => $cAlfa,
+            'validez_dias'    => 7,
+            'descuento_usd'   => 25.00,
+            'aplica_iva'      => 1,
+            'iva_pct'         => 16,
+            'condiciones'     => 'Entrega inmediata en QA Sede Alfa.',
+            'items'           => [
+                ['descripcion' => 'Lámina MDF 18mm Melamina Blanca', 'cantidad' => 10, 'precio_unitario_usd' => 45.00],
+                ['descripcion' => 'Servicio de Corte Optimizado (€ / USD)', 'cantidad' => 1, 'precio_unitario_usd' => 75.00],
+            ],
+        ], true);
+        // Subtotal = 525.00, Descuento = 25.00 -> Base = 500.00 + IVA 16% (80.00) = Total 580.00 USD
+        $pdfGenPath = (string)($okQuote['pdf_abs_path'] ?? '');
+        $pdfGenBin = ($pdfGenPath !== '' && is_file($pdfGenPath)) ? (string)file_get_contents($pdfGenPath) : '';
+        if ($pdfGenPath !== '' && is_file($pdfGenPath)) {
+            @unlink($pdfGenPath);
+        }
+
+        $pipeAfterQuote = $con->query("SELECT etapa, monto_estimado_usd, probabilidad FROM pipeline_oportunidades WHERE id_sede = 9951 AND id_conversacion = $cvAlfa ORDER BY id DESC LIMIT 1")->fetch_assoc();
+        $msgAfterQuote = $con->query("SELECT tipo, mime_type, contenido FROM mensajes_y_eventos WHERE id = " . intval($okQuote['message_id'] ?? 0))->fetch_assoc();
+
+        qa_check("[OMN-03] QuickQuotePdfService genera binario %PDF-1.x membretado por sede, adjunta DOCUMENTO en chat, bloquea cross-sede (403) y actualiza Pipeline a COTIZADO ($580.00 USD)",
+            empty($crossQuote['ok']) && intval($crossQuote['http_code'] ?? 0) === 403 &&
+            !empty($okQuote['ok']) &&
+            substr($pdfGenBin, 0, 5) === '%PDF-' &&
+            round(floatval($okQuote['total_usd'] ?? 0), 2) === 580.00 &&
+            !empty($msgAfterQuote) && ($msgAfterQuote['tipo'] ?? '') === 'DOCUMENTO' && ($msgAfterQuote['mime_type'] ?? '') === 'application/pdf' &&
+            !empty($pipeAfterQuote) && ($pipeAfterQuote['etapa'] ?? '') === 'COTIZADO' && round(floatval($pipeAfterQuote['monto_estimado_usd'] ?? 0), 2) === 580.00 &&
+            strpos($bandejaViewSrc, 'btnQuickQuotePdf') !== false
+        );
+
+        // [OMN-04] Higiene estricta del directorio raíz de producción
+        $allowedRootPhp = [
+            'api_notificaciones.php',
+            'cron_campanas_autopilot.php',
+            'cron_waba_billing.php',
+            'get_media.php',
+            'imprimir_orden_waba.php',
+            'index.php',
+            'install.php',
+            'login.php',
+            'logout.php',
+            'recover_password.php',
+            'register.php',
+            'ver_documento.php',
+            'webhook.php',
+        ];
+        $unexpectedRootItems = [];
+        foreach (scandir($root) ?: [] as $rEntry) {
+            if ($rEntry === '.' || $rEntry === '..') {
+                continue;
+            }
+            $lowEntry = strtolower($rEntry);
+            if ($lowEntry === 'scratch' || substr($lowEntry, -4) === '.exe' || substr($lowEntry, -4) === '.bak' || substr($lowEntry, -4) === '.tmp') {
+                $unexpectedRootItems[] = $rEntry;
+                continue;
+            }
+            if (substr($lowEntry, -4) === '.php' && !in_array($rEntry, $allowedRootPhp, true)) {
+                $unexpectedRootItems[] = $rEntry;
+            }
+        }
+        qa_check("[OMN-04] Raíz de starfi_crm libre de scripts temporales de prueba, carpetas scratch/ y binarios .exe",
+            empty($unexpectedRootItems) && is_file($root . '/core/services/.htaccess'),
+            implode(', ', $unexpectedRootItems)
         );
 
         // ROLLBACK OBLIGATORIO (0 residuos en base de datos)

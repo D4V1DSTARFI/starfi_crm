@@ -13,7 +13,7 @@
                     <img id="profPrevImg" src="<?= htmlspecialchars(starfi_local_avatar_data_uri('Cliente', '#F1F5F9', '#37414A'), ENT_QUOTES, 'UTF-8') ?>" alt="Avatar" style="border-radius: 50%; margin-bottom: 15px; width: 100px; height: 100px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); object-fit: cover;">
                     <div class="input-group mb-2">
                         <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-user text-muted"></i></span>
-                        <input type="text" id="profPrevNameInput" class="form-control border-start-0 fw-bold text-center" placeholder="Nombre del Cliente">
+                        <input type="text" id="profPrevNameInput" autocomplete="off" class="form-control border-start-0 fw-bold text-center" placeholder="Nombre del Cliente">
                     </div>
                     <p class="text-muted small mb-0">Cliente CRM</p>
                 </div>
@@ -25,13 +25,13 @@
                     
                     <div class="detail-group bg-white p-3 mb-2" style="border-radius: 12px; border: 1px solid #E2E8F0;">
                         <label class="text-muted small fw-bold mb-1 d-block"><i class="fa-solid fa-envelope me-1"></i> Correo Electrónico</label>
-                        <input type="email" id="profPrevEmailInput" class="form-control form-control-sm" placeholder="cliente@correo.com">
+                        <input type="email" id="profPrevEmailInput" autocomplete="off" class="form-control form-control-sm" placeholder="cliente@correo.com">
                     </div>
 
                     <div class="detail-group bg-white p-3 mb-3" style="border-radius: 12px; border: 1px solid #E2E8F0;">
                         <label class="text-muted small fw-bold mb-2 d-block"><i class="fa-solid fa-tags me-1"></i> CENTRO DE ETIQUETAS</label>
                         <div class="input-group input-group-sm mb-2">
-                            <input type="text" id="newTagInput" class="form-control" placeholder="Añadir o seleccionar etiqueta..." list="existingTagsList">
+                            <input type="text" id="newTagInput" autocomplete="off" class="form-control" placeholder="Añadir o seleccionar etiqueta..." list="existingTagsList">
                             <datalist id="existingTagsList"></datalist>
                             <button class="btn btn-outline-primary" type="button" id="btnAddTag"><i class="fa-solid fa-plus"></i></button>
                         </div>
@@ -151,7 +151,7 @@
             <form id="formQuickDeal" autocomplete="off" onsubmit="event.preventDefault();">
                 <div class="mb-3">
                   <label class="form-label fw-bold small text-muted">Título / Producto de Interés</label>
-                  <input type="text" id="qdTitulo" class="form-control" placeholder="Ej: Cotización Láminas PVC / Mobiliario" style="border-radius: 10px;">
+                  <input type="text" id="qdTitulo" autocomplete="off" class="form-control" placeholder="Ej: Cotización Láminas PVC / Mobiliario" style="border-radius: 10px;">
                 </div>
                 <div class="row g-3 mb-3">
                   <div class="col-7">
@@ -169,7 +169,7 @@
                     <label class="form-label fw-bold small text-muted">Monto Estimado (USD)</label>
                     <div class="input-group">
                       <span class="input-group-text fw-bold">$</span>
-                      <input type="number" step="0.01" min="0" id="qdMontoUsd" class="form-control fw-bold" value="0.00">
+                      <input type="number" step="0.01" min="0" id="qdMontoUsd" autocomplete="off" class="form-control fw-bold" value="0.00">
                     </div>
                   </div>
                 </div>
@@ -209,12 +209,12 @@
                 <div class="row g-3">
                   <div class="col-6">
                     <label class="form-label small fw-bold text-success mb-1">🟢 Máximo en Verde (min)</label>
-                    <input type="number" min="1" max="1440" id="quickSlaVerdeInput" class="form-control fw-bold" value="<?= $v_min_init ?>">
+                    <input type="number" min="1" max="1440" id="quickSlaVerdeInput" autocomplete="off" class="form-control fw-bold" value="<?= $v_min_init ?>">
                     <small class="text-muted" style="font-size:0.7rem;">Ej: 5 min</small>
                   </div>
                   <div class="col-6">
                     <label class="form-label small fw-bold text-danger mb-1">🔴 Límite Rojo Crítico (min)</label>
-                    <input type="number" min="2" max="2880" id="quickSlaAmarilloInput" class="form-control fw-bold" value="<?= $a_min_init ?>">
+                    <input type="number" min="2" max="2880" id="quickSlaAmarilloInput" autocomplete="off" class="form-control fw-bold" value="<?= $a_min_init ?>">
                     <small class="text-muted" style="font-size:0.7rem;">Dispara alerta sonora (Ej: 15 min)</small>
                   </div>
                 </div>
@@ -236,3 +236,193 @@
       </div>
     </div>
     <?php endif; ?>
+
+    <!-- [SPRINT 4: OMN-02] Modal de Tareas, Recordatorios y Agenda Comercial por Cliente -->
+    <div class="modal fade" id="modalAgendaCliente" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 20px 50px rgba(15,23,42,0.18);">
+          <div class="modal-header border-0" style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); color: #ffffff; border-radius: 20px 20px 0 0; padding: 18px 24px;">
+            <div>
+              <h5 class="modal-title fw-bold mb-0"><i class="fa-solid fa-calendar-check me-2" style="color:#38BDF8;"></i>Agenda Comercial y Recordatorios del Cliente</h5>
+              <small class="text-white-50" id="agendaClientSubtitle" style="font-size:0.78rem;">Programa seguimientos con alertas en tiempo real en la barra superior</small>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4" style="background-color: #F8FAFC;">
+            <div class="row g-3">
+              <div class="col-12 col-lg-5">
+                <div class="bg-white p-3 rounded-4 border shadow-sm">
+                  <h6 class="fw-bold text-dark mb-3" style="font-size:0.9rem;"><i class="fa-solid fa-plus-circle text-primary me-1"></i> Nueva Tarea / Recordatorio</h6>
+                  <form id="formCreateClientTask" autocomplete="off" onsubmit="event.preventDefault();">
+                    <div class="mb-2">
+                      <label class="form-label small fw-bold text-secondary mb-1">Título del Seguimiento</label>
+                      <input type="text" id="agTaskTitulo" autocomplete="off" class="form-control form-control-sm" maxlength="200" placeholder="Ej: Confirmar transferencia / despacho">
+                    </div>
+                    <div class="row g-2 mb-2">
+                      <div class="col-6">
+                        <label class="form-label small fw-bold text-secondary mb-1">Tipo</label>
+                        <select id="agTaskTipo" class="form-select form-select-sm">
+                          <option value="SEGUIMIENTO">💬 Seguimiento</option>
+                          <option value="LLAMADA">📞 Llamada</option>
+                          <option value="COTIZACION">📄 Cotización</option>
+                          <option value="REUNION">🤝 Reunión</option>
+                          <option value="COBRO">💳 Cobro</option>
+                          <option value="OTRO">📌 Otro</option>
+                        </select>
+                      </div>
+                      <div class="col-6">
+                        <label class="form-label small fw-bold text-secondary mb-1">Prioridad</label>
+                        <select id="agTaskPrioridad" class="form-select form-select-sm">
+                          <option value="MEDIA">🟡 Media</option>
+                          <option value="ALTA">🟠 Alta</option>
+                          <option value="URGENTE">🔴 Urgente</option>
+                          <option value="BAJA">🟢 Baja</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small fw-bold text-secondary mb-1">Fecha y Hora Límite</label>
+                      <input type="datetime-local" id="agTaskFechaVenc" autocomplete="off" class="form-control form-control-sm">
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small fw-bold text-secondary mb-1">Alertar en Barra Superior</label>
+                      <select id="agTaskRecordatorioMin" class="form-select form-select-sm">
+                        <option value="15">15 minutos antes</option>
+                        <option value="5">5 minutos antes</option>
+                        <option value="30">30 minutos antes</option>
+                        <option value="60">1 hora antes</option>
+                        <option value="0">Al momento exacto</option>
+                      </select>
+                    </div>
+                    <div class="mb-3">
+                      <label class="form-label small fw-bold text-secondary mb-1">Notas / Detalles (Opcional)</label>
+                      <textarea id="agTaskDescripcion" autocomplete="off" class="form-control form-control-sm" rows="2" placeholder="Acuerdos con el cliente, condiciones, montos..."></textarea>
+                    </div>
+                    <button type="button" id="btnSaveClientTask" class="btn btn-sm w-100 text-white fw-bold py-2 rounded-pill shadow-sm" style="background: linear-gradient(135deg, #E85B14, #FF7A33); border: none;">
+                      <i class="fa-solid fa-bell me-1"></i> Agendar Recordatorio
+                    </button>
+                  </form>
+                </div>
+              </div>
+              <div class="col-12 col-lg-7">
+                <div class="bg-white p-3 rounded-4 border shadow-sm h-100 d-flex flex-column">
+                  <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h6 class="fw-bold text-dark mb-0" style="font-size:0.9rem;"><i class="fa-solid fa-list-check text-primary me-1"></i> Historial y Pendientes del Cliente</h6>
+                    <span class="badge bg-light text-dark border rounded-pill" id="agClientTasksSummaryBadge">0 pendientes</span>
+                  </div>
+                  <div id="agClientTasksList" style="max-height: 360px; overflow-y: auto; flex: 1;">
+                    <div class="text-center text-muted py-4 small">Selecciona un cliente para ver su agenda.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- [SPRINT 4: OMN-03] Modal Cotizador Rápido PDF Membretado por Sede en el Chat -->
+    <div class="modal fade" id="modalQuickQuotePdf" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content" style="border-radius: 20px; border: none; box-shadow: 0 22px 55px rgba(15,23,42,0.22);">
+          <div class="modal-header border-0" style="background: linear-gradient(135deg, #0F172A 0%, #37414A 100%); color: #ffffff; border-radius: 20px 20px 0 0; padding: 18px 26px;">
+            <div>
+              <h5 class="modal-title fw-bold mb-0"><i class="fa-solid fa-file-invoice-dollar me-2" style="color:#FF8A4D;"></i>Cotizador Rápido PDF en el Chat</h5>
+              <small class="text-white-50" id="qqHeaderSubtitle" style="font-size:0.78rem;">Genera cotización oficial membretada por sede, envíala al WhatsApp del cliente y actualiza el Pipeline en USD</small>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4" style="background-color: #F8FAFC;">
+            <form id="formQuickQuotePdf" autocomplete="off" onsubmit="event.preventDefault();">
+              <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                <div class="small text-secondary fw-semibold">
+                  <i class="fa-solid fa-user-check text-primary me-1"></i> Cliente: <strong class="text-dark" id="qqClientDisplay">-</strong>
+                  <span class="mx-2">|</span>
+                  <i class="fa-solid fa-store text-primary me-1"></i> Sede Emisora: <strong class="text-dark" id="qqSedeDisplay">Automática según línea</strong>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary rounded-pill fw-bold px-3" id="btnAddQuoteItemRow">
+                  <i class="fa-solid fa-plus me-1"></i> Agregar Ítem
+                </button>
+              </div>
+
+              <div class="table-responsive bg-white rounded-4 border shadow-sm mb-3">
+                <table class="table table-sm align-middle mb-0" id="qqItemsTable">
+                  <thead class="table-light" style="font-size:0.78rem; text-transform:uppercase; color:#475569;">
+                    <tr>
+                      <th style="padding:10px 14px; min-width:260px;">Descripción del Producto o Servicio</th>
+                      <th style="width:110px;">Cantidad</th>
+                      <th style="width:155px;">Precio Unit. (USD)</th>
+                      <th style="width:140px; text-align:right;">Subtotal USD</th>
+                      <th style="width:50px; text-align:center;"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="qqItemsTbody"></tbody>
+                </table>
+              </div>
+
+              <div class="row g-3">
+                <div class="col-12 col-lg-7">
+                  <div class="bg-white p-3 rounded-4 border shadow-sm h-100">
+                    <div class="row g-2 mb-2">
+                      <div class="col-4">
+                        <label class="form-label small fw-bold text-secondary mb-1">Validez (Días)</label>
+                        <input type="number" min="1" max="90" id="qqValidezDias" autocomplete="off" class="form-control form-control-sm fw-bold" value="7">
+                      </div>
+                      <div class="col-4">
+                        <label class="form-label small fw-bold text-secondary mb-1">Descuento (USD)</label>
+                        <input type="number" step="0.01" min="0" id="qqDescuentoUsd" autocomplete="off" class="form-control form-control-sm" value="0.00">
+                      </div>
+                      <div class="col-4 d-flex align-items-end">
+                        <div class="form-check mb-1">
+                          <input class="form-check-input" type="checkbox" id="qqAplicaIva" value="1">
+                          <label class="form-check-label small fw-bold text-dark" for="qqAplicaIva">Aplicar IVA (16%)</label>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small fw-bold text-secondary mb-1">Condiciones Comerciales</label>
+                      <input type="text" id="qqCondiciones" autocomplete="off" class="form-control form-control-sm" maxlength="350" value="Precios expresados en USD. Cotización sujeta a disponibilidad de inventario al momento del pago.">
+                    </div>
+                    <div>
+                      <label class="form-label small fw-bold text-secondary mb-1">Notas Adicionales para el Cliente (Opcional)</label>
+                      <textarea id="qqNotas" autocomplete="off" class="form-control form-control-sm" rows="2" placeholder="Ej: Incluye entrega inmediata en tienda o despacho coordinado..."></textarea>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-5">
+                  <div class="bg-white p-3 rounded-4 border shadow-sm h-100 d-flex flex-column justify-content-between">
+                    <div>
+                      <div class="d-flex justify-content-between small text-muted mb-1">
+                        <span>Subtotal:</span>
+                        <strong class="text-dark" id="qqSumSubtotal">$0.00 USD</strong>
+                      </div>
+                      <div class="d-flex justify-content-between small text-danger mb-1">
+                        <span>Descuento:</span>
+                        <strong id="qqSumDescuento">-$0.00 USD</strong>
+                      </div>
+                      <div class="d-flex justify-content-between small text-muted mb-2">
+                        <span>IVA (16%):</span>
+                        <strong class="text-dark" id="qqSumIva">$0.00 USD</strong>
+                      </div>
+                      <div class="p-2.5 rounded-3 d-flex justify-content-between align-items-center mt-2" style="padding:10px 14px; background:linear-gradient(135deg,#FFF7ED,#FFEDD5); border:1px solid #FDBA74;">
+                        <span class="fw-bold text-dark">TOTAL COTIZADO:</span>
+                        <span class="fw-bold fs-5" style="color:#C2410C;" id="qqSumTotal">$0.00 USD</span>
+                      </div>
+                    </div>
+                    <div class="mt-3 pt-2 border-top small text-muted">
+                      <i class="fa-solid fa-bolt text-warning me-1"></i> Al confirmar: se genera el PDF membretado de la sede, se envía al WhatsApp del cliente y se actualiza el Embudo a <strong>Cotizado</strong>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0 bg-white" style="border-radius: 0 0 20px 20px; padding: 14px 26px;">
+            <button type="button" class="btn btn-light border rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" id="btnEmitAndSendQuotePdf" class="btn text-white fw-bold rounded-pill px-4 shadow-sm" style="background: linear-gradient(135deg, #E85B14, #FF7A33); border: none;">
+              <i class="fa-brands fa-whatsapp me-1"></i> Generar PDF, Enviar a WhatsApp y Registrar en Pipeline
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>

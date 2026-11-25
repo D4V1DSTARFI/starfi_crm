@@ -4,6 +4,8 @@
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../core/audit.php';
 require_once __DIR__ . '/../../core/IaConnector.php';
+require_once __DIR__ . '/../../core/services/CommercialAgendaService.php';
+require_once __DIR__ . '/../../core/services/QuickQuotePdfService.php';
 requireAuth();
 requirePermission('bandeja');
 header('Content-Type: application/json; charset=utf-8');
@@ -1404,29 +1406,39 @@ switch ($action) {
             exit;
         }
 
-        $finfo = new finfo(FILEINFO_MIME_TYPE);
-        $mime = (string)$finfo->file($file['tmp_name']);
-        $allowed_mime_map = [
-            'image/jpeg'      => 'jpg',
-            'image/png'       => 'png',
-            'image/webp'      => 'webp',
-            'application/pdf' => 'pdf',
-            'video/mp4'       => 'mp4',
-        ];
-        if (!isset($allowed_mime_map[$mime])) {
-            echo json_encode(['status' => 'error', 'message' => 'Tipo de archivo no permitido.']);
+        $is_voice_note = (intval($_POST['is_voice_note'] ?? 0) === 1);
+        $voice_duration_sec = max(0, min(900, intval($_POST['voice_duration_sec'] ?? 0)));
+        $media_spec = starfi_detect_safe_chat_media($file['tmp_name'], $is_voice_note);
+        if (!$media_spec) {
+            echo json_encode(['status' => 'error', 'message' => $is_voice_note ? 'Formato de nota de voz no válido o vacío.' : 'Tipo de archivo no permitido.']);
             exit;
         }
 
-        $ext = $allowed_mime_map[$mime];
-        $filename = 'media_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-        $dest_path = __DIR__ . '/../../assets/uploads/' . $filename;
+        $ext = $media_spec['ext'];
+        $mime = $media_spec['mime'];
+        $tipo_bd = $media_spec['tipo_bd'];
+        $meta_type = $media_spec['meta_type'];
+        $prefix_media = $is_voice_note ? 'media_voice_' : 'media_';
+        $filename = $prefix_media . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $upload_dir_abs = __DIR__ . '/../../assets/uploads';
+        if (!is_dir($upload_dir_abs)) {
+            @mkdir($upload_dir_abs, 0775, true);
+        }
+        $dest_path = $upload_dir_abs . '/' . $filename;
         
         if (@move_uploaded_file($file['tmp_name'], $dest_path)) {
             $url_archivo = '../../assets/uploads/' . $filename;
-            $tipo_bd = (strpos($mime, 'image') !== false) ? 'IMAGEN' : 'DOCUMENTO';
-            $contenido = $file['name'];
+            if ($is_voice_note) {
+                $dur_fmt = $voice_duration_sec > 0
+                    ? (' (' . sprintf('%02d:%02d', intdiv($voice_duration_sec, 60), $voice_duration_sec % 60) . ')')
+                    : '';
+                $contenido = '🎤 Nota de voz' . $dur_fmt;
+            } else {
+                $contenido = basename((string)($file['name'] ?? $filename));
+            }
             $id_mensaje_meta = null;
+            $estado_envio_media = 'ENVIADO';
+            $error_detalle_media = null;
             $conv_antes = null;
             
             $is_new_chat = false;
@@ -1458,7 +1470,7 @@ switch ($action) {
                 [$conversacion_id]
             );
 
-            if ($chat_data && !empty($chat_data['meta_token']) && $chat_data['meta_token'] !== 'temp_token') {
+            if ($chat_data && !empty($chat_data['meta_token']) && $chat_data['meta_token'] !== 'temp_token' && !empty($chat_data['phone_number_id'])) {
                 $numero_destino = preg_replace('/[^0-9]/', '', $chat_data['numero_whatsapp']);
                 $meta_token = $chat_data['meta_token'];
                 $phone_number_id = $chat_data['phone_number_id'];
@@ -1467,6 +1479,7 @@ switch ($action) {
                 $cfile = new CURLFile($dest_path, $mime, $filename);
                 $post_media = [
                     'messaging_product' => 'whatsapp',
+                    'type' => $mime,
                     'file' => $cfile
                 ];
 
@@ -1477,9 +1490,11 @@ switch ($action) {
                     'Authorization: Bearer ' . $meta_token
                 ]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
                 $media_response = curl_exec($ch);
+                $media_http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_close($ch);
                 
                 $media_data = json_decode((string)$media_response, true);
@@ -1488,22 +1503,19 @@ switch ($action) {
                     $media_id = $media_data['id'];
                     $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                     
-                    $meta_type = 'document';
-                    if (strpos($mime, 'image') !== false) {
-                        $meta_type = 'image';
-                        if ($mime === 'image/webp') {
-                            $meta_type = 'sticker';
-                        }
+                    $media_payload_node = ['id' => $media_id];
+                    if ($meta_type === 'document') {
+                        $media_payload_node['filename'] = $contenido;
+                    } elseif ($meta_type === 'audio' && $is_voice_note && $mime === 'audio/ogg') {
+                        $media_payload_node['voice'] = true;
                     }
-                    
+
                     $post_msg = [
                         'messaging_product' => 'whatsapp',
                         'recipient_type' => 'individual',
                         'to' => $numero_destino,
                         'type' => $meta_type,
-                        $meta_type => [
-                            'id' => $media_id
-                        ]
+                        $meta_type => $media_payload_node
                     ];
 
                     $ch2 = curl_init($msg_url);
@@ -1514,15 +1526,24 @@ switch ($action) {
                         'Content-Type: application/json'
                     ]);
                     curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, true);
                     curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 4);
-                    curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 10);
                     $response2 = curl_exec($ch2);
+                    $msg_http_code = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
                     curl_close($ch2);
                     
                     $res_meta2 = json_decode((string)$response2, true);
                     if (isset($res_meta2['messages'][0]['id'])) {
                         $id_mensaje_meta = $res_meta2['messages'][0]['id'];
+                        $estado_envio_media = 'ENVIADO';
+                    } else {
+                        $estado_envio_media = 'FALLIDO';
+                        $error_detalle_media = parse_meta_error_detail($res_meta2, $msg_http_code);
                     }
+                } else {
+                    $estado_envio_media = 'FALLIDO';
+                    $error_detalle_media = parse_meta_error_detail($media_data, $media_http_code);
                 }
             }
 
@@ -1531,12 +1552,25 @@ switch ($action) {
             
             $stmt_msg = $con->prepare("
                 INSERT INTO mensajes_y_eventos (
-                    id_conversacion, id_mensaje_meta, tipo, origen, 
-                    contenido, url_archivo, mime_type, estado_envio, reply_to_meta_id, reply_to_text
-                ) VALUES (?, ?, ?, 'AGENTE', ?, ?, ?, 'ENVIADO', ?, ?)
+                    id_conversacion, id_mensaje_meta, id_agente, tipo, origen, 
+                    contenido, url_archivo, mime_type, estado_envio, error_detalle, reply_to_meta_id, reply_to_text
+                ) VALUES (?, ?, ?, ?, 'AGENTE', ?, ?, ?, ?, ?, ?, ?)
             ");
             if ($stmt_msg) {
-                $stmt_msg->bind_param("isssssss", $conversacion_id, $id_mensaje_meta, $tipo_bd, $contenido, $url_archivo, $mime, $reply_to_meta_id, $reply_to_text);
+                $stmt_msg->bind_param(
+                    "isissssssss",
+                    $conversacion_id,
+                    $id_mensaje_meta,
+                    $agente_id,
+                    $tipo_bd,
+                    $contenido,
+                    $url_archivo,
+                    $mime,
+                    $estado_envio_media,
+                    $error_detalle_media,
+                    $reply_to_meta_id,
+                    $reply_to_text
+                );
                 if ($stmt_msg->execute()) {
                     $new_media_msg_id = intval($stmt_msg->insert_id);
                     $stmt_msg->close();
@@ -1546,17 +1580,36 @@ switch ($action) {
                         $stmtUpM->execute();
                         $stmtUpM->close();
                     }
+                    $audit_action = $is_voice_note ? 'ENVIAR_NOTA_VOZ' : 'ENVIAR_MULTIMEDIA';
+                    $audit_desc = $is_voice_note
+                        ? "Nota de voz enviada en conversación #$conversacion_id ($estado_envio_media)"
+                        : "Archivo multimedia ($tipo_bd) enviado en conversación #$conversacion_id ($estado_envio_media)";
                     registrar_auditoria(
                         'bandeja',
-                        'ENVIAR_MULTIMEDIA',
-                        "Archivo multimedia ($tipo_bd) enviado en conversación #$conversacion_id",
+                        $audit_action,
+                        $audit_desc,
                         $conv_antes,
-                        ['conversacion_id' => $conversacion_id, 'message_id' => $new_media_msg_id, 'tipo' => $tipo_bd, 'archivo' => $filename],
+                        [
+                            'conversacion_id' => $conversacion_id,
+                            'message_id' => $new_media_msg_id,
+                            'tipo' => $tipo_bd,
+                            'mime_type' => $mime,
+                            'archivo' => $filename,
+                            'is_voice_note' => $is_voice_note ? 1 : 0,
+                            'duracion_seg' => $voice_duration_sec,
+                            'estado_envio' => $estado_envio_media
+                        ],
                         $con,
                         $agente_id,
                         intval($chat_data['id_sede'] ?? 0) ?: null
                     );
-                    echo json_encode(['status' => 'success', 'new_chat_id' => ($is_new_chat ? $conversacion_id : null)]);
+                    echo json_encode([
+                        'status' => 'success',
+                        'message_id' => $new_media_msg_id,
+                        'estado_envio' => $estado_envio_media,
+                        'warning' => ($estado_envio_media === 'FALLIDO' ? $error_detalle_media : null),
+                        'new_chat_id' => ($is_new_chat ? $conversacion_id : null)
+                    ]);
                 } else {
                     starfi_log_exception('bandeja', 'Error ejecutando upload_media INSERT', ['conversacion_id' => $conversacion_id, 'sql_error' => $stmt_msg->error]);
                     $stmt_msg->close();
@@ -1649,25 +1702,26 @@ switch ($action) {
             if (isset($res_meta['messages'][0]['id'])) {
                 $id_mensaje_meta = $res_meta['messages'][0]['id'];
             }
-        } else if (($msg['tipo'] === 'IMAGEN' || $msg['tipo'] === 'DOCUMENTO') && !empty($msg['url_archivo'])) {
+        } else if (($msg['tipo'] === 'IMAGEN' || $msg['tipo'] === 'DOCUMENTO' || $msg['tipo'] === 'AUDIO') && !empty($msg['url_archivo'])) {
             $rel_upload = preg_replace('#^.*?(/assets/uploads/)#', '$1', str_replace('\\', '/', (string)$msg['url_archivo']));
             $dest_path = __DIR__ . '/../..' . (strpos($rel_upload, '/') === 0 ? $rel_upload : ('/' . $rel_upload));
             
             if (file_exists($dest_path)) {
-                $mime = $msg['mime_type'];
+                $mime = $msg['mime_type'] ?: 'application/octet-stream';
                 $filename = basename($dest_path);
                 
                 $media_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/media";
                 $cfile = new CURLFile($dest_path, $mime, $filename);
-                $post_media = ['messaging_product' => 'whatsapp', 'file' => $cfile];
+                $post_media = ['messaging_product' => 'whatsapp', 'type' => $mime, 'file' => $cfile];
                 
                 $ch = curl_init($media_url);
                 curl_setopt($ch, CURLOPT_POST, 1);
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $post_media);
                 curl_setopt($ch, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
                 $media_response = curl_exec($ch);
                 curl_close($ch);
                 
@@ -1677,17 +1731,23 @@ switch ($action) {
                     $msg_url = "https://graph.facebook.com/" . (defined('META_API_VERSION') ? META_API_VERSION : 'v23.0') . "/{$phone_number_id}/messages";
                     
                     $meta_type = 'document';
-                    if (strpos($mime, 'image') !== false) {
+                    if ($msg['tipo'] === 'AUDIO' || strpos($mime, 'audio') === 0) {
+                        $meta_type = 'audio';
+                    } elseif (strpos($mime, 'image') !== false) {
                         $meta_type = 'image';
                         if ($mime === 'image/webp') $meta_type = 'sticker';
                     }
                     
+                    $media_obj_retry = ['id' => $media_id];
+                    if ($meta_type === 'audio' && $mime === 'audio/ogg') {
+                        $media_obj_retry['voice'] = true;
+                    }
                     $post_msg = [
                         'messaging_product' => 'whatsapp',
                         'recipient_type' => 'individual',
                         'to' => $numero_destino,
                         'type' => $meta_type,
-                        $meta_type => ['id' => $media_id]
+                        $meta_type => $media_obj_retry
                     ];
                     
                     $ch2 = curl_init($msg_url);
@@ -1695,8 +1755,9 @@ switch ($action) {
                     curl_setopt($ch2, CURLOPT_POSTFIELDS, json_encode($post_msg));
                     curl_setopt($ch2, CURLOPT_HTTPHEADER, ['Authorization: Bearer ' . $meta_token, 'Content-Type: application/json']);
                     curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, true);
                     curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 4);
-                    curl_setopt($ch2, CURLOPT_TIMEOUT, 8);
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 10);
                     $response2 = curl_exec($ch2);
                     curl_close($ch2);
                     
@@ -3075,6 +3136,75 @@ switch ($action) {
             'sentimiento' => $sentNuevo,
             'sentimiento_label' => $sentLabel
         ]);
+        break;
+
+    // =========================================================================
+    // [SPRINT 4: OMN-02] AGENDA COMERCIAL, TAREAS Y RECORDATORIOS POR CLIENTE
+    // =========================================================================
+    case 'agenda_list_client':
+        $cliente_id = intval($_POST['cliente_id'] ?? $_GET['cliente_id'] ?? 0);
+        $conversacion_id = intval($_POST['conversacion_id'] ?? $_GET['conversacion_id'] ?? 0);
+        $resList = CommercialAgendaService::listClientTasks($con, $agente_info_global, $cliente_id, $conversacion_id);
+        if (empty($resList['ok'])) {
+            http_response_code(intval($resList['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $resList['message'] ?? 'No se pudo cargar la agenda del cliente.']);
+            exit;
+        }
+        echo json_encode([
+            'status'        => 'success',
+            'tasks'         => $resList['tasks'],
+            'pending_count' => $resList['pending_count'],
+            'overdue_count' => $resList['overdue_count'] ?? 0,
+        ]);
+        break;
+
+    case 'agenda_create_task':
+        $resCreate = CommercialAgendaService::createTask($con, $agente_info_global, $_POST, 'bandeja');
+        if (empty($resCreate['ok'])) {
+            http_response_code(intval($resCreate['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $resCreate['message'] ?? 'No se pudo agendar la tarea.']);
+            exit;
+        }
+        $resCreate['status'] = 'success';
+        echo json_encode($resCreate);
+        break;
+
+    case 'agenda_update_task':
+        $task_id = intval($_POST['task_id'] ?? 0);
+        $operacion = strtoupper(trim((string)($_POST['operacion'] ?? 'COMPLETAR')));
+        $resUpd = CommercialAgendaService::updateTaskStatus($con, $agente_info_global, $task_id, $operacion, [
+            'snooze_min'  => intval($_POST['snooze_min'] ?? 30),
+            'nueva_fecha' => (string)($_POST['nueva_fecha'] ?? ''),
+        ], 'bandeja');
+        if (empty($resUpd['ok'])) {
+            http_response_code(intval($resUpd['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $resUpd['message'] ?? 'No se pudo actualizar la tarea.']);
+            exit;
+        }
+        $resUpd['status'] = 'success';
+        echo json_encode($resUpd);
+        break;
+
+    // =========================================================================
+    // [SPRINT 4: OMN-03] COTIZADOR RÁPIDO PDF MEMBRETADO POR SEDE + WHATSAPP + PIPELINE
+    // =========================================================================
+    case 'emit_quick_quote_pdf':
+        $send_wa = (!isset($_POST['send_whatsapp']) || intval($_POST['send_whatsapp']) === 1);
+        $resQuote = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agente_info_global, $_POST, $send_wa);
+        if (empty($resQuote['ok'])) {
+            $httpCode = intval($resQuote['http_code'] ?? 400);
+            if ($httpCode !== 200) {
+                http_response_code($httpCode);
+            }
+            echo json_encode([
+                'status'  => 'error',
+                'code'    => $resQuote['code'] ?? null,
+                'message' => $resQuote['message'] ?? 'No se pudo generar la cotización PDF.',
+            ]);
+            exit;
+        }
+        $resQuote['status'] = 'success';
+        echo json_encode($resQuote);
         break;
 
     default:

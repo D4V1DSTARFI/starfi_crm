@@ -42,5 +42,14 @@ logs/*
 modules/*/logs_*.log
 *.log
 
-# Directorios temporales
+# Directorios y scripts temporales de prueba en raíz ([OMN-04])
 scratch/
+/scratch_*.php
+/test*.php
+/tmp_*.php
+/debug_*.php
+/dump_*.php
+/export_databases.php
+/print_all_rows.php
+*.bak
+*.tmp

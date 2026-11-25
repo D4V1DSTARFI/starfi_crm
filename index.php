@@ -3,6 +3,62 @@
 require_once __DIR__ . '/core/auth.php';
 requireAuth();
 $agente = getAgenteInfo();
+
+// [SPRINT 4: OMN-02] Endpoint global autenticado para Alertas y Agenda Comercial en la Barra Superior
+if (isset($_REQUEST['ajax_agenda_topbar']) && $_REQUEST['ajax_agenda_topbar'] === '1') {
+    @ini_set('display_errors', '0');
+    header('Content-Type: application/json; charset=utf-8');
+    session_write_close();
+    require_once __DIR__ . '/core/services/CommercialAgendaService.php';
+    $conAgenda = getDbConnection('core');
+    if (!$conAgenda) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Base de datos no disponible.']);
+        exit;
+    }
+    $agAction = trim((string)($_POST['agenda_action'] ?? $_GET['agenda_action'] ?? 'poll_alerts'));
+    if ($agAction === 'poll_alerts') {
+        $markDisp = (intval($_POST['mark_dispatched'] ?? 0) === 1);
+        $feed = CommercialAgendaService::getTopbarAlertsAndAgenda($conAgenda, $agente, $markDisp);
+        if (empty($feed['ok'])) {
+            http_response_code(intval($feed['http_code'] ?? 500));
+            echo json_encode(['status' => 'error', 'message' => $feed['message'] ?? 'Error al consultar agenda.']);
+            exit;
+        }
+        $feed['status'] = 'success';
+        echo json_encode($feed);
+        exit;
+    } elseif ($agAction === 'update_task') {
+        $tid = intval($_POST['task_id'] ?? 0);
+        $op = strtoupper(trim((string)($_POST['operacion'] ?? 'COMPLETAR')));
+        $upd = CommercialAgendaService::updateTaskStatus($conAgenda, $agente, $tid, $op, [
+            'snooze_min'  => intval($_POST['snooze_min'] ?? 30),
+            'nueva_fecha' => (string)($_POST['nueva_fecha'] ?? ''),
+        ], 'agenda_comercial');
+        if (empty($upd['ok'])) {
+            http_response_code(intval($upd['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $upd['message'] ?? 'No se pudo actualizar la tarea.']);
+            exit;
+        }
+        $upd['status'] = 'success';
+        echo json_encode($upd);
+        exit;
+    } elseif ($agAction === 'quick_create_task') {
+        $created = CommercialAgendaService::createTask($conAgenda, $agente, $_POST, 'agenda_comercial');
+        if (empty($created['ok'])) {
+            http_response_code(intval($created['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $created['message'] ?? 'No se pudo crear la tarea.']);
+            exit;
+        }
+        $created['status'] = 'success';
+        echo json_encode($created);
+        exit;
+    }
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'message' => 'Acción de agenda no válida.']);
+    exit;
+}
+
 $nombre_agente = $agente['nombre_completo'] ?? 'Operador';
 $rol_agente = $agente['rol'] ?? 'AGENTE';
 $is_master_emergency = (intval($agente['id'] ?? 0) === 1 && strtoupper((string)$rol_agente) === 'MASTER');
@@ -338,7 +394,8 @@ if (!$db_online && $is_master_emergency) {
             <a class="navbar-brand d-flex align-items-center" href="index.php">
                 <img src="docs/identidad_visual/logos/logo_starfi.png" alt="STARFI CRM">
             </a>
-            <div class="d-flex align-items-center gap-4 ms-auto">
+            <div class="d-flex align-items-center gap-3 ms-auto">
+                <?= starfi_render_topbar_agenda_widget('') ?>
                 <div class="user-profile">
                     <div class="avatar-circle">
                         <?= strtoupper(substr($nombre_agente, 0, 1)) ?>
@@ -415,19 +472,19 @@ if (!$db_online && $is_master_emergency) {
                             <div class="row g-3">
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">Servidor MySQL (<code>DB_HOST</code>)</label>
-                                    <input type="text" name="db_host" class="form-control" value="<?= htmlspecialchars($default_srv_host) ?>" placeholder="127.0.0.1 o IP del servidor" required>
+                                    <input type="text" name="db_host" autocomplete="off" class="form-control" value="<?= htmlspecialchars($default_srv_host) ?>" placeholder="127.0.0.1 o IP del servidor" required>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">Base de Datos (<code>DB_NAME</code>)</label>
-                                    <input type="text" name="db_name" class="form-control" value="<?= htmlspecialchars($_POST['db_name'] ?? 'starfi_crm') ?>" required>
+                                    <input type="text" name="db_name" autocomplete="off" class="form-control" value="<?= htmlspecialchars($_POST['db_name'] ?? 'starfi_crm') ?>" required>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">Usuario MySQL (<code>DB_USER</code>)</label>
-                                    <input type="text" name="db_user" class="form-control" value="<?= htmlspecialchars($_POST['db_user'] ?? 'starfi_v2_user') ?>" required>
+                                    <input type="text" name="db_user" autocomplete="off" class="form-control" value="<?= htmlspecialchars($_POST['db_user'] ?? 'starfi_v2_user') ?>" required>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">Contraseña MySQL (<code>DB_PASS</code>)</label>
-                                    <input type="password" name="db_pass" class="form-control" placeholder="Escribe la clave o pega el hash MD5" required>
+                                    <input type="password" name="db_pass" autocomplete="off" class="form-control" placeholder="Escribe la clave o pega el hash MD5" required>
                                     <div class="form-check mt-1">
                                         <input class="form-check-input" type="checkbox" name="db_pass_md5" value="1" id="chkMd5" checked>
                                         <label class="form-check-label small text-muted" for="chkMd5">
@@ -437,15 +494,15 @@ if (!$db_online && $is_master_emergency) {
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">Token Verificación Webhook (<code>WEBHOOK_VERIFY_TOKEN</code>)</label>
-                                    <input type="text" name="webhook_verify_token" class="form-control" value="<?= htmlspecialchars($_POST['webhook_verify_token'] ?? '') ?>" placeholder="Opcional: si queda vacío usa frase/token seguro">
+                                    <input type="text" name="webhook_verify_token" autocomplete="off" class="form-control" value="<?= htmlspecialchars($_POST['webhook_verify_token'] ?? '') ?>" placeholder="Opcional: si queda vacío usa frase/token seguro">
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold small">URL Respaldo Multimedia (<code>CENTRAL_MEDIA_BASE_URL</code>)</label>
-                                    <input type="text" name="central_media_base_url" class="form-control" value="<?= htmlspecialchars($default_media_url) ?>">
+                                    <input type="text" name="central_media_base_url" autocomplete="off" class="form-control" value="<?= htmlspecialchars($default_media_url) ?>">
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label fw-semibold small">System User Token de Meta (<code>META_GLOBAL_TOKEN</code>) <span class="text-muted fw-normal">(Opcional: si lo dejas vacío se recupera automáticamente de las líneas activas en BD)</span></label>
-                                    <input type="password" name="meta_global_token" class="form-control" placeholder="EAA...">
+                                    <input type="password" name="meta_global_token" autocomplete="off" class="form-control" placeholder="EAA...">
                                 </div>
                             </div>
 

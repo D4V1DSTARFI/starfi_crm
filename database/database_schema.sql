@@ -412,3 +412,72 @@ CREATE TABLE IF NOT EXISTS `auditoria_sistema` (
     INDEX `idx_modulo_fecha` (`modulo`, `fecha_evento`),
     INDEX `idx_usuario` (`id_usuario`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- =============================================================================
+-- SPRINT 4 (OT-STARFI-2026-11): AGENDA COMERCIAL ([OMN-02]) Y COTIZADOR PDF ([OMN-03])
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS `tareas_agenda_comercial` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `id_empresa` INT NOT NULL DEFAULT 1,
+    `id_sede` INT NOT NULL DEFAULT 0,
+    `id_cliente` INT NOT NULL DEFAULT 0,
+    `id_conversacion` INT DEFAULT NULL,
+    `id_oportunidad` INT DEFAULT NULL,
+    `id_agente_asignado` INT NOT NULL DEFAULT 0,
+    `creado_por` INT NOT NULL DEFAULT 0,
+    `titulo` VARCHAR(200) NOT NULL,
+    `descripcion` TEXT DEFAULT NULL,
+    `tipo` VARCHAR(30) NOT NULL DEFAULT 'SEGUIMIENTO',
+    `prioridad` VARCHAR(20) NOT NULL DEFAULT 'MEDIA',
+    `fecha_vencimiento` DATETIME NOT NULL,
+    `recordatorio_min_antes` INT NOT NULL DEFAULT 15,
+    `alerta_disparada` TINYINT(1) NOT NULL DEFAULT 0,
+    `estado` VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+    `fecha_completada` DATETIME DEFAULT NULL,
+    `fecha_creacion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `fecha_actualizacion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_agente_estado_venc` (`id_agente_asignado`, `estado`, `fecha_vencimiento`),
+    INDEX `idx_sede_estado_venc` (`id_sede`, `estado`, `fecha_vencimiento`),
+    INDEX `idx_cliente_estado` (`id_cliente`, `estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cotizaciones_rapidas` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `codigo_cotizacion` VARCHAR(40) NOT NULL,
+    `id_empresa` INT NOT NULL DEFAULT 1,
+    `id_sede` INT NOT NULL DEFAULT 0,
+    `id_cliente` INT NOT NULL DEFAULT 0,
+    `id_conversacion` INT DEFAULT NULL,
+    `id_oportunidad` INT DEFAULT NULL,
+    `id_agente` INT NOT NULL DEFAULT 0,
+    `moneda` VARCHAR(10) NOT NULL DEFAULT 'USD',
+    `subtotal_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    `descuento_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    `aplica_iva` TINYINT(1) NOT NULL DEFAULT 0,
+    `iva_pct` DECIMAL(5,2) NOT NULL DEFAULT 16.00,
+    `iva_monto_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    `total_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    `validez_dias` INT NOT NULL DEFAULT 7,
+    `condiciones` TEXT DEFAULT NULL,
+    `notas` TEXT DEFAULT NULL,
+    `pdf_ruta` VARCHAR(255) NOT NULL,
+    `id_mensaje_meta` VARCHAR(120) DEFAULT NULL,
+    `id_mensaje_local` INT DEFAULT NULL,
+    `estado` VARCHAR(25) NOT NULL DEFAULT 'EMITIDA',
+    `fecha_creacion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uniq_codigo_cotizacion` (`codigo_cotizacion`),
+    INDEX `idx_sede_fecha` (`id_sede`, `fecha_creacion`),
+    INDEX `idx_cliente` (`id_cliente`),
+    INDEX `idx_conversacion` (`id_conversacion`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cotizaciones_rapidas_items` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `id_cotizacion` INT NOT NULL,
+    `orden` INT NOT NULL DEFAULT 1,
+    `descripcion` VARCHAR(255) NOT NULL,
+    `cantidad` DECIMAL(10,2) NOT NULL DEFAULT 1.00,
+    `precio_unitario_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    `subtotal_usd` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    INDEX `idx_cotizacion` (`id_cotizacion`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
