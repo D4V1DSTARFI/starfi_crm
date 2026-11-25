@@ -18,9 +18,12 @@ class MetaTemplateService {
         if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
             return;
         }
-        $flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_meta_tpl_schema_v3.flag';
+        $flag = rtrim(sys_get_temp_dir(), '/\\') . '/starfi_meta_tpl_schema_v4.flag';
         if (@file_exists($flag) && (time() - @filemtime($flag)) < 86400) {
-            return;
+            $chkUniq = @$con->query("SHOW INDEX FROM `plantillas_whatsapp` WHERE Key_name = 'uniq_sede_name_lang'");
+            if ($chkUniq && $chkUniq->num_rows >= 3) {
+                return;
+            }
         }
 
         @$con->query("CREATE TABLE IF NOT EXISTS `plantillas_whatsapp` (
@@ -32,6 +35,7 @@ class MetaTemplateService {
             `status` VARCHAR(40) NOT NULL DEFAULT 'PENDING',
             `components_json` LONGTEXT DEFAULT NULL,
             `last_sync` DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY `uniq_sede_name_lang` (`id_sede`, `name`, `language`),
             INDEX `idx_sede_name` (`id_sede`, `name`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
@@ -45,6 +49,18 @@ class MetaTemplateService {
         if (!isset($cols['components_json'])) {
             @$con->query("ALTER TABLE `plantillas_whatsapp` ADD COLUMN `components_json` LONGTEXT DEFAULT NULL AFTER `status`");
         }
+
+        // Migrar llave única antigua `sede_name (id_sede, name)` de 2 columnas hacia `uniq_sede_name_lang (id_sede, name, language)`
+        $rOldKey = @$con->query("SHOW INDEX FROM `plantillas_whatsapp` WHERE Key_name = 'sede_name'");
+        if ($rOldKey && $rOldKey->num_rows > 0 && $rOldKey->num_rows < 3) {
+            @$con->query("ALTER TABLE `plantillas_whatsapp` DROP INDEX `sede_name`");
+        }
+        $rNewKey = @$con->query("SHOW INDEX FROM `plantillas_whatsapp` WHERE Key_name = 'uniq_sede_name_lang'");
+        if ($rNewKey && $rNewKey->num_rows === 0) {
+            @$con->query("DELETE t1 FROM `plantillas_whatsapp` t1 INNER JOIN `plantillas_whatsapp` t2 WHERE t1.id < t2.id AND t1.id_sede = t2.id_sede AND t1.name = t2.name AND t1.language = t2.language");
+            @$con->query("ALTER TABLE `plantillas_whatsapp` ADD UNIQUE INDEX `uniq_sede_name_lang` (`id_sede`, `name`, `language`)");
+        }
+
         @file_put_contents($flag, (string)time());
     }
 
@@ -109,7 +125,12 @@ class MetaTemplateService {
 
         $headerFormat = strtoupper(trim((string)($spec['header_format'] ?? 'NONE')));
         $headerText   = trim((string)($spec['header_text'] ?? ''));
-        $headerEx     = isset($spec['header_examples']) && is_array($spec['header_examples']) ? array_values($spec['header_examples']) : [];
+        $headerEx     = [];
+        if (isset($spec['header_examples']) && is_array($spec['header_examples'])) {
+            $headerEx = array_values($spec['header_examples']);
+        } elseif (isset($spec['header_example']) && is_scalar($spec['header_example']) && trim((string)$spec['header_example']) !== '') {
+            $headerEx = [trim((string)$spec['header_example'])];
+        }
 
         if ($headerFormat === 'TEXT' && $headerText !== '') {
             $hComp = [
@@ -194,11 +215,18 @@ class MetaTemplateService {
                 }
                 if ($bType === 'QUICK_REPLY') {
                     $btnsClean[] = ['type' => 'QUICK_REPLY', 'text' => $bText];
-                } elseif ($bType === 'URL' && !empty($btn['url'])) {
-                    $u = trim((string)$btn['url']);
-                    if (preg_match('#^https://#i', $u)) {
-                        $btnsClean[] = ['type' => 'URL', 'text' => $bText, 'url' => $u];
+                } elseif ($bType === 'URL') {
+                    $u = trim((string)($btn['url'] ?? ''));
+                    if ($u === '') {
+                        return ['ok' => false, 'message' => 'Debe indicar la URL de destino para el botón de enlace web.'];
                     }
+                    if (!preg_match('#^https?://#i', $u)) {
+                        $u = 'https://' . ltrim($u, '/');
+                    }
+                    if (!preg_match('#^https://[a-z0-9.-]+\.[a-z]{2,}#i', $u) || filter_var($u, FILTER_VALIDATE_URL) === false) {
+                        return ['ok' => false, 'message' => 'La URL del botón debe ser un enlace seguro válido con https:// (ej: https://tuempresa.com/catalogo).'];
+                    }
+                    $btnsClean[] = ['type' => 'URL', 'text' => $bText, 'url' => $u];
                 } elseif ($bType === 'PHONE_NUMBER' && !empty($btn['phone_number'])) {
                     $ph = '+' . ltrim(preg_replace('/[^0-9]/', '', (string)$btn['phone_number']), '+');
                     if (strlen($ph) >= 8) {
@@ -379,6 +407,12 @@ class MetaTemplateService {
     ): array {
         self::ensureTable($con);
 
+        // Salvaguarda defensiva en caso de recibir acción como 5° argumento
+        if (in_array(strtoupper(trim($moduloAuditoria)), ['CREAR', 'CLONAR'], true)) {
+            $accionAuditoria = strtoupper(trim($moduloAuditoria)) === 'CLONAR' ? 'CLONAR_PLANTILLA_META' : 'CREAR_PLANTILLA_META';
+            $moduloAuditoria = 'campanas';
+        }
+
         $name = self::normalizeTemplateName((string)($templateSpec['name'] ?? ''));
         if (strlen($name) < 3 || !preg_match('/^[a-z0-9_]{3,64}$/', $name)) {
             return ['ok' => false, 'message' => 'El nombre técnico de la plantilla debe tener entre 3 y 64 caracteres (solo minúsculas, números y guion bajo).'];
@@ -423,6 +457,7 @@ class MetaTemplateService {
             if (!$cred || $cred['waba_id'] === '' || $cred['resolved_token'] === '') {
                 $fallidas++;
                 $results[] = [
+                    'ok'          => false,
                     'id_sede'     => $sid,
                     'nombre_sede' => $sedeNombre,
                     'status'      => 'ERROR_CONFIG',
@@ -439,6 +474,7 @@ class MetaTemplateService {
                     self::upsertLocalTemplateCache($con, $sid, $name, $category, $language, $prev['meta_status'], $built['components']);
                     $exitosas++;
                     $results[] = [
+                        'ok'          => true,
                         'id_sede'     => $sid,
                         'nombre_sede' => $sedeNombre,
                         'waba_id'     => $wabaId,
@@ -447,12 +483,18 @@ class MetaTemplateService {
                         'message'     => 'Compartida en misma cuenta WABA (' . $wabaId . ').',
                     ];
                 } else {
-                    $omitidas++;
+                    $isAlready = !empty($prev['already_exists']);
+                    if ($isAlready) {
+                        $omitidas++;
+                    } else {
+                        $fallidas++;
+                    }
                     $results[] = [
+                        'ok'          => $isAlready,
                         'id_sede'     => $sid,
                         'nombre_sede' => $sedeNombre,
                         'waba_id'     => $wabaId,
-                        'status'      => 'OMITIDA_WABA',
+                        'status'      => $isAlready ? 'YA_EXISTE' : 'OMITIDA_WABA',
                         'message'     => $prev['message'],
                     ];
                 }
@@ -486,6 +528,7 @@ class MetaTemplateService {
                 $wabaProcessedCache[$wabaId] = ['ok' => true, 'meta_id' => $metaId, 'meta_status' => $metaStatus, 'message' => 'OK'];
                 $exitosas++;
                 $results[] = [
+                    'ok'          => true,
                     'id_sede'     => $sid,
                     'nombre_sede' => $sedeNombre,
                     'waba_id'     => $wabaId,
@@ -500,8 +543,9 @@ class MetaTemplateService {
 
                 if ($alreadyExists) {
                     $omitidas++;
-                    $wabaProcessedCache[$wabaId] = ['ok' => false, 'message' => 'Ya existe en esta cuenta WABA (' . $name . ').'];
+                    $wabaProcessedCache[$wabaId] = ['ok' => false, 'already_exists' => true, 'message' => 'Ya existe en esta cuenta WABA (' . $name . ').'];
                     $results[] = [
+                        'ok'          => true,
                         'id_sede'     => $sid,
                         'nombre_sede' => $sedeNombre,
                         'waba_id'     => $wabaId,
@@ -510,8 +554,9 @@ class MetaTemplateService {
                     ];
                 } else {
                     $fallidas++;
-                    $wabaProcessedCache[$wabaId] = ['ok' => false, 'message' => $errUserMsg];
+                    $wabaProcessedCache[$wabaId] = ['ok' => false, 'already_exists' => false, 'message' => $errUserMsg];
                     $results[] = [
+                        'ok'          => false,
                         'id_sede'     => $sid,
                         'nombre_sede' => $sedeNombre,
                         'waba_id'     => $wabaId,
@@ -549,6 +594,9 @@ class MetaTemplateService {
             'exitosas'      => $exitosas,
             'omitidas'      => $omitidas,
             'fallidas'      => $fallidas,
+            'success_count' => $exitosas,
+            'skipped_count' => $omitidas,
+            'fail_count'    => $fallidas,
             'results'       => $results,
             'message'       => "Proceso completado para '{$name}': {$exitosas} sede(s) creadas/enviadas a revisión"
                              . ($omitidas > 0 ? ", {$omitidas} ya contaban con la plantilla" : "")

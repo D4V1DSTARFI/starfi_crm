@@ -4013,21 +4013,31 @@ switch ($action) {
             exit;
         }
 
+        $hdrExamplesArr = [];
+        if (isset($_POST['header_examples'])) {
+            $hdrExamplesArr = is_string($_POST['header_examples']) ? (json_decode($_POST['header_examples'], true) ?: []) : (is_array($_POST['header_examples']) ? $_POST['header_examples'] : []);
+        }
+        if (empty($hdrExamplesArr) && !empty($_POST['header_example'])) {
+            $hdrExamplesArr = [trim((string)$_POST['header_example'])];
+        }
+
         $specTpl = [
-            'name'           => $_POST['name'] ?? ($_POST['template_name'] ?? ''),
-            'category'       => $_POST['category'] ?? 'MARKETING',
-            'language'       => $_POST['language'] ?? 'es',
-            'header_format'  => $_POST['header_format'] ?? 'NONE',
-            'header_text'    => $_POST['header_text'] ?? '',
-            'header_example' => $_POST['header_example'] ?? '',
-            'body'           => $_POST['body'] ?? '',
-            'body_examples'  => isset($_POST['body_examples']) && is_string($_POST['body_examples']) ? (json_decode($_POST['body_examples'], true) ?: []) : ($_POST['body_examples'] ?? []),
-            'footer'         => $_POST['footer'] ?? '',
-            'buttons'        => isset($_POST['buttons']) && is_string($_POST['buttons']) ? (json_decode($_POST['buttons'], true) ?: []) : ($_POST['buttons'] ?? []),
+            'name'            => $_POST['name'] ?? ($_POST['template_name'] ?? ''),
+            'category'        => $_POST['category'] ?? 'MARKETING',
+            'language'        => $_POST['language'] ?? 'es',
+            'header_format'   => $_POST['header_format'] ?? 'NONE',
+            'header_text'     => $_POST['header_text'] ?? '',
+            'header_example'  => $_POST['header_example'] ?? '',
+            'header_examples' => $hdrExamplesArr,
+            'body'            => $_POST['body'] ?? '',
+            'body_examples'   => isset($_POST['body_examples']) && is_string($_POST['body_examples']) ? (json_decode($_POST['body_examples'], true) ?: []) : ($_POST['body_examples'] ?? []),
+            'footer'          => $_POST['footer'] ?? '',
+            'buttons'         => isset($_POST['buttons']) && is_string($_POST['buttons']) ? (json_decode($_POST['buttons'], true) ?: []) : ($_POST['buttons'] ?? []),
         ];
 
         $modoOp = ($action_init === 'clone_meta_template_sedes' || ($_POST['action'] ?? '') === 'clone_meta_template_sedes') ? 'CLONAR' : 'CREAR';
-        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $id_usuario, $modoOp);
+        $accionAudTpl = ($modoOp === 'CLONAR') ? 'CLONAR_PLANTILLA_META' : 'CREAR_PLANTILLA_META';
+        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $id_usuario, 'campanas', $accionAudTpl);
         if (!$pubRes['ok']) {
             echo json_encode([
                 'status' => 'error',
@@ -4038,12 +4048,16 @@ switch ($action) {
         }
 
         echo json_encode([
-            'status' => 'success',
-            'message' => "Plantilla oficial '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
+            'status'        => 'success',
+            'message'       => $pubRes['message'] ?? "Plantilla oficial '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
             'template_name' => $pubRes['template_name'],
             'success_count' => $pubRes['success_count'],
-            'fail_count' => $pubRes['fail_count'],
-            'results' => $pubRes['results']
+            'skipped_count' => $pubRes['skipped_count'],
+            'fail_count'    => $pubRes['fail_count'],
+            'exitosas'      => $pubRes['exitosas'],
+            'omitidas'      => $pubRes['omitidas'],
+            'fallidas'      => $pubRes['fallidas'],
+            'results'       => $pubRes['results']
         ]);
         break;
 
@@ -4131,7 +4145,7 @@ switch ($action) {
         echo json_encode([
             'status' => 'success',
             'message' => $resSaveDrip['message'],
-            'rule' => $resSaveDrip['rule']
+            'rule' => $resSaveDrip['rule'] ?? $resSaveDrip['data'] ?? null
         ]);
         break;
 

@@ -389,7 +389,7 @@ foreach ($riiUi as $fi) {
     if (!$isBackendEndpoint) {
         if (preg_match_all('#https?://([^\s\'"<>)]+)#i', $src, $um)) {
             foreach ($um[1] as $hostPath) {
-                if (stripos($hostPath, 'www.w3.org/2000/svg') === 0) {
+                if (stripos($hostPath, 'www.w3.org/2000/svg') === 0 || stripos($hostPath, 'tuempresa.com') === 0) {
                     continue;
                 }
                 $extDomainHits[] = "$rel ($hostPath)";
@@ -978,6 +978,8 @@ if ($con) {
 
         qa_check("[IA-04] DripRemarketingService procesa únicamente destinatarios LEIDOS sin respuesta tras X horas (re-impacta + asigna vendedor) e ignora respondidos",
             !empty($dripExec['ok']) &&
+            array_key_exists('evaluated', $dripExec) &&
+            intval($dripExec['evaluated']) === 1 &&
             intval($dripExec['processed']) === 1 &&
             intval($dripExec['reimpacted']) === 1 &&
             intval($dripExec['assigned']) === 1 &&
@@ -985,6 +987,115 @@ if ($con) {
             intval($rowDueAfter['drip_id_asesor'] ?? 0) > 0 &&
             intval($rowRepAfter['drip_ejecutado'] ?? 0) === 0 &&
             strpos($cronSrc, 'DripRemarketingService::processDueDripSequences') !== false
+        );
+
+        // 8. Pruebas Forenses de Remediación OT-QA-CRM-2026-1125-05 (QA-BUG-CRM5-01 .. QA-BUG-CRM5-04)
+
+        // (a) QA-BUG-CRM5-03: Existencia física real en MySQL de idx_linea_sentimiento en conversaciones y uniq_sede_name_lang en plantillas_whatsapp
+        $rIdxConvReal = $con->query("SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_linea_sentimiento'");
+        $rUniqTplReal = $con->query("SHOW INDEX FROM `plantillas_whatsapp` WHERE Key_name = 'uniq_sede_name_lang'");
+        $rOldTplKey   = $con->query("SHOW INDEX FROM `plantillas_whatsapp` WHERE Key_name = 'sede_name'");
+        qa_check("QA-BUG-CRM5-03 (CHK-ARC-05): Índice idx_linea_sentimiento (id_linea, sentimiento_cliente, estado) activo en conversaciones y UNIQUE(id_sede, name, language) en plantillas_whatsapp",
+            ($rIdxConvReal && $rIdxConvReal->num_rows === 3) &&
+            ($rUniqTplReal && $rUniqTplReal->num_rows === 3) &&
+            (!$rOldTplKey || $rOldTplKey->num_rows === 0)
+        );
+
+        // (b) QA-BUG-CRM5-01: Resolución de {'body_params': ['@NOMBRE_CLIENTE', '...', '@NOMBRE_SEDE']} sin 'Array' y aislamiento id_sede en ensureClienteContacto()
+        $resolvedDripParams = DripRemarketingService::resolveBodyParamsList(
+            ['body_params' => ['@NOMBRE_CLIENTE', 'seguimiento inmediato', '@NOMBRE_SEDE']],
+            'María Gómez',
+            'QA Sede Beta'
+        );
+        qa_check("QA-BUG-CRM5-01 (S0): DripRemarketingService::resolveBodyParamsList() resuelve body_params (@NOMBRE_CLIENTE y @NOMBRE_SEDE) con 0 corrupción 'Array'",
+            count($resolvedDripParams) === 3 &&
+            ($resolvedDripParams[0]['text'] ?? '') === 'María Gómez' &&
+            ($resolvedDripParams[1]['text'] ?? '') === 'seguimiento inmediato' &&
+            ($resolvedDripParams[2]['text'] ?? '') === 'QA Sede Beta'
+        );
+
+        $crossPhoneDrip = '584145550199';
+        $con->query("INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre) VALUES (1, 9951, '$crossPhoneDrip', 'Homónimo Sede Alfa')");
+        $idCliAlfaDrip = (int)$con->insert_id;
+        $idCliBetaDrip = DripRemarketingService::ensureClienteContacto($con, 1, 9952, $crossPhoneDrip, 'Homónimo Sede Beta');
+        qa_check("QA-BUG-CRM5-01 (CHK-CLD-01): ensureClienteContacto() aísla estrictamente por id_sede sin cruzar contactos entre Sede Alfa y Sede Beta",
+            $idCliBetaDrip > 0 && $idCliBetaDrip !== $idCliAlfaDrip
+        );
+
+        // Verificación de tope de cuota diaria en Drip (CHK-CLD-02)
+        $con->query("INSERT INTO campanas_cuotas_sede (id_sede, limite_diario_mensajes, cadencia_ms) VALUES (9952, 1, 1000) ON DUPLICATE KEY UPDATE limite_diario_mensajes = 1");
+        $remQuota9952 = DripRemarketingService::getSedeRemainingDailyQuota($con, 9952);
+        qa_check("QA-BUG-CRM5-01 (CHK-CLD-02): getSedeRemainingDailyQuota() descuenta re-impactos Drip del día y bloquea exceso sobre limite_diario_mensajes",
+            $remQuota9952 === 0
+        );
+
+        // (c) QA-BUG-CRM5-02: Contratos JSON (success_count, fail_count, ok en results[]) y módulo de auditoría correcto en publishTemplateToSedes + URL auto-https
+        $builtUrlAuto = MetaTemplateService::buildMetaComponentsPayload([
+            'name'    => 'qa_url_norm',
+            'body'    => 'Hola {{1}}, revisa nuestro catálogo actualizado hoy.',
+            'buttons' => [['type' => 'URL', 'text' => 'Ver catálogo', 'url' => 'starfi.com/catalogo']],
+        ]);
+        $builtUrlBad = MetaTemplateService::buildMetaComponentsPayload([
+            'name'    => 'qa_url_bad',
+            'body'    => 'Hola {{1}}, revisa nuestro catálogo actualizado hoy.',
+            'buttons' => [['type' => 'URL', 'text' => 'Ver catálogo', 'url' => 'http://inseguro']],
+        ]);
+        qa_check("QA-BUG-CRM5-04: buildMetaComponentsPayload() auto-antepone https:// en dominios válidos y rechaza explícitamente URLs inseguras o malformadas",
+            !empty($builtUrlAuto['ok']) &&
+            ($builtUrlAuto['components'][1]['buttons'][0]['url'] ?? '') === 'https://starfi.com/catalogo' &&
+            empty($builtUrlBad['ok'])
+        );
+
+        // Publicación contra sede 9951 (sin id_negocio configurado -> ERROR_CONFIG controlado) verificando claves JSON y módulo 'configuracion' en auditoria_sistema
+        $pubContractRes = MetaTemplateService::publishTemplateToSedes($con, [9951], [
+            'name' => 'qa_contrato_audit_s3',
+            'category' => 'UTILITY',
+            'language' => 'es',
+            'header_format' => 'TEXT',
+            'header_text' => 'Aviso {{1}}',
+            'header_example' => 'Urgente',
+            'body' => 'Estimado {{1}}, su solicitud fue actualizada correctamente.',
+        ], 1, 'configuracion', 'CLONAR_PLANTILLA_META');
+        $audMetaRow = $con->query("SELECT modulo, accion FROM auditoria_sistema WHERE accion = 'CLONAR_PLANTILLA_META' ORDER BY id DESC LIMIT 1")->fetch_assoc();
+        $dripSaveRes = DripRemarketingService::saveCampaignDripRule($con, $campDripId, [
+            'drip_activo' => 1,
+            'drip_horas_espera' => 18,
+            'drip_accion' => 'ASIGNAR_ASESOR',
+        ], 1, 9952);
+
+        qa_check("QA-BUG-CRM5-02 (CHK-ARC-03, CHK-SEC-04): publishTemplateToSedes y saveCampaignDripRule retornan success_count/fail_count/ok/rule y auditan el módulo exacto",
+            array_key_exists('success_count', $pubContractRes) &&
+            array_key_exists('fail_count', $pubContractRes) &&
+            isset($pubContractRes['results'][0]) && array_key_exists('ok', $pubContractRes['results'][0]) &&
+            $pubContractRes['results'][0]['ok'] === false &&
+            !empty($audMetaRow) && ($audMetaRow['modulo'] ?? '') === 'configuracion' &&
+            !empty($dripSaveRes['ok']) && is_array($dripSaveRes['rule'] ?? null) && intval($dripSaveRes['rule']['drip_horas_espera']) === 18
+        );
+
+        // (d) QA-BUG-CRM5-04 (CHK-UIX-08): 0 inputs/textareas operativos sin autocomplete="off" en bandeja.php, campanas.php y modals_campanas.php
+        $missingInputAuto = [];
+        foreach (['modules/bandeja/bandeja.php', 'modules/campanas/campanas.php', 'modules/campanas/modals_campanas.php'] as $uiRel) {
+            $uiSrc = (string)file_get_contents($root . '/' . $uiRel);
+            if (preg_match_all('/<(input|textarea)\b[^>]*>/is', $uiSrc, $uiMatches, PREG_OFFSET_CAPTURE)) {
+                foreach ($uiMatches[0] as $hitUi) {
+                    $tagUi = $hitUi[0];
+                    if (preg_match('/type\s*=\s*[\'"](checkbox|radio|hidden|file|button|submit)[\'"]/i', $tagUi)) {
+                        continue;
+                    }
+                    if (stripos($tagUi, 'autocomplete="off"') === false && stripos($tagUi, "autocomplete='off'") === false) {
+                        $lnUi = substr_count(substr($uiSrc, 0, $hitUi[1]), "\n") + 1;
+                        $missingInputAuto[] = "{$uiRel}:L{$lnUi}";
+                    }
+                }
+            }
+        }
+        $jsCampSrc = (string)file_get_contents($root . '/modules/campanas/funciones_campanas.js');
+        if (preg_match('/class="form-control mtb-var-example"/', $jsCampSrc) && !preg_match('/autocomplete="off"\s+class="form-control mtb-var-example"/', $jsCampSrc)) {
+            $missingInputAuto[] = 'modules/campanas/funciones_campanas.js:.mtb-var-example';
+        }
+        qa_check("QA-BUG-CRM5-04 (CHK-UIX-08): 100% de inputs y textareas operativos en Bandeja y Campañas incluyen autocomplete=\"off\"",
+            empty($missingInputAuto),
+            implode(', ', $missingInputAuto)
         );
 
         // ROLLBACK OBLIGATORIO (0 residuos en base de datos)

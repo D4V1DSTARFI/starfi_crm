@@ -244,24 +244,8 @@ function cfg_ensure_plantillas_whatsapp_table($con) {
     if (!$con) {
         return;
     }
-    if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
-        return;
-    }
-    $chk = @$con->query("SHOW TABLES LIKE 'plantillas_whatsapp'");
-    if ($chk && $chk->num_rows > 0) {
-        return;
-    }
-    @$con->query("CREATE TABLE IF NOT EXISTS `plantillas_whatsapp` (
-      `id` int(11) NOT NULL AUTO_INCREMENT,
-      `id_sede` int(11) NOT NULL,
-      `name` varchar(255) NOT NULL,
-      `category` varchar(100) NOT NULL,
-      `language` varchar(50) NOT NULL,
-      `status` varchar(100) NOT NULL,
-      `last_sync` datetime NOT NULL,
-      PRIMARY KEY (`id`),
-      UNIQUE KEY `sede_name` (`id_sede`,`name`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    require_once __DIR__ . '/../../core/services/MetaTemplateService.php';
+    MetaTemplateService::ensureTable($con);
 }
 
 switch ($action) {
@@ -335,6 +319,7 @@ switch ($action) {
         break;
 
     case 'sync_meta_templates':
+        require_once __DIR__ . '/../../core/services/MetaTemplateService.php';
         $id_sede = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? 0);
         $row = cfg_fetch_one($con, "SELECT id_negocio FROM lineas_whatsapp WHERE id_sede = ? LIMIT 1", "i", [$id_sede]);
         if ($row) {
@@ -344,67 +329,34 @@ switch ($action) {
             }
 
             cfg_ensure_plantillas_whatsapp_table($con);
-            $prev_tpls = cfg_fetch_all($con, "SELECT name, status FROM plantillas_whatsapp WHERE id_sede = ?", "i", [$id_sede]);
+            $prev_tpls = cfg_fetch_all($con, "SELECT name, language, status FROM plantillas_whatsapp WHERE id_sede = ?", "i", [$id_sede]);
 
-            $waba_id = $row['id_negocio'];
-            $api_ver_cfg = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
-            $url = "https://graph.facebook.com/{$api_ver_cfg}/{$waba_id}/message_templates";
-            $curl = curl_init();
-            curl_setopt($curl, CURLOPT_URL, $url);
-            curl_setopt($curl, CURLOPT_HTTPHEADER, ["Authorization: Bearer " . (defined('META_GLOBAL_TOKEN') ? META_GLOBAL_TOKEN : ''), "Content-Type: application/json"]);
-            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 4);
-            curl_setopt($curl, CURLOPT_TIMEOUT, 8);
-            $raw_exec = curl_exec($curl);
-            $resp = json_decode((string)$raw_exec, true);
-            curl_close($curl);
-
-            if (isset($resp['data']) && is_array($resp['data'])) {
-                $now = date('Y-m-d H:i:s');
-                $stmt_del = $con->prepare("DELETE FROM plantillas_whatsapp WHERE id_sede = ?");
-                if ($stmt_del) {
-                    $stmt_del->bind_param("i", $id_sede);
-                    $stmt_del->execute();
-                    $stmt_del->close();
-                }
-
+            $syncRes = MetaTemplateService::fetchTemplatesForSede($con, $id_sede);
+            if (!empty($syncRes['ok']) && ($syncRes['source'] ?? '') === 'META_GRAPH_API') {
                 $saved_data = [];
-                $stmt_ins = $con->prepare("INSERT INTO plantillas_whatsapp (id_sede, name, category, language, status, last_sync) VALUES (?, ?, ?, ?, ?, ?)");
-                foreach ($resp['data'] as $t) {
-                    $name = trim((string)($t['name'] ?? ''));
-                    $category = trim((string)($t['category'] ?? ''));
-                    $language = trim((string)($t['language'] ?? ''));
-                    $status = trim((string)($t['status'] ?? ''));
-
-                    if ($name !== '' && $stmt_ins) {
-                        $stmt_ins->bind_param("isssss", $id_sede, $name, $category, $language, $status, $now);
-                        $stmt_ins->execute();
-                        $saved_data[] = [
-                            'name' => $name,
-                            'category' => $category,
-                            'language' => $language,
-                            'status' => $status
-                        ];
-                    }
-                }
-                if ($stmt_ins) {
-                    $stmt_ins->close();
+                foreach (($syncRes['templates'] ?? []) as $t) {
+                    $saved_data[] = [
+                        'name'     => $t['name'] ?? '',
+                        'category' => $t['category'] ?? '',
+                        'language' => $t['language'] ?? 'es',
+                        'status'   => $t['status'] ?? 'PENDING',
+                    ];
                 }
 
                 registrar_auditoria(
                     'configuracion',
                     'SYNC_PLANTILLAS_META',
-                    "Plantillas Meta sincronizadas para sede #$id_sede (" . count($saved_data) . " plantillas)",
+                    "Plantillas Meta sincronizadas para sede #$id_sede (" . count($saved_data) . " plantillas, con components_json)",
                     ['total_anterior' => count($prev_tpls)],
                     ['id_sede' => $id_sede, 'total_sincronizadas' => count($saved_data)],
                     $con,
-                    null,
+                    intval($agente['id'] ?? 0) ?: null,
                     $id_sede
                 );
 
                 echo json_encode(['status' => 'success', 'data' => $saved_data]);
             } else {
-                echo json_encode(['status' => 'error', 'message' => 'Error al leer de Meta: ' . ($resp['error']['message'] ?? 'Desconocido')]);
+                echo json_encode(['status' => 'error', 'message' => $syncRes['message'] ?? 'No fue posible sincronizar las plantillas desde Meta.']);
             }
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Línea de WhatsApp no configurada para esta sede.']);
@@ -2169,6 +2121,14 @@ switch ($action) {
             exit;
         }
 
+        $hdrExCfg = [];
+        if (isset($_POST['header_examples'])) {
+            $hdrExCfg = is_string($_POST['header_examples']) ? (json_decode($_POST['header_examples'], true) ?: []) : (is_array($_POST['header_examples']) ? $_POST['header_examples'] : []);
+        }
+        if (empty($hdrExCfg) && !empty($_POST['header_example'])) {
+            $hdrExCfg = [trim((string)$_POST['header_example'])];
+        }
+
         $specTpl = [
             'name'            => $_POST['name'] ?? ($_POST['template_name'] ?? ''),
             'category'        => $_POST['category'] ?? 'MARKETING',
@@ -2176,13 +2136,15 @@ switch ($action) {
             'header_format'   => $_POST['header_format'] ?? 'NONE',
             'header_text'     => $_POST['header_text'] ?? '',
             'header_example'  => $_POST['header_example'] ?? '',
+            'header_examples' => $hdrExCfg,
             'body'            => $_POST['body'] ?? '',
             'body_examples'   => isset($_POST['body_examples']) && is_string($_POST['body_examples']) ? (json_decode($_POST['body_examples'], true) ?: []) : ($_POST['body_examples'] ?? []),
             'footer'          => $_POST['footer'] ?? '',
             'buttons'         => isset($_POST['buttons']) && is_string($_POST['buttons']) ? (json_decode($_POST['buttons'], true) ?: []) : ($_POST['buttons'] ?? []),
         ];
 
-        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $ag_id_tpl, $action === 'clone_meta_template_sedes' ? 'CLONAR' : 'CREAR');
+        $accionAudCfg = ($action === 'clone_meta_template_sedes') ? 'CLONAR_PLANTILLA_META' : 'CREAR_PLANTILLA_META';
+        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $ag_id_tpl, 'configuracion', $accionAudCfg);
         if (!$pubRes['ok']) {
             echo json_encode([
                 'status' => 'error',
@@ -2192,12 +2154,16 @@ switch ($action) {
             exit;
         }
         echo json_encode([
-            'status' => 'success',
-            'message' => "Plantilla '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
+            'status'        => 'success',
+            'message'       => $pubRes['message'] ?? "Plantilla '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
             'template_name' => $pubRes['template_name'],
             'success_count' => $pubRes['success_count'],
-            'fail_count' => $pubRes['fail_count'],
-            'results' => $pubRes['results']
+            'skipped_count' => $pubRes['skipped_count'],
+            'fail_count'    => $pubRes['fail_count'],
+            'exitosas'      => $pubRes['exitosas'],
+            'omitidas'      => $pubRes['omitidas'],
+            'fallidas'      => $pubRes['fallidas'],
+            'results'       => $pubRes['results']
         ]);
         break;
 

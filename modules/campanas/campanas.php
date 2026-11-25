@@ -626,7 +626,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                     <div class="row g-3 mb-2">
                                         <div class="col-12 col-md-7">
                                             <label class="form-label small fw-bold text-secondary mb-1">Nombre de la Campaña *</label>
-                                            <input type="text" id="campNombre" class="form-control form-control-sm"
+                                            <input type="text" id="campNombre" autocomplete="off" class="form-control form-control-sm"
                                                 placeholder="Ej: Gran Inauguración Carpintero Express Boleíta - 16 Nov"
                                                 value="Gran Inauguración Carpintero Express Boleíta - 16 Nov">
                                         </div>
@@ -753,7 +753,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                 500 / sede
                                             </button>
                                             <div class="input-group input-group-sm ms-auto" style="width: 145px;">
-                                                <input type="number" id="inpCuotaPersonalizadaPorSede" class="form-control form-control-sm py-0 px-2" min="1" max="50000" value="100" placeholder="Ej: 100" style="font-size: 0.74rem;">
+                                                <input type="number" id="inpCuotaPersonalizadaPorSede" autocomplete="off" class="form-control form-control-sm py-0 px-2" min="1" max="50000" value="100" placeholder="Ej: 100" style="font-size: 0.74rem;">
                                                 <button type="button" class="btn btn-primary btn-sm py-0 px-2 fw-bold" style="font-size: 0.72rem;" onclick="seleccionarCuotaPorCadaSede(document.getElementById('inpCuotaPersonalizadaPorSede').value)">
                                                     Aplicar/Sede
                                                 </button>
@@ -793,7 +793,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                             </select>
                                         </div>
                                         <div class="col-12 col-sm-3">
-                                            <input type="text" id="filtroAudienciaBuscar"
+                                            <input type="text" id="filtroAudienciaBuscar" autocomplete="off"
                                                 class="form-control form-control-sm" placeholder="Buscar..."
                                                 oninput="filtrarAudiencia()">
                                         </div>
@@ -820,7 +820,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
 
                                     <!-- Contenedor Lista Manual -->
                                     <div id="boxAudienciaManual" class="d-none">
-                                        <textarea id="txtAudienciaManual"
+                                        <textarea id="txtAudienciaManual" autocomplete="off"
                                             class="form-control form-control-sm font-monospace" rows="5"
                                             placeholder="Formato por línea: Nombre, Telefono (o solo Telefono)&#10;Ejemplo:&#10;Carlos Perez, 584121234567&#10;Maria Gomez, 04149876543"
                                             oninput="recalcularPresupuestoCampana()"></textarea>
@@ -877,7 +877,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                     500/sede
                                                 </button>
                                                 <div class="input-group input-group-sm ms-auto" style="width: 130px;">
-                                                    <input type="number" id="inpStep3CuotaPorSede" class="form-control form-control-sm py-0 px-1.5" min="1" max="50000" value="100" placeholder="Cuota/sede" style="font-size: 0.72rem;">
+                                                    <input type="number" id="inpStep3CuotaPorSede" autocomplete="off" class="form-control form-control-sm py-0 px-1.5" min="1" max="50000" value="100" placeholder="Cuota/sede" style="font-size: 0.72rem;">
                                                     <button type="button" class="btn btn-primary btn-sm py-0 px-2 fw-bold" style="font-size: 0.7rem;" onclick="seleccionarCuotaPorCadaSede(document.getElementById('inpStep3CuotaPorSede').value)">
                                                         /Sede
                                                     </button>
@@ -889,7 +889,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                         <div class="row g-2 align-items-center mb-2">
                                             <div class="col-12 col-sm-4">
                                                 <label class="form-label small text-muted mb-1" style="font-size: 0.74rem;">Cuota Diaria (Msgs/Día)</label>
-                                                <input type="number" min="1" max="100000" id="campCuotaDiariaProg"
+                                                <input type="number" min="1" max="100000" id="campCuotaDiariaProg" autocomplete="off"
                                                     class="form-control form-control-sm fw-bold" value="250"
                                                     oninput="this.dataset.touched='1'; recalcularPresupuestoCampana()">
                                             </div>
@@ -897,7 +897,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                 <label class="form-label small text-muted mb-1" style="font-size: 0.74rem;">
                                                     <i class="fa-regular fa-clock text-primary me-1"></i>Hora de Envío Diario
                                                 </label>
-                                                <input type="time" id="campHoraProgramada"
+                                                <input type="time" id="campHoraProgramada" autocomplete="off"
                                                     class="form-control form-control-sm fw-bold" value="09:00"
                                                     onchange="recalcularPresupuestoCampana()">
                                             </div>
@@ -905,7 +905,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                 <label class="form-label small text-muted mb-1" style="font-size: 0.74rem;">Presupuesto Máx. USD</label>
                                                 <div class="input-group input-group-sm">
                                                     <span class="input-group-text">$</span>
-                                                    <input type="number" step="0.50" min="0" id="campPresupuestoMax"
+                                                    <input type="number" step="0.50" min="0" id="campPresupuestoMax" autocomplete="off"
                                                         class="form-control" placeholder="Sin límite"
                                                         oninput="recalcularPresupuestoCampana()">
                                                 </div>
@@ -963,7 +963,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                             <div class="row g-2 mb-2">
                                                 <div class="col-5">
                                                     <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Esperar tras lectura (Horas)</label>
-                                                    <input type="number" id="campDripHoras" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
+                                                    <input type="number" id="campDripHoras" autocomplete="off" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
                                                 </div>
                                                 <div class="col-7">
                                                     <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Acción Automática en Cron</label>
@@ -984,7 +984,7 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                     </div>
                                                     <div class="col-12 col-sm-7">
                                                         <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Mensaje de Seguimiento ({{2}})</label>
-                                                        <input type="text" id="campDripParamTexto" class="form-control form-control-sm" value="vimos que revisaste nuestra información y un asesor está listo para ayudarte con cotización o disponibilidad inmediata">
+                                                        <input type="text" id="campDripParamTexto" autocomplete="off" class="form-control form-control-sm" value="vimos que revisaste nuestra información y un asesor está listo para ayudarte con cotización o disponibilidad inmediata">
                                                     </div>
                                                 </div>
                                             </div>

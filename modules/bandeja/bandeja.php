@@ -545,7 +545,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                 <!-- Search -->
                 <div class="search-bar mb-2">
                     <i class="fa-solid fa-search"></i>
-                    <input type="text" placeholder="Buscar cliente, número...">
+                    <input type="text" autocomplete="off" placeholder="Buscar cliente, número...">
                 </div>
                 
                 <!-- Filter Sede -->
@@ -746,7 +746,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         </div>
                     </div>
                     <div class="input-box" id="inputBoxContainer">
-                        <textarea placeholder="Escribe un mensaje..." rows="1" id="chatInput"></textarea>
+                        <textarea autocomplete="off" placeholder="Escribe un mensaje..." rows="1" id="chatInput"></textarea>
                         <button class="send-btn" id="sendBtn"><i class="fa-solid fa-paper-plane"></i></button>
                     </div>
                 </footer>

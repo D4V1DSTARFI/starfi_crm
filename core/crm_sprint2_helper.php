@@ -49,10 +49,12 @@ if (!function_exists('starfi_ensure_sprint2_schema')) {
             return;
         }
         $dbHash = starfi_db_schema_hash($con);
-        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint3_schema_v5_' . $dbHash . '.flag';
+        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint3_schema_v7_' . $dbHash . '.flag';
         if (@file_exists($flag) && (time() - @filemtime($flag)) < 86400) {
             $chkTbl = @mysqli_query($con, "SHOW TABLES LIKE 'pipeline_oportunidades'");
-            if ($chkTbl && mysqli_num_rows($chkTbl) > 0) {
+            $chkIdxSent = @mysqli_query($con, "SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_linea_sentimiento'");
+            $chkUkCli = @mysqli_query($con, "SHOW INDEX FROM `clientes_contactos` WHERE Key_name = 'uk_empresa_whatsapp_sede'");
+            if ($chkTbl && mysqli_num_rows($chkTbl) > 0 && $chkIdxSent && mysqli_num_rows($chkIdxSent) > 0 && $chkUkCli && mysqli_num_rows($chkUkCli) >= 3) {
                 return;
             }
         }
@@ -101,10 +103,28 @@ if (!function_exists('starfi_ensure_sprint2_schema')) {
             if (!isset($c_cols['resumen_ia_actualizado'])) {
                 @mysqli_query($con, "ALTER TABLE `conversaciones` ADD COLUMN `resumen_ia_actualizado` DATETIME DEFAULT NULL");
             }
-            $r_idx_sent = @mysqli_query($con, "SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_sede_sentimiento'");
-            if ($r_idx_sent && mysqli_num_rows($r_idx_sent) === 0) {
-                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD INDEX `idx_sede_sentimiento` (`id_sede`, `sentimiento_cliente`, `estado`)");
+            $r_idx_old_sent = @mysqli_query($con, "SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_sede_sentimiento'");
+            if ($r_idx_old_sent && mysqli_num_rows($r_idx_old_sent) > 0) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` DROP INDEX `idx_sede_sentimiento`");
             }
+            $r_idx_sent = @mysqli_query($con, "SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_linea_sentimiento'");
+            if ($r_idx_sent && mysqli_num_rows($r_idx_sent) === 0) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD INDEX `idx_linea_sentimiento` (`id_linea`, `sentimiento_cliente`, `estado`)");
+            }
+        }
+
+        // 1c. Homologar llave única Multi-Sede `uk_empresa_whatsapp_sede (id_empresa, numero_whatsapp, id_sede)` en `clientes_contactos` (database_schema.sql)
+        $r_idx_cli_st = @mysqli_query($con, "SHOW INDEX FROM `clientes_contactos` WHERE Key_name = 'idx_cli_sede_tel'");
+        if ($r_idx_cli_st && mysqli_num_rows($r_idx_cli_st) === 0) {
+            @mysqli_query($con, "ALTER TABLE `clientes_contactos` ADD INDEX `idx_cli_sede_tel` (`id_sede`, `numero_whatsapp`)");
+        }
+        $r_uk_cli_new = @mysqli_query($con, "SHOW INDEX FROM `clientes_contactos` WHERE Key_name = 'uk_empresa_whatsapp_sede'");
+        if ($r_uk_cli_new && mysqli_num_rows($r_uk_cli_new) === 0) {
+            @mysqli_query($con, "ALTER TABLE `clientes_contactos` ADD UNIQUE INDEX `uk_empresa_whatsapp_sede` (`id_empresa`, `numero_whatsapp`, `id_sede`)");
+        }
+        $r_uk_cli_old = @mysqli_query($con, "SHOW INDEX FROM `clientes_contactos` WHERE Key_name = 'id_empresa' AND Non_unique = 0");
+        if ($r_uk_cli_old && mysqli_num_rows($r_uk_cli_old) > 0 && mysqli_num_rows($r_uk_cli_old) < 3) {
+            @mysqli_query($con, "ALTER TABLE `clientes_contactos` DROP INDEX `id_empresa`");
         }
 
         // 2. Índice compuesto para Ventana Meta 24h ([COM-01]) y Semáforo SLA ([COM-04])

@@ -226,7 +226,7 @@
                                         <div class="row g-2 mb-2">
                                             <div class="col-12 col-md-5">
                                                 <label class="form-label small fw-bold mb-1">Nombre Técnico (snake_case) *</label>
-                                                <input type="text" id="mtbName" class="form-control form-control-sm font-monospace" placeholder="ej: promo_fin_de_mes" oninput="normalizarInputNombrePlantilla(this); actualizarPreviewConstructorMeta();">
+                                                <input type="text" id="mtbName" autocomplete="off" class="form-control form-control-sm font-monospace" placeholder="ej: promo_fin_de_mes" oninput="normalizarInputNombrePlantilla(this); actualizarPreviewConstructorMeta();">
                                             </div>
                                             <div class="col-6 col-md-4">
                                                 <label class="form-label small fw-bold mb-1">Categoría Meta *</label>
@@ -255,7 +255,7 @@
                                             </div>
                                             <div class="col-12 col-md-8 d-none" id="mtbHeaderTextWrap">
                                                 <label class="form-label small fw-bold mb-1">Texto de Cabecera</label>
-                                                <input type="text" id="mtbHeaderText" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Novedades STARFI {{1}}" oninput="actualizarPreviewConstructorMeta()">
+                                                <input type="text" id="mtbHeaderText" autocomplete="off" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Novedades STARFI {{1}}" oninput="actualizarPreviewConstructorMeta()">
                                             </div>
                                         </div>
 
@@ -271,7 +271,7 @@
                                                     </button>
                                                 </div>
                                             </div>
-                                            <textarea id="mtbBody" class="form-control form-control-sm" rows="4" placeholder="Hola {{1}}, te escribimos de {{2}} para informarte sobre {{3}}." oninput="renderizarInputsEjemplosMtb(); actualizarPreviewConstructorMeta();">Hola {{1}}, te saludamos de {{2}}. Queremos compartirte {{3}}. Responde este mensaje si deseas atención inmediata.</textarea>
+                                            <textarea id="mtbBody" autocomplete="off" class="form-control form-control-sm" rows="4" placeholder="Hola {{1}}, te escribimos de {{2}} para informarte sobre {{3}}." oninput="renderizarInputsEjemplosMtb(); actualizarPreviewConstructorMeta();">Hola {{1}}, te saludamos de {{2}}. Queremos compartirte {{3}}. Responde este mensaje si deseas atención inmediata.</textarea>
                                             <small class="text-muted" style="font-size:0.7rem;">Meta exige no colocar variables <code>{{1}}</code> ni al inicio exacto ni al final exacto de la oración.</small>
                                         </div>
 
@@ -280,7 +280,7 @@
                                         <div class="row g-2 mb-2">
                                             <div class="col-12 col-md-5">
                                                 <label class="form-label small fw-bold mb-1">Pie de Mensaje (Footer opcional)</label>
-                                                <input type="text" id="mtbFooter" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Responde STOP para baja" oninput="actualizarPreviewConstructorMeta()">
+                                                <input type="text" id="mtbFooter" autocomplete="off" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Responde STOP para baja" oninput="actualizarPreviewConstructorMeta()">
                                             </div>
                                             <div class="col-6 col-md-3">
                                                 <label class="form-label small fw-bold mb-1">Botón Interactivo</label>
@@ -292,11 +292,11 @@
                                             </div>
                                             <div class="col-6 col-md-4" id="mtbBtn1TextWrap">
                                                 <label class="form-label small fw-bold mb-1">Texto del Botón</label>
-                                                <input type="text" id="mtbBtn1Text" class="form-control form-control-sm" maxlength="25" value="Quiero más info" oninput="actualizarPreviewConstructorMeta()">
+                                                <input type="text" id="mtbBtn1Text" autocomplete="off" class="form-control form-control-sm" maxlength="25" value="Quiero más info" oninput="actualizarPreviewConstructorMeta()">
                                             </div>
                                             <div class="col-12 d-none" id="mtbBtn1UrlWrap">
-                                                <label class="form-label small fw-bold mb-1">URL Destino segura SSL (ej: tuempresa.com/catalogo)</label>
-                                                <input type="text" id="mtbBtn1Url" class="form-control form-control-sm" placeholder="tuempresa.com/catalogo">
+                                                <label class="form-label small fw-bold mb-1">URL Destino (https://)</label>
+                                                <input type="text" id="mtbBtn1Url" autocomplete="off" class="form-control form-control-sm" placeholder="https://tuempresa.com/catalogo">
                                             </div>
                                         </div>
 
@@ -358,7 +358,7 @@
                                         </div>
                                         <div class="mb-2">
                                             <label class="form-label small fw-bold mb-1">3. Nombre en Sedes Destino (snake_case)</label>
-                                            <input type="text" id="mtcTargetName" class="form-control form-control-sm font-monospace" oninput="normalizarInputNombrePlantilla(this)">
+                                            <input type="text" id="mtcTargetName" autocomplete="off" class="form-control form-control-sm font-monospace" oninput="normalizarInputNombrePlantilla(this)">
                                         </div>
                                         <div class="p-2.5 px-3 rounded-3 border bg-light">
                                             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -416,7 +416,7 @@
                         <div class="row g-2 mb-3">
                             <div class="col-5">
                                 <label class="form-label small fw-bold mb-1">Horas sin respuesta tras LEÍDO</label>
-                                <input type="number" id="mdlDripHoras" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
+                                <input type="number" id="mdlDripHoras" autocomplete="off" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
                             </div>
                             <div class="col-7">
                                 <label class="form-label small fw-bold mb-1">Acción al cumplirse el plazo</label>
@@ -433,7 +433,7 @@
                         </div>
                         <div class="mb-2">
                             <label class="form-label small fw-bold mb-1">Mensaje de Seguimiento ({{2}})</label>
-                            <textarea id="mdlDripParamTexto" class="form-control form-control-sm" rows="2" placeholder="vimos que leíste nuestra información y queremos saber si podemos ayudarte con precios o disponibilidad..."></textarea>
+                            <textarea id="mdlDripParamTexto" autocomplete="off" class="form-control form-control-sm" rows="2" placeholder="vimos que leíste nuestra información y queremos saber si podemos ayudarte con precios o disponibilidad..."></textarea>
                         </div>
                         <div id="mdlDripResultadoBox" class="mt-2"></div>
                     </div>

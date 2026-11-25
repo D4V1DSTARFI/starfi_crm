@@ -193,6 +193,7 @@ class DripRemarketingService {
         return [
             'ok'      => true,
             'data'    => $nuevos,
+            'rule'    => $nuevos,
             'message' => $activo === 1
                 ? "Secuencia Drip activada: seguimiento automático tras {$horas}h de lectura sin respuesta ({$accion})."
                 : "Secuencia Drip desactivada para esta campaña.",
@@ -219,7 +220,7 @@ class DripRemarketingService {
                 LIMIT 1
             ");
             if (!$stmtC) {
-                return ['ok' => false, 'processed' => 0, 'assigned' => 0, 'reimpacted' => 0, 'skipped_fatigue' => 0];
+                return ['ok' => false, 'evaluated' => 0, 'processed' => 0, 'assigned' => 0, 'reimpacted' => 0, 'skipped_fatigue' => 0, 'skipped_quota' => 0, 'details' => []];
             }
             $stmtC->bind_param("i", $onlyCampanaId);
         } else {
@@ -231,7 +232,7 @@ class DripRemarketingService {
                 ORDER BY id ASC
             ");
             if (!$stmtC) {
-                return ['ok' => false, 'processed' => 0, 'assigned' => 0, 'reimpacted' => 0, 'skipped_fatigue' => 0];
+                return ['ok' => false, 'evaluated' => 0, 'processed' => 0, 'assigned' => 0, 'reimpacted' => 0, 'skipped_fatigue' => 0, 'skipped_quota' => 0, 'details' => []];
             }
         }
 
@@ -244,11 +245,14 @@ class DripRemarketingService {
         }
         $stmtC->close();
 
-        $totalProcessed = 0;
-        $totalAssigned  = 0;
-        $totalReimpact  = 0;
-        $totalFatigue   = 0;
-        $details        = [];
+        $totalEvaluated    = 0;
+        $totalProcessed    = 0;
+        $totalAssigned     = 0;
+        $totalReimpact     = 0;
+        $totalFatigue      = 0;
+        $totalQuotaSkipped = 0;
+        $quotaRemBySede    = [];
+        $details           = [];
 
         foreach ($campanas as $camp) {
             $idCamp   = intval($camp['id']);
@@ -300,12 +304,16 @@ class DripRemarketingService {
                 continue;
             }
 
+            $totalEvaluated += count($dueRows);
             $campProcessedDelta = 0;
 
             foreach ($dueRows as $dest) {
                 $idDest = intval($dest['id']);
                 $sedeDest = intval($dest['id_sede'] ?? 0) > 0 ? intval($dest['id_sede']) : $idSede;
                 $lineaDest = ($sedeDest === $idSede) ? $linea : (self::getActiveLineForSede($con, $sedeDest) ?: $linea);
+                if (!isset($quotaRemBySede[$sedeDest])) {
+                    $quotaRemBySede[$sedeDest] = self::getSedeRemainingDailyQuota($con, $sedeDest);
+                }
 
                 $ownTx = !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con));
                 if ($ownTx) {
@@ -372,9 +380,20 @@ class DripRemarketingService {
                     $reimpactWamid = null;
                     $finalState = null;
 
-                    // Acción 1: REIMPACTAR CON PLANTILLA OFICIAL META
+                    // Acción 1: REIMPACTAR CON PLANTILLA OFICIAL META (respetando Cuota Diaria de Sede y Anti-Fatiga 24h CHK-CLD-02)
                     if (in_array($accion, ['REIMPACTAR_PLANTILLA', 'AMBOS'], true) && $tplName !== '') {
-                        if ($tplCat === 'MARKETING' && function_exists('starfi_check_marketing_antifatigue_24h') && starfi_check_marketing_antifatigue_24h($con, $telCli, $idDest)) {
+                        if (($quotaRemBySede[$sedeDest] ?? 0) <= 0) {
+                            $totalQuotaSkipped++;
+                            if ($accion === 'REIMPACTAR_PLANTILLA') {
+                                if ($ownTx) {
+                                    $con->rollback();
+                                    starfi_tx_set_active($con, false);
+                                } else {
+                                    @$con->query("ROLLBACK TO SAVEPOINT sp_drip_dest");
+                                }
+                                continue;
+                            }
+                        } elseif ($tplCat === 'MARKETING' && function_exists('starfi_check_marketing_antifatigue_24h') && starfi_check_marketing_antifatigue_24h($con, $telCli, $idDest)) {
                             // Si aún está dentro de las 24h de una plantilla MARKETING previa, posponer sin quemar drip_ejecutado
                             // salvo que también tenga ASIGNAR_ASESOR en horas < 24.
                             if ($accion === 'REIMPACTAR_PLANTILLA') {
@@ -405,6 +424,7 @@ class DripRemarketingService {
                                 $reimpactWamid = $sendRes['wamid'];
                                 $finalState = 'REIMPACTADO';
                                 $totalReimpact++;
+                                $quotaRemBySede[$sedeDest] = max(0, intval($quotaRemBySede[$sedeDest]) - 1);
                             } elseif ($accion === 'REIMPACTAR_PLANTILLA') {
                                 $finalState = 'FALLIDO_REIMPACTO';
                             }
@@ -533,12 +553,120 @@ class DripRemarketingService {
 
         return [
             'ok'              => true,
+            'evaluated'       => $totalEvaluated,
             'processed'       => $totalProcessed,
             'assigned'        => $totalAssigned,
             'reimpacted'      => $totalReimpact,
             'skipped_fatigue' => $totalFatigue,
+            'skipped_quota'   => $totalQuotaSkipped,
             'details'         => $details,
         ];
+    }
+
+    /**
+     * Calcula el cupo diario disponible de mensajes salientes WABA para una sede (CHK-CLD-02).
+     */
+    public static function getSedeRemainingDailyQuota(mysqli $con, int $idSede): int {
+        if ($idSede <= 0) {
+            return 250;
+        }
+        $limite = 250;
+        $stmtLim = $con->prepare("
+            SELECT COALESCE(q.limite_diario_mensajes, l.limite_solicitudes, 250) AS lim
+            FROM sedes s
+            LEFT JOIN lineas_whatsapp l ON l.id_sede = s.id AND l.estado = 'ACTIVO'
+            LEFT JOIN campanas_cuotas_sede q ON q.id_sede = s.id
+            WHERE s.id = ?
+            LIMIT 1
+        ");
+        if ($stmtLim) {
+            $stmtLim->bind_param("i", $idSede);
+            if (@$stmtLim->execute()) {
+                $rLim = $stmtLim->get_result();
+                if ($rLim && ($rowL = $rLim->fetch_assoc())) {
+                    $limite = max(1, intval($rowL['lim']));
+                }
+            }
+            $stmtLim->close();
+        }
+
+        $enviadosHoy = 0;
+        $stmtSent = $con->prepare("
+            SELECT COUNT(*) AS c
+            FROM campanas_difusion_destinatarios
+            WHERE id_sede = ?
+              AND (
+                  (estado_envio IN ('ENVIADO','ENTREGADO','LEIDO','RESPONDIDO') AND DATE(fecha_envio) = CURDATE())
+                  OR (drip_ejecutado = 1 AND drip_estado IN ('REIMPACTADO','REIMPACTADO_Y_ASIGNADO') AND DATE(drip_fecha) = CURDATE())
+              )
+        ");
+        if ($stmtSent) {
+            $stmtSent->bind_param("i", $idSede);
+            if (@$stmtSent->execute()) {
+                $rS = $stmtSent->get_result();
+                if ($rS && ($rowS = $rS->fetch_assoc())) {
+                    $enviadosHoy = intval($rowS['c']);
+                }
+            }
+            $stmtSent->close();
+        }
+
+        return max(0, $limite - $enviadosHoy);
+    }
+
+    /**
+     * Resuelve de forma segura las variables del cuerpo de una plantilla Drip (`body_params`, `body_vars` o arreglo plano)
+     * sin producir jamás conversiones `Array to string` y sustituyendo `@NOMBRE_CLIENTE` y `@NOMBRE_SEDE` / `@SEDE`.
+     */
+    public static function resolveBodyParamsList($paramsCfg, string $nombreCliente, string $nombreSede): array {
+        if (is_string($paramsCfg) && trim($paramsCfg) !== '') {
+            $decoded = json_decode($paramsCfg, true);
+            $paramsCfg = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($paramsCfg) || empty($paramsCfg)) {
+            return [];
+        }
+
+        if (isset($paramsCfg['body_params']) && is_array($paramsCfg['body_params'])) {
+            $rawList = $paramsCfg['body_params'];
+        } elseif (isset($paramsCfg['body_vars']) && is_array($paramsCfg['body_vars'])) {
+            $rawList = $paramsCfg['body_vars'];
+        } else {
+            $rawList = [];
+            foreach ($paramsCfg as $item) {
+                if (is_scalar($item)) {
+                    $rawList[] = $item;
+                } elseif (is_array($item)) {
+                    foreach ($item as $sub) {
+                        if (is_scalar($sub)) {
+                            $rawList[] = $sub;
+                        }
+                    }
+                }
+            }
+        }
+
+        $nomClean = trim($nombreCliente) !== '' ? trim($nombreCliente) : 'Cliente';
+        $sedeClean = trim($nombreSede) !== '' ? trim($nombreSede) : 'nuestra sede';
+
+        $bodyParams = [];
+        foreach ($rawList as $v) {
+            if (!is_scalar($v)) {
+                continue;
+            }
+            $val = trim((string)$v);
+            if ($val === '') {
+                continue;
+            }
+            $val = str_ireplace(['@NOMBRE_CLIENTE', '{{nombre_cliente}}', '{{nombre}}'], $nomClean, $val);
+            $val = str_ireplace(['@NOMBRE_COMPLETO', '{{nombre_completo}}'], $nomClean, $val);
+            $val = str_ireplace(['@NOMBRE_SEDE', '@SEDE', '{{nombre_sede}}', '{{sede}}'], $sedeClean, $val);
+            $val = trim(preg_replace('/\s{2,}/', ' ', str_replace(["\r\n", "\r", "\n", "\t"], ' ', $val)));
+            if ($val !== '') {
+                $bodyParams[] = ['type' => 'text', 'text' => $val];
+            }
+        }
+        return $bodyParams;
     }
 
     private static function syncRecentRepliesBeforeDrip(mysqli $con, int $idCampana): void {
@@ -589,10 +717,10 @@ class DripRemarketingService {
         return $row ?: null;
     }
 
-    private static function ensureClienteContacto(mysqli $con, int $idEmpresa, int $idSede, string $telefono, string $nombre): int {
-        $stmt = $con->prepare("SELECT id FROM clientes_contactos WHERE numero_whatsapp = ? LIMIT 1");
+    public static function ensureClienteContacto(mysqli $con, int $idEmpresa, int $idSede, string $telefono, string $nombre): int {
+        $stmt = $con->prepare("SELECT id FROM clientes_contactos WHERE numero_whatsapp = ? AND id_sede = ? LIMIT 1");
         if ($stmt) {
-            $stmt->bind_param("s", $telefono);
+            $stmt->bind_param("si", $telefono, $idSede);
             if ($stmt->execute()) {
                 $r = $stmt->get_result();
                 if ($r && ($row = $r->fetch_assoc())) {
@@ -602,11 +730,11 @@ class DripRemarketingService {
             }
             $stmt->close();
         }
-        $stmtIns = $con->prepare("INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre, fecha_registro) VALUES (?, ?, ?, ?, NOW())");
+        $stmtIns = $con->prepare("INSERT INTO clientes_contactos (id_empresa, id_sede, numero_whatsapp, nombre) VALUES (?, ?, ?, ?)");
         if ($stmtIns) {
             $nomParam = $nombre !== '' ? $nombre : 'Cliente';
             $stmtIns->bind_param("iiss", $idEmpresa, $idSede, $telefono, $nomParam);
-            if ($stmtIns->execute()) {
+            if (@$stmtIns->execute()) {
                 $newId = intval($stmtIns->insert_id);
                 $stmtIns->close();
                 return $newId;
@@ -731,21 +859,11 @@ class DripRemarketingService {
             $token = (string)META_GLOBAL_TOKEN;
         }
 
-        $bodyParams = [];
-        if (is_array($paramsCfg) && !empty($paramsCfg)) {
-            $rawVars = isset($paramsCfg['body_vars']) && is_array($paramsCfg['body_vars']) ? $paramsCfg['body_vars'] : $paramsCfg;
-            foreach ($rawVars as $v) {
-                $val = trim((string)$v);
-                if (stripos($val, '@NOMBRE_CLIENTE') !== false || $val === '{{nombre}}') {
-                    $val = $nombreCliente !== '' ? $nombreCliente : 'Cliente';
-                } elseif (stripos($val, '@SEDE') !== false) {
-                    $val = (string)($linea['nombre_sede'] ?? 'nuestra sede');
-                }
-                if ($val !== '') {
-                    $bodyParams[] = ['type' => 'text', 'text' => $val];
-                }
-            }
-        }
+        $bodyParams = self::resolveBodyParamsList(
+            $paramsCfg,
+            $nombreCliente,
+            (string)($linea['nombre_sede'] ?? 'nuestra sede')
+        );
 
         $components = [];
         if (!empty($bodyParams)) {
@@ -760,10 +878,15 @@ class DripRemarketingService {
             $telDigits = '58' . substr($telDigits, 1);
         }
 
+        $resolvedTexts = array_map(static function ($p) {
+            return (string)($p['text'] ?? '');
+        }, $bodyParams);
+
         if (!$allowHttpDispatch) {
             $simWamid = 'wamid.drip_sim_' . bin2hex(random_bytes(6));
             if ($idConv > 0) {
-                $resTxt = "🔄 [RE-IMPACTO DRIP +{$horas}h · {$tplName}] Seguimiento automático de campaña '{$nomCamp}'";
+                $resTxt = "🔄 [RE-IMPACTO DRIP +{$horas}h · {$tplName}] Seguimiento automático de campaña '{$nomCamp}'"
+                        . (!empty($resolvedTexts) ? ' | Params: ' . json_encode($resolvedTexts, JSON_UNESCAPED_UNICODE) : '');
                 $stmtM = $con->prepare("INSERT INTO mensajes_y_eventos (id_conversacion, id_mensaje_meta, tipo, origen, contenido, estado_envio) VALUES (?, ?, 'TEXTO', 'API_TRANSACCIONAL', ?, 'ENVIADO')");
                 if ($stmtM) {
                     $stmtM->bind_param("iss", $idConv, $simWamid, $resTxt);
@@ -771,7 +894,7 @@ class DripRemarketingService {
                     $stmtM->close();
                 }
             }
-            return ['ok' => true, 'wamid' => $simWamid];
+            return ['ok' => true, 'wamid' => $simWamid, 'resolved_params' => $resolvedTexts];
         }
 
         if ($phoneId === '' || $token === '' || $telDigits === '') {

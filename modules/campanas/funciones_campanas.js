@@ -3054,7 +3054,7 @@ function renderizarInputsEjemplosMtb() {
             <div class="col-12 col-sm-4">
                 <div class="input-group input-group-sm">
                     <span class="input-group-text fw-bold text-primary">{{${v}}}</span>
-                    <input type="text" class="form-control mtb-var-example" data-var="${v}" value="${escapeHtml(val)}" oninput="actualizarPreviewConstructorMeta()">
+                    <input type="text" autocomplete="off" class="form-control mtb-var-example" data-var="${v}" value="${escapeHtml(val)}" oninput="actualizarPreviewConstructorMeta()">
                 </div>
             </div>
         `;
@@ -3192,13 +3192,19 @@ function renderizarTablaResultadosMeta(containerId, results) {
                     <tr><th>Sede</th><th>Estado Meta</th><th>Detalle</th></tr>
                 </thead>
                 <tbody>
-                    ${results.map(r => `
+                    ${results.map(r => {
+                        const st = String(r.status || (r.ok ? 'PENDING' : 'ERROR'));
+                        const badgeCls = st === 'YA_EXISTE'
+                            ? 'bg-warning text-dark'
+                            : (r.ok ? 'bg-success' : 'bg-danger');
+                        return `
                         <tr>
                             <td class="fw-semibold">${escapeHtml(r.nombre_sede || `#${r.id_sede}`)}</td>
-                            <td><span class="badge ${r.ok ? 'bg-success' : 'bg-danger'}">${escapeHtml(r.status || (r.ok ? 'PENDING' : 'ERROR'))}</span></td>
+                            <td><span class="badge ${badgeCls}">${escapeHtml(st)}</span></td>
                             <td class="text-muted">${escapeHtml(r.message || '')}</td>
                         </tr>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </tbody>
             </table>
         </div>
@@ -3216,7 +3222,8 @@ async function enviarNuevaPlantillaOficialMeta() {
     const footer = (document.getElementById('mtbFooter')?.value || '').trim();
     const btnType = document.getElementById('mtbBtn1Type')?.value || 'NONE';
     const btnText = (document.getElementById('mtbBtn1Text')?.value || '').trim();
-    const btnUrl = (document.getElementById('mtbBtn1Url')?.value || '').trim();
+    const urlInputEl = document.getElementById('mtbBtn1Url');
+    let btnUrl = (urlInputEl?.value || '').trim();
 
     if (name.length < 3) {
         mostrarToastStarfi('Ingresa un nombre técnico válido (mínimo 3 caracteres en snake_case).', 'warning');
@@ -3238,10 +3245,28 @@ async function enviarNuevaPlantillaOficialMeta() {
         examples.push((inp.value || '').trim() || 'Ejemplo');
     });
 
+    const headerExamples = (headerFmt === 'TEXT' && /\{\{\s*1\s*\}\}/.test(headerTxt)) ? ['STARFI'] : [];
+
     const buttons = [];
-    if (btnType === 'QUICK_REPLY' && btnText) {
+    if (btnType === 'QUICK_REPLY') {
+        if (!btnText) {
+            mostrarToastStarfi('Ingresa el texto del botón de respuesta rápida.', 'warning');
+            return;
+        }
         buttons.push({ type: 'QUICK_REPLY', text: btnText });
-    } else if (btnType === 'URL' && btnText && btnUrl) {
+    } else if (btnType === 'URL') {
+        if (!btnText || !btnUrl) {
+            mostrarToastStarfi('Completa el texto y la URL del botón interactivo.', 'warning');
+            return;
+        }
+        if (!/^https?:\/\//i.test(btnUrl)) {
+            btnUrl = 'https://' + btnUrl.replace(/^\/+/, '');
+            if (urlInputEl) urlInputEl.value = btnUrl;
+        }
+        if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}/i.test(btnUrl)) {
+            mostrarToastStarfi('La URL del botón debe ser segura con protocolo SSL https:// (ej: https://tuempresa.com/catalogo).', 'warning');
+            return;
+        }
         buttons.push({ type: 'URL', text: btnText, url: btnUrl });
     }
 
@@ -3254,6 +3279,7 @@ async function enviarNuevaPlantillaOficialMeta() {
         fd.append('language', language);
         fd.append('header_format', headerFmt);
         fd.append('header_text', headerTxt);
+        fd.append('header_examples', JSON.stringify(headerExamples));
         fd.append('body', body);
         fd.append('body_examples', JSON.stringify(examples));
         fd.append('footer', footer);
@@ -3354,6 +3380,7 @@ async function ejecutarClonacionPlantillaMeta() {
         fd.append('language', tpl.language || 'es');
         fd.append('header_format', tpl.header_format === 'TEXT' ? 'TEXT' : 'NONE');
         fd.append('header_text', tpl.header_text || '');
+        fd.append('header_examples', JSON.stringify(tpl.header_examples || []));
         fd.append('body', tpl.body || '');
         fd.append('body_examples', JSON.stringify(tpl.body_examples || []));
         fd.append('footer', tpl.footer || '');
