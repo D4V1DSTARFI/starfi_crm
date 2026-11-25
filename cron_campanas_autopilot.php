@@ -336,7 +336,6 @@ if ($stmtCamps) {
 
 if (empty($campanas_pendientes)) {
     echo "No hay campañas aprobadas con cuotas pendientes para hoy.\n";
-    exit(0);
 }
 
 $apiVer = defined('META_API_VERSION') ? META_API_VERSION : 'v23.0';
@@ -934,6 +933,15 @@ foreach ($campanas_pendientes as $camp) {
     );
 
     echo " - Tanda finalizada: {$enviados_tanda} enviados, {$omitidos_antifatiga} omitidos por anti-fatiga 24h. Pendientes restantes: {$pend}.\n";
+}
+
+// [IA-04] Secuencias Automáticas de Remarketing (Drip Campaigns: Leídos sin responder en X horas)
+require_once __DIR__ . '/core/services/DripRemarketingService.php';
+$dripSummary = DripRemarketingService::processDueDripSequences($con, 0, 100, true);
+if (!empty($dripSummary['processed']) && intval($dripSummary['processed']) > 0) {
+    echo " - [IA-04 Drip Remarketing] Evaluados: {$dripSummary['evaluated']} | Procesados: {$dripSummary['processed']} | Re-impactados: {$dripSummary['reimpacted']} | Asignados a Vendedor: {$dripSummary['assigned']}.\n";
+} else {
+    echo " - [IA-04 Drip Remarketing] Sin destinatarios vencidos pendientes de seguimiento en este ciclo.\n";
 }
 
 echo "Ejecución de Piloto Automático finalizada.\n";

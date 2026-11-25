@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    ['formCampanaWizard', 'formFlujoSede'].forEach(fid => {
+    ['formCampanaWizard', 'formFlujoSede', 'formMetaTemplateBuilder', 'formMetaTemplateCloner', 'formConfigDripCampana'].forEach(fid => {
         const frm = document.getElementById(fid);
         if (frm) {
             frm.addEventListener('submit', e => e.preventDefault());
@@ -1682,6 +1682,25 @@ async function iniciarLanzamientoCampana() {
         fd.append('piloto_automatico', pilotoAutomatico);
         fd.append('hora_programada', horaProgramada);
         fd.append('destinatarios', JSON.stringify(destinatarios));
+
+        // [IA-04] Regla Drip Remarketing desde el Wizard Paso 3
+        const dripActivoChk = document.getElementById('campDripActivo')?.checked ? 1 : 0;
+        fd.append('drip_activo', dripActivoChk);
+        if (dripActivoChk === 1) {
+            const dripHoras = Math.max(1, Math.min(720, parseInt(document.getElementById('campDripHoras')?.value || '24', 10)));
+            const dripAccion = document.getElementById('campDripAccion')?.value || 'AMBOS';
+            const dripTpl = document.getElementById('campDripTemplate')?.value || templateName;
+            const dripTxt = (document.getElementById('campDripParamTexto')?.value || '').trim();
+            fd.append('drip_horas_espera', dripHoras);
+            fd.append('drip_accion', dripAccion);
+            fd.append('drip_template_name', dripTpl);
+            fd.append('drip_template_language', payloadTpl.template_language || 'es');
+            fd.append('drip_template_category', 'MARKETING');
+            fd.append('drip_params_json', JSON.stringify({
+                body_params: ['@NOMBRE_CLIENTE', dripTxt || 'retomar tu solicitud pendiente', '@NOMBRE_SEDE']
+            }));
+        }
+
         const fileImg = document.getElementById('campHeaderImagen');
         if (payloadTpl.header_format === 'IMAGE' && fileImg && fileImg.files && fileImg.files.length > 0) {
             fd.append('header_imagen', fileImg.files[0]);
@@ -2565,12 +2584,20 @@ function renderizarTablaCampanas() {
             ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1" style="font-size:0.62rem;" title="${fal} mensaje(s) fallido(s)">${fal} falló</span>`
             : '';
 
+        const dripOn = parseInt(c.drip_activo || 0, 10) === 1;
+        const dripHrs = parseInt(c.drip_horas_espera || 24, 10);
+        const dripProc = parseInt(c.drip_procesados || 0, 10);
+        const badgeDripCamp = dripOn
+            ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size:0.62rem;" title="Secuencia Drip Activa (${dripHrs}h tras lectura · ${dripProc} procesados)"><i class="fa-solid fa-arrows-spin me-1"></i>Drip ${dripHrs}h${dripProc > 0 ? ` (${dripProc})` : ''}</span>`
+            : '';
+
         html += `
             <tr>
                 <td class="ps-3" style="max-width: 195px;">
                     <div class="fw-bold text-dark text-truncate" title="${escapeHtml(c.nombre_campana)}">${escapeHtml(c.nombre_campana)}</div>
                     <div class="d-flex align-items-center flex-wrap gap-1 mt-1">
                         ${badgeImagenCamp}
+                        ${badgeDripCamp}
                         <span class="text-muted" style="font-size: 0.7rem;"><i class="fa-solid fa-building me-1"></i>${escapeHtml(c.nombre_sede || 'Sede')}</span>
                     </div>
                     <div class="text-muted" style="font-size: 0.67rem;">${escapeHtml(c.fecha_creacion || '')}</div>
@@ -2592,6 +2619,9 @@ function renderizarTablaCampanas() {
                 <td class="text-end pe-3" style="white-space: nowrap;">
                     <div class="d-inline-flex align-items-center justify-content-end gap-1">
                         ${botonesAccion}
+                        <button type="button" class="btn ${dripOn ? 'btn-outline-info' : 'btn-outline-secondary'} camp-action-icon-btn" data-tooltip="Secuencia Drip Remarketing (${dripOn ? `Activa ${dripHrs}h` : 'Configurar'})" aria-label="Configurar Drip Remarketing" onclick="abrirModalDripCampana(${c.id})">
+                            <i class="fa-solid fa-arrows-spin"></i>
+                        </button>
                         <button type="button" class="btn btn-outline-primary camp-action-icon-btn" data-tooltip="Embudo de Conversión & Auditoría" aria-label="Embudo de Conversión y Auditoría" onclick="verDetalleDestinatariosCampana(${c.id})">
                             <i class="fa-solid fa-chart-simple"></i>
                         </button>
@@ -2795,10 +2825,14 @@ function renderizarTablaDestinatariosModalPaginada() {
             badge = `<span class="badge bg-warning text-dark" title="${escapeHtml(d.error_detalle || '')}"><i class="fa-solid fa-shield-heart me-1"></i>ANTI-FATIGA 24H</span>`;
         }
 
+        const dripBadgeDest = parseInt(d.drip_ejecutado || 0, 10) === 1
+            ? `<div class="mt-1"><span class="badge bg-info-subtle text-dark border border-info-subtle" style="font-size:0.65rem;" title="${escapeHtml(d.drip_fecha || '')}"><i class="fa-solid fa-arrows-spin me-1"></i>Drip: ${escapeHtml(d.drip_estado || 'EJECUTADO')}</span></div>`
+            : '';
+
         const respTxt = d.respuesta_texto
             ? `<div class="fw-semibold text-success"><i class="fa-regular fa-comment-dots me-1"></i>"${escapeHtml(d.respuesta_texto)}"</div>
-               <small class="text-muted">${escapeHtml(d.fecha_respuesta || '')}</small>`
-            : (d.error_detalle ? `<span class="text-danger small">${escapeHtml(d.error_detalle)}</span>` : '<span class="text-muted">—</span>');
+               <small class="text-muted">${escapeHtml(d.fecha_respuesta || '')}</small>${dripBadgeDest}`
+            : ((d.error_detalle ? `<span class="text-danger small">${escapeHtml(d.error_detalle)}</span>` : '<span class="text-muted">—</span>') + dripBadgeDest);
 
         const numTanda = parseInt(d.numero_tanda || 1, 10);
         const fProg = d.fecha_programada ? ` (${escapeHtml(d.fecha_programada)})` : '';
@@ -2914,4 +2948,527 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+// =========================================================================
+// [SPRINT 3: IA-03 & IA-04] CONSTRUCTOR / CLONADOR META Y SECUENCIAS DRIP
+// =========================================================================
+const CAMP_SPRINT3_LOCKS = new Set();
+let MTC_TEMPLATES_CACHE = [];
+
+function lockSprint3Btn(lockKey, btnEl, loadingHtml) {
+    if (CAMP_SPRINT3_LOCKS.has(lockKey)) return false;
+    if (btnEl && btnEl.disabled) return false;
+    CAMP_SPRINT3_LOCKS.add(lockKey);
+    if (btnEl) {
+        btnEl.dataset.origHtml = btnEl.innerHTML;
+        btnEl.disabled = true;
+        if (loadingHtml) btnEl.innerHTML = loadingHtml;
+    }
+    return true;
+}
+
+function unlockSprint3Btn(lockKey, btnEl) {
+    CAMP_SPRINT3_LOCKS.delete(lockKey);
+    if (btnEl) {
+        btnEl.disabled = false;
+        if (btnEl.dataset.origHtml) {
+            btnEl.innerHTML = btnEl.dataset.origHtml;
+        }
+    }
+}
+
+function toggleBoxCampDripConfig() {
+    const chk = document.getElementById('campDripActivo');
+    const box = document.getElementById('boxCampDripConfig');
+    const acc = document.getElementById('campDripAccion');
+    const tplWrap = document.getElementById('boxCampDripTemplateWrap');
+    if (box && chk) {
+        box.classList.toggle('d-none', !chk.checked);
+    }
+    if (tplWrap && acc) {
+        tplWrap.classList.toggle('d-none', acc.value === 'ASIGNAR_ASESOR');
+    }
+    sincronizarSelectoresPlantillasDrip();
+}
+
+function sincronizarSelectoresPlantillasDrip() {
+    const tpls = Array.isArray(ECO_STATE.templatesSede) && ECO_STATE.templatesSede.length > 0
+        ? ECO_STATE.templatesSede
+        : [{ name: 'starfi_difusion_directa', language: 'es' }];
+    ['campDripTemplate', 'mdlDripTemplate'].forEach(selId => {
+        const sel = document.getElementById(selId);
+        if (!sel) return;
+        const prev = sel.value || 'starfi_difusion_directa';
+        sel.innerHTML = tpls.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${escapeHtml(String(t.language || 'es').toUpperCase())})</option>`).join('');
+        if (tpls.some(t => t.name === prev)) {
+            sel.value = prev;
+        }
+    });
+}
+
+function normalizarInputNombrePlantilla(inputEl) {
+    if (!inputEl) return;
+    let val = String(inputEl.value || '').toLowerCase();
+    val = val.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    val = val.replace(/[^a-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_+/, '');
+    inputEl.value = val.substring(0, 64);
+}
+
+function insertarVariableMtb(token) {
+    const area = document.getElementById('mtbBody');
+    if (!area) return;
+    const start = area.selectionStart || area.value.length;
+    const end = area.selectionEnd || area.value.length;
+    const txt = area.value;
+    area.value = txt.slice(0, start) + token + txt.slice(end);
+    area.focus();
+    renderizarInputsEjemplosMtb();
+    actualizarPreviewConstructorMeta();
+}
+
+function extraerIndicesVariablesMtb(texto) {
+    const matches = String(texto || '').match(/\{\{(\d+)\}\}/g) || [];
+    const nums = matches.map(m => parseInt(m.replace(/\D/g, ''), 10)).filter(n => n > 0);
+    return Array.from(new Set(nums)).sort((a, b) => a - b);
+}
+
+function renderizarInputsEjemplosMtb() {
+    const box = document.getElementById('mtbExamplesBox');
+    const body = document.getElementById('mtbBody')?.value || '';
+    if (!box) return;
+    const vars = extraerIndicesVariablesMtb(body);
+    if (vars.length === 0) {
+        box.innerHTML = '<small class="text-muted">Este mensaje no usa variables dinámicas <code>{{n}}</code>.</small>';
+        return;
+    }
+    const prevVals = {};
+    box.querySelectorAll('.mtb-var-example').forEach(inp => {
+        prevVals[inp.dataset.var] = inp.value;
+    });
+    const defaults = { 1: 'Carlos Pérez', 2: 'Sede Principal STARFI', 3: 'descuento exclusivo del 15%' };
+    let html = '<div class="small fw-bold text-dark mb-1" style="font-size:0.74rem;">Valores de Ejemplo Obligatorios para Revisión de Meta:</div><div class="row g-2">';
+    vars.forEach(v => {
+        const val = prevVals[v] !== undefined ? prevVals[v] : (defaults[v] || `Ejemplo_${v}`);
+        html += `
+            <div class="col-12 col-sm-4">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text fw-bold text-primary">{{${v}}}</span>
+                    <input type="text" class="form-control mtb-var-example" data-var="${v}" value="${escapeHtml(val)}" oninput="actualizarPreviewConstructorMeta()">
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    box.innerHTML = html;
+}
+
+function actualizarPreviewConstructorMeta() {
+    const hdrFmt = document.getElementById('mtbHeaderFormat')?.value || 'NONE';
+    const hdrWrap = document.getElementById('mtbHeaderTextWrap');
+    if (hdrWrap) hdrWrap.classList.toggle('d-none', hdrFmt !== 'TEXT');
+
+    const btnType = document.getElementById('mtbBtn1Type')?.value || 'NONE';
+    const btnTxtWrap = document.getElementById('mtbBtn1TextWrap');
+    const btnUrlWrap = document.getElementById('mtbBtn1UrlWrap');
+    if (btnTxtWrap) btnTxtWrap.classList.toggle('d-none', btnType === 'NONE');
+    if (btnUrlWrap) btnUrlWrap.classList.toggle('d-none', btnType !== 'URL');
+
+    const hdrTxt = (document.getElementById('mtbHeaderText')?.value || '').trim();
+    let bodyTxt = document.getElementById('mtbBody')?.value || '';
+    document.querySelectorAll('.mtb-var-example').forEach(inp => {
+        const v = inp.dataset.var;
+        const val = (inp.value || '').trim() || `{{${v}}}`;
+        bodyTxt = bodyTxt.replace(new RegExp(`\\{\\{${v}\\}\\}`, 'g'), val);
+    });
+    const footerTxt = (document.getElementById('mtbFooter')?.value || '').trim();
+    const btnTxt = (document.getElementById('mtbBtn1Text')?.value || '').trim();
+
+    let bubbleHtml = '';
+    if (hdrFmt === 'TEXT' && hdrTxt) {
+        bubbleHtml += `<div class="fw-bold text-dark mb-1">${escapeHtml(hdrTxt)}</div>`;
+    }
+    bubbleHtml += `<div style="white-space:pre-line;">${escapeHtml(bodyTxt)}</div>`;
+    if (footerTxt) {
+        bubbleHtml += `<div class="mt-2 pt-1 border-top text-muted" style="font-size:0.72rem;">${escapeHtml(footerTxt)}</div>`;
+    }
+    if (btnType !== 'NONE' && btnTxt) {
+        const icon = btnType === 'URL' ? 'fa-arrow-up-right-from-square' : 'fa-reply';
+        bubbleHtml += `<div class="mt-2 pt-1 border-top"><div class="text-center py-1 rounded bg-light text-primary fw-bold small border"><i class="fa-solid ${icon} me-1"></i>${escapeHtml(btnTxt)}</div></div>`;
+    }
+    const previewEl = document.getElementById('mtbLivePreviewBubble');
+    if (previewEl) previewEl.innerHTML = bubbleHtml;
+}
+
+function poblarCheckboxesSedesMeta(containerId, excludeSedeId = 0) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const sedesDisponibles = Array.isArray(ECO_STATE.sedes) ? ECO_STATE.sedes : [];
+    const sedeActiva = parseInt(ECO_STATE.sedeSeleccionada || 0, 10);
+    if (sedesDisponibles.length === 0) {
+        container.innerHTML = '<span class="text-muted small">No hay sedes cargadas.</span>';
+        return;
+    }
+    container.innerHTML = sedesDisponibles.map(s => {
+        const sid = parseInt(s.id, 10);
+        const disabled = (!ECO_STATE.esGlobal && sid !== sedeActiva) ? 'disabled' : '';
+        const checked = (!ECO_STATE.esGlobal && sid === sedeActiva) || (excludeSedeId === 0 && sid === sedeActiva) || (excludeSedeId > 0 && sid !== excludeSedeId && ECO_STATE.esGlobal) ? 'checked' : '';
+        return `
+            <label class="badge bg-white text-dark border px-2.5 py-1.5 d-inline-flex align-items-center gap-1" style="cursor:pointer; font-size:0.75rem;">
+                <input type="checkbox" class="form-check-input mt-0 meta-sede-target-chk" value="${sid}" ${checked} ${disabled}>
+                <span>${escapeHtml(s.nombre_sede)}</span>
+            </label>
+        `;
+    }).join('');
+}
+
+function toggleTodasSedesMetaBuilder(containerId) {
+    if (!ECO_STATE.esGlobal) return;
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const chks = Array.from(container.querySelectorAll('.meta-sede-target-chk:not(:disabled)'));
+    const allChecked = chks.every(c => c.checked);
+    chks.forEach(c => { c.checked = !allChecked; });
+}
+
+function abrirModalMetaTemplateBuilder(modo = 'CREAR') {
+    poblarCheckboxesSedesMeta('mtbTargetSedesList', 0);
+    const selSrc = document.getElementById('mtcSourceSede');
+    if (selSrc && Array.isArray(ECO_STATE.sedes)) {
+        selSrc.innerHTML = ECO_STATE.sedes.map(s => `<option value="${parseInt(s.id, 10)}" ${parseInt(s.id, 10) === parseInt(ECO_STATE.sedeSeleccionada, 10) ? 'selected' : ''}>${escapeHtml(s.nombre_sede)}</option>`).join('');
+        selSrc.disabled = !ECO_STATE.esGlobal;
+    }
+    poblarCheckboxesSedesMeta('mtcTargetSedesList', parseInt(ECO_STATE.sedeSeleccionada || 0, 10));
+    renderizarInputsEjemplosMtb();
+    actualizarPreviewConstructorMeta();
+
+    const modalEl = document.getElementById('modalMetaTemplateBuilder');
+    if (modalEl) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        if (modo === 'CLONAR') {
+            document.getElementById('tabBtnClonarTpl')?.click();
+        } else {
+            document.getElementById('tabBtnCrearTpl')?.click();
+        }
+    }
+}
+
+async function redactarCuerpoPlantillaConIa() {
+    const btn = document.getElementById('btnMtbDraftIa');
+    if (!lockSprint3Btn('mtb_draft_ia', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i>Redactando...')) return;
+    try {
+        const nom = (document.getElementById('mtbName')?.value || '').replace(/_/g, ' ') || 'promoción especial y cotización inmediata';
+        const cat = document.getElementById('mtbCategory')?.value || 'MARKETING';
+        const fd = new FormData();
+        fd.append('action', 'ia_draft_template_body');
+        fd.append('id_sede', ECO_STATE.sedeSeleccionada || 0);
+        fd.append('category', cat);
+        fd.append('objetivo', nom);
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (data && data.status === 'success' && data.body) {
+            const area = document.getElementById('mtbBody');
+            if (area) area.value = data.body;
+            renderizarInputsEjemplosMtb();
+            actualizarPreviewConstructorMeta();
+            mostrarToastStarfi('Borrador redactado con IA listo para revisión.', 'success');
+        } else {
+            mostrarToastStarfi((data && data.message) || 'No se pudo generar el borrador IA.', 'warning');
+        }
+    } catch (e) {
+        mostrarToastStarfi('Error de conexión con el motor IA.', 'danger');
+    } finally {
+        unlockSprint3Btn('mtb_draft_ia', btn);
+    }
+}
+
+function renderizarTablaResultadosMeta(containerId, results) {
+    const box = document.getElementById(containerId);
+    if (!box || !Array.isArray(results)) return;
+    box.innerHTML = `
+        <div class="table-responsive border rounded-3 bg-white">
+            <table class="table table-sm align-middle mb-0" style="font-size:0.76rem;">
+                <thead class="table-light">
+                    <tr><th>Sede</th><th>Estado Meta</th><th>Detalle</th></tr>
+                </thead>
+                <tbody>
+                    ${results.map(r => `
+                        <tr>
+                            <td class="fw-semibold">${escapeHtml(r.nombre_sede || `#${r.id_sede}`)}</td>
+                            <td><span class="badge ${r.ok ? 'bg-success' : 'bg-danger'}">${escapeHtml(r.status || (r.ok ? 'PENDING' : 'ERROR'))}</span></td>
+                            <td class="text-muted">${escapeHtml(r.message || '')}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function enviarNuevaPlantillaOficialMeta() {
+    const btn = document.getElementById('btnSubmitCreateMetaTpl');
+    const name = (document.getElementById('mtbName')?.value || '').trim();
+    const category = document.getElementById('mtbCategory')?.value || 'MARKETING';
+    const language = document.getElementById('mtbLanguage')?.value || 'es';
+    const headerFmt = document.getElementById('mtbHeaderFormat')?.value || 'NONE';
+    const headerTxt = (document.getElementById('mtbHeaderText')?.value || '').trim();
+    const body = (document.getElementById('mtbBody')?.value || '').trim();
+    const footer = (document.getElementById('mtbFooter')?.value || '').trim();
+    const btnType = document.getElementById('mtbBtn1Type')?.value || 'NONE';
+    const btnText = (document.getElementById('mtbBtn1Text')?.value || '').trim();
+    const btnUrl = (document.getElementById('mtbBtn1Url')?.value || '').trim();
+
+    if (name.length < 3) {
+        mostrarToastStarfi('Ingresa un nombre técnico válido (mínimo 3 caracteres en snake_case).', 'warning');
+        return;
+    }
+    if (body.length < 10) {
+        mostrarToastStarfi('El cuerpo del mensaje debe tener al menos 10 caracteres.', 'warning');
+        return;
+    }
+
+    const targets = Array.from(document.querySelectorAll('#mtbTargetSedesList .meta-sede-target-chk:checked')).map(c => parseInt(c.value, 10));
+    if (targets.length === 0) {
+        mostrarToastStarfi('Selecciona al menos una sede destino.', 'warning');
+        return;
+    }
+
+    const examples = [];
+    document.querySelectorAll('.mtb-var-example').forEach(inp => {
+        examples.push((inp.value || '').trim() || 'Ejemplo');
+    });
+
+    const buttons = [];
+    if (btnType === 'QUICK_REPLY' && btnText) {
+        buttons.push({ type: 'QUICK_REPLY', text: btnText });
+    } else if (btnType === 'URL' && btnText && btnUrl) {
+        buttons.push({ type: 'URL', text: btnText, url: btnUrl });
+    }
+
+    if (!lockSprint3Btn('mtb_submit_create', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i>Publicando en Meta Graph API...')) return;
+    try {
+        const fd = new FormData();
+        fd.append('action', 'create_official_meta_template');
+        fd.append('name', name);
+        fd.append('category', category);
+        fd.append('language', language);
+        fd.append('header_format', headerFmt);
+        fd.append('header_text', headerTxt);
+        fd.append('body', body);
+        fd.append('body_examples', JSON.stringify(examples));
+        fd.append('footer', footer);
+        fd.append('buttons', JSON.stringify(buttons));
+        fd.append('target_sedes', JSON.stringify(targets));
+
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (Array.isArray(data.results)) {
+            renderizarTablaResultadosMeta('mtbCreateResultsBox', data.results);
+        }
+        if (data && data.status === 'success') {
+            mostrarToastStarfi(data.message || 'Plantilla enviada a revisión en Meta.', 'success');
+            if (typeof cargarPlantillasSedeActiva === 'function') {
+                cargarPlantillasSedeActiva();
+            }
+        } else {
+            mostrarToastStarfi((data && data.message) || 'Meta rechazó la creación de la plantilla.', 'danger');
+        }
+    } catch (e) {
+        mostrarToastStarfi('Error de red al publicar plantilla en Meta.', 'danger');
+    } finally {
+        unlockSprint3Btn('mtb_submit_create', btn);
+    }
+}
+
+async function cargarPlantillasOrigenClonador() {
+    const selSede = document.getElementById('mtcSourceSede');
+    const selTpl = document.getElementById('mtcSourceTemplate');
+    const prevBox = document.getElementById('mtcClonePreviewBox');
+    if (!selSede || !selTpl) return;
+
+    const idSedeOrigen = parseInt(selSede.value || ECO_STATE.sedeSeleccionada || '0', 10);
+    if (idSedeOrigen <= 0) return;
+
+    poblarCheckboxesSedesMeta('mtcTargetSedesList', idSedeOrigen);
+    selTpl.innerHTML = '<option value="">Cargando plantillas desde Meta...</option>';
+
+    try {
+        const resp = await fetch(`back_campanas.php?action=list_all_waba_templates&id_sede=${idSedeOrigen}`);
+        const data = await resp.json();
+        MTC_TEMPLATES_CACHE = Array.isArray(data.templates) ? data.templates : [];
+        if (MTC_TEMPLATES_CACHE.length === 0) {
+            selTpl.innerHTML = '<option value="">Sin plantillas encontradas en esta sede</option>';
+            if (prevBox) prevBox.textContent = 'No se encontraron plantillas oficiales en la sede origen.';
+            return;
+        }
+        selTpl.innerHTML = MTC_TEMPLATES_CACHE.map((t, idx) => `<option value="${idx}">${escapeHtml(t.name)} · ${escapeHtml(t.category || 'MARKETING')} (${escapeHtml(t.status || 'APPROVED')})</option>`).join('');
+        seleccionarPlantillaClonador();
+    } catch (e) {
+        selTpl.innerHTML = '<option value="">Error consultando plantillas</option>';
+    }
+}
+
+function seleccionarPlantillaClonador() {
+    const selTpl = document.getElementById('mtcSourceTemplate');
+    const inpName = document.getElementById('mtcTargetName');
+    const prevBox = document.getElementById('mtcClonePreviewBox');
+    if (!selTpl || !prevBox) return;
+    const idx = parseInt(selTpl.value || '0', 10);
+    const tpl = MTC_TEMPLATES_CACHE[idx];
+    if (!tpl) return;
+    if (inpName) inpName.value = tpl.name || '';
+    prevBox.innerHTML = `
+        <div class="d-flex flex-wrap gap-1 mb-2">
+            <span class="badge bg-dark">${escapeHtml(tpl.category || 'MARKETING')}</span>
+            <span class="badge bg-secondary">Idioma: ${escapeHtml(tpl.language || 'es')}</span>
+            <span class="badge bg-info text-dark">Header: ${escapeHtml(tpl.header_format || 'NONE')}</span>
+            <span class="badge bg-success">${escapeHtml(tpl.status || 'APPROVED')}</span>
+        </div>
+        ${tpl.header_text ? `<div class="fw-bold mb-1">${escapeHtml(tpl.header_text)}</div>` : ''}
+        <div style="white-space:pre-line;">${escapeHtml(tpl.body || '')}</div>
+        ${tpl.footer ? `<div class="text-muted mt-2 pt-1 border-top" style="font-size:0.72rem;">${escapeHtml(tpl.footer)}</div>` : ''}
+    `;
+}
+
+async function ejecutarClonacionPlantillaMeta() {
+    const btn = document.getElementById('btnSubmitCloneMetaTpl');
+    const idx = parseInt(document.getElementById('mtcSourceTemplate')?.value || '-1', 10);
+    const tpl = MTC_TEMPLATES_CACHE[idx];
+    if (!tpl) {
+        mostrarToastStarfi('Selecciona una plantilla origen válida para clonar.', 'warning');
+        return;
+    }
+    const targetName = (document.getElementById('mtcTargetName')?.value || tpl.name || '').trim();
+    const targets = Array.from(document.querySelectorAll('#mtcTargetSedesList .meta-sede-target-chk:checked')).map(c => parseInt(c.value, 10));
+    if (targets.length === 0) {
+        mostrarToastStarfi('Selecciona al menos una sede destino donde clonar la plantilla.', 'warning');
+        return;
+    }
+
+    if (!lockSprint3Btn('mtc_submit_clone', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i>Clonando entre sedes...')) return;
+    try {
+        const fd = new FormData();
+        fd.append('action', 'clone_meta_template_sedes');
+        fd.append('name', targetName);
+        fd.append('category', tpl.category || 'MARKETING');
+        fd.append('language', tpl.language || 'es');
+        fd.append('header_format', tpl.header_format === 'TEXT' ? 'TEXT' : 'NONE');
+        fd.append('header_text', tpl.header_text || '');
+        fd.append('body', tpl.body || '');
+        fd.append('body_examples', JSON.stringify(tpl.body_examples || []));
+        fd.append('footer', tpl.footer || '');
+        fd.append('buttons', JSON.stringify(tpl.buttons || []));
+        fd.append('target_sedes', JSON.stringify(targets));
+
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (Array.isArray(data.results)) {
+            renderizarTablaResultadosMeta('mtcResultsContainer', data.results);
+        }
+        if (data && data.status === 'success') {
+            mostrarToastStarfi(data.message || 'Plantilla clonada exitosamente.', 'success');
+        } else {
+            mostrarToastStarfi((data && data.message) || 'No se pudo completar la clonación.', 'danger');
+        }
+    } catch (e) {
+        mostrarToastStarfi('Error de red al clonar plantilla entre sedes.', 'danger');
+    } finally {
+        unlockSprint3Btn('mtc_submit_clone', btn);
+    }
+}
+
+function abrirModalDripCampana(idCampana) {
+    const camp = ECO_STATE.campanas.find(c => parseInt(c.id, 10) === parseInt(idCampana, 10));
+    if (!camp) return;
+    sincronizarSelectoresPlantillasDrip();
+
+    document.getElementById('mdlDripCampanaId').value = camp.id;
+    document.getElementById('mdlDripSubtituloCampana').textContent = `Campaña #${camp.id}: ${camp.nombre_campana || ''}`;
+    document.getElementById('mdlDripActivo').checked = parseInt(camp.drip_activo || 0, 10) === 1;
+    document.getElementById('mdlDripHoras').value = parseInt(camp.drip_horas_espera || 24, 10) || 24;
+    document.getElementById('mdlDripAccion').value = camp.drip_accion || 'AMBOS';
+
+    const selTpl = document.getElementById('mdlDripTemplate');
+    if (selTpl && camp.drip_template_name) {
+        selTpl.value = camp.drip_template_name;
+    }
+
+    let dripTexto = 'vimos que revisaste nuestra información y un asesor está listo para ayudarte con precios o disponibilidad inmediata';
+    if (camp.drip_params_json) {
+        try {
+            const p = JSON.parse(camp.drip_params_json);
+            if (Array.isArray(p.body_params) && p.body_params[1]) {
+                dripTexto = p.body_params[1];
+            }
+        } catch (e) { }
+    }
+    document.getElementById('mdlDripParamTexto').value = dripTexto;
+    document.getElementById('mdlDripResultadoBox').innerHTML = '';
+
+    const modalEl = document.getElementById('modalConfigDripCampana');
+    if (modalEl) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+}
+
+async function guardarReglaDripModal() {
+    const btn = document.getElementById('btnGuardarReglaDripModal');
+    const idCamp = parseInt(document.getElementById('mdlDripCampanaId')?.value || '0', 10);
+    if (idCamp <= 0) return;
+
+    if (!lockSprint3Btn('save_drip_modal', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i>Guardando...')) return;
+    try {
+        const dripTxt = (document.getElementById('mdlDripParamTexto')?.value || '').trim();
+        const fd = new FormData();
+        fd.append('action', 'save_campaign_drip_rule');
+        fd.append('id_campana', idCamp);
+        fd.append('drip_activo', document.getElementById('mdlDripActivo')?.checked ? 1 : 0);
+        fd.append('drip_horas_espera', document.getElementById('mdlDripHoras')?.value || 24);
+        fd.append('drip_accion', document.getElementById('mdlDripAccion')?.value || 'AMBOS');
+        fd.append('drip_template_name', document.getElementById('mdlDripTemplate')?.value || 'starfi_difusion_directa');
+        fd.append('drip_params_json', JSON.stringify({
+            body_params: ['@NOMBRE_CLIENTE', dripTxt || 'retomar tu solicitud pendiente', '@NOMBRE_SEDE']
+        }));
+
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (data && data.status === 'success') {
+            mostrarToastStarfi(data.message || 'Regla Drip guardada correctamente.', 'success');
+            await recargarEcosistema();
+        } else {
+            mostrarToastStarfi((data && data.message) || 'No se pudo guardar la regla Drip.', 'danger');
+        }
+    } catch (e) {
+        mostrarToastStarfi('Error de red al guardar la regla Drip.', 'danger');
+    } finally {
+        unlockSprint3Btn('save_drip_modal', btn);
+    }
+}
+
+async function ejecutarDripCampanaAhora() {
+    const btn = document.getElementById('btnEjecutarDripAhoraModal');
+    const idCamp = parseInt(document.getElementById('mdlDripCampanaId')?.value || '0', 10);
+    if (idCamp <= 0) return;
+
+    if (!lockSprint3Btn('run_drip_now', btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i>Evaluando...')) return;
+    try {
+        const fd = new FormData();
+        fd.append('action', 'run_campaign_drip_now');
+        fd.append('id_campana', idCamp);
+        const resp = await fetch('back_campanas.php', { method: 'POST', body: fd });
+        const data = await resp.json();
+        const box = document.getElementById('mdlDripResultadoBox');
+        if (data && data.status === 'success') {
+            if (box) {
+                box.innerHTML = `<div class="alert alert-info py-2 px-3 small mb-0"><i class="fa-solid fa-circle-check me-1"></i>${escapeHtml(data.message)}</div>`;
+            }
+            await recargarEcosistema();
+        } else {
+            mostrarToastStarfi((data && data.message) || 'Error ejecutando secuencia Drip.', 'danger');
+        }
+    } catch (e) {
+        mostrarToastStarfi('Error de red al evaluar secuencia Drip.', 'danger');
+    } finally {
+        unlockSprint3Btn('run_drip_now', btn);
+    }
 }

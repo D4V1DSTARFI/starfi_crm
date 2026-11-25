@@ -3,6 +3,7 @@
 @ini_set('display_errors', '0');
 require_once __DIR__ . '/../../core/auth.php';
 require_once __DIR__ . '/../../core/audit.php';
+require_once __DIR__ . '/../../core/IaConnector.php';
 requireAuth();
 requirePermission('bandeja');
 header('Content-Type: application/json; charset=utf-8');
@@ -691,6 +692,8 @@ switch ($action) {
             )";
             $bind_types .= 'i';
             $bind_params[] = $sla_crit_min;
+        } elseif ($filter === 'urgentes') {
+            $where_clauses .= " AND c.sentimiento_cliente = 'URGENTE_MOLESTO' AND c.estado NOT IN ('CERRADO', 'RESUELTO')";
         } elseif ($filter === 'cerrados') {
             $where_clauses .= " AND c.estado = 'CERRADO'";
         }
@@ -765,6 +768,8 @@ switch ($action) {
                 IFNULL(s.nombre_sede, 'Sede Principal') AS nombre_sede,
                 up.nombre AS nombre_asesor,
                 IFNULL(cl.calificacion_calidad, 0) AS calificacion_calidad,
+                IFNULL(c.sentimiento_cliente, 'NEUTRO') AS sentimiento_cliente,
+                c.resumen_ia,
                 c.resultado_comercial,
                 c.fecha_cierre_venta,
                 c.ultimo_msg_id
@@ -986,7 +991,24 @@ switch ($action) {
                 $ch['deal_etapa']     = $dl ? $dl['etapa'] : null;
                 $ch['deal_monto_usd'] = $dl ? round(floatval($dl['monto_estimado_usd']), 2) : null;
 
-                unset($ch['ultimo_msg_id'], $ch['resultado_comercial'], $ch['fecha_cierre_venta']);
+                // [IA-02] Sentimiento automático e [IA-01] Resumen IA en caché
+                $sent_code = IaConnector::normalizarSentimiento($ch['sentimiento_cliente'] ?? 'NEUTRO');
+                if ($sent_code === 'NEUTRO' && $ch['ultimo_mensaje_origen'] === 'CLIENTE' && !empty($ch['ultimo_mensaje_texto'])) {
+                    $sent_code = IaConnector::clasificarSentimientoTexto((string)$ch['ultimo_mensaje_texto']);
+                }
+                $ch['sentimiento_cliente'] = $sent_code;
+                $ch['sentimiento_label']   = IaConnector::etiquetaHumanaSentimiento($sent_code);
+
+                $res_bullets = [];
+                if (!empty($ch['resumen_ia'])) {
+                    $dec_b = json_decode((string)$ch['resumen_ia'], true);
+                    if (is_array($dec_b)) {
+                        $res_bullets = array_slice(array_values(array_map('strval', $dec_b)), 0, 3);
+                    }
+                }
+                $ch['resumen_ia_bullets'] = $res_bullets;
+
+                unset($ch['ultimo_msg_id'], $ch['resultado_comercial'], $ch['fecha_cierre_venta'], $ch['resumen_ia']);
             }
             unset($ch);
         }
@@ -1051,11 +1073,44 @@ switch ($action) {
             }
             $win24 = get_conversacion_window_24h($con, $conversacion_id);
             $deal_info = get_conversacion_deal_info($con, $conversacion_id, intval($_POST['cliente_id'] ?? 0));
+
+            $sent_conv = 'NEUTRO';
+            $res_ia_bullets = [];
+            $res_ia_ts = null;
+            if ($conversacion_id > 0) {
+                $rowConvIa = bandeja_fetch_one(
+                    $con,
+                    "SELECT sentimiento_cliente, sentimiento_actualizado, resumen_ia, resumen_ia_actualizado FROM conversaciones WHERE id = ? LIMIT 1",
+                    "i",
+                    [$conversacion_id]
+                );
+                if ($rowConvIa) {
+                    $sent_conv = IaConnector::normalizarSentimiento($rowConvIa['sentimiento_cliente'] ?? 'NEUTRO');
+                    if (empty($rowConvIa['sentimiento_actualizado']) && !empty($messages) && !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con))) {
+                        $autoSent = IaConnector::actualizarSentimientoConversacion($con, $conversacion_id, null);
+                        if (is_string($autoSent) && $autoSent !== '') {
+                            $sent_conv = $autoSent;
+                        }
+                    }
+                    if (!empty($rowConvIa['resumen_ia'])) {
+                        $decRes = json_decode((string)$rowConvIa['resumen_ia'], true);
+                        if (is_array($decRes)) {
+                            $res_ia_bullets = array_slice(array_values(array_map('strval', $decRes)), 0, 3);
+                        }
+                    }
+                    $res_ia_ts = $rowConvIa['resumen_ia_actualizado'] ?? null;
+                }
+            }
+
             echo json_encode([
                 'status' => 'success',
                 'data' => $messages,
                 'window_24h' => $win24,
-                'deal' => $deal_info
+                'deal' => $deal_info,
+                'sentimiento' => $sent_conv,
+                'sentimiento_label' => IaConnector::etiquetaHumanaSentimiento($sent_conv),
+                'resumen_ia_bullets' => $res_ia_bullets,
+                'resumen_ia_actualizado' => $res_ia_ts
             ]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Error preparando consulta.']);
@@ -2857,6 +2912,168 @@ switch ($action) {
             'status' => 'success',
             'message' => 'Tiempos del Semáforo SLA actualizados correctamente.',
             'sla_config' => $saved_sla['config']
+        ]);
+        break;
+
+    case 'ia_summarize_chat':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        if ($conversacion_id <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona una conversación activa para resumir.']);
+            exit;
+        }
+        if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado a esta conversación o sede.']);
+            exit;
+        }
+        $rowMetaIa = bandeja_fetch_one(
+            $con,
+            "SELECT c.id_cliente, cl.nombre AS cliente_nombre, IFNULL(l.id_sede, IFNULL(cl.id_sede, 0)) AS id_sede
+             FROM conversaciones c
+             LEFT JOIN clientes_contactos cl ON c.id_cliente = cl.id
+             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+             WHERE c.id = ? LIMIT 1",
+            "i",
+            [$conversacion_id]
+        );
+        $sede_ia = intval($rowMetaIa['id_sede'] ?? ($agente_info_global['id_sede'] ?? 0));
+        $nombre_cli_ia = trim((string)($rowMetaIa['cliente_nombre'] ?? ''));
+
+        $resSummary = IaConnector::resumirConversacionEjecutiva($con, $sede_ia, $conversacion_id, $nombre_cli_ia);
+        if (empty($resSummary['ok'])) {
+            echo json_encode(['status' => 'error', 'message' => $resSummary['message'] ?? 'No se pudo generar el resumen IA.']);
+            exit;
+        }
+
+        registrar_auditoria(
+            'bandeja',
+            'IA_RESUMIR_CONVERSACION',
+            "Resumen ejecutivo IA (3 viñetas) generado para conversación #$conversacion_id",
+            null,
+            [
+                'conversacion_id' => $conversacion_id,
+                'source' => $resSummary['source'] ?? 'LOCAL_SMART',
+                'sentimiento' => $resSummary['sentimiento'] ?? 'NEUTRO',
+                'bullets_count' => count($resSummary['bullets'] ?? [])
+            ],
+            $con,
+            $agente_id,
+            $sede_ia ?: null
+        );
+
+        echo json_encode([
+            'status' => 'success',
+            'bullets' => $resSummary['bullets'],
+            'sentimiento' => $resSummary['sentimiento'],
+            'sentimiento_label' => $resSummary['sentimiento_label'],
+            'source' => $resSummary['source'],
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+        break;
+
+    case 'ia_suggest_or_improve':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $draft = trim((string)($_POST['draft'] ?? ''));
+        $tone = strtolower(trim((string)($_POST['tone'] ?? 'profesional')));
+        if ($conversacion_id <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona una conversación activa primero.']);
+            exit;
+        }
+        if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado a esta conversación o sede.']);
+            exit;
+        }
+        $rowMetaSug = bandeja_fetch_one(
+            $con,
+            "SELECT c.id_cliente, cl.nombre AS cliente_nombre, IFNULL(l.id_sede, IFNULL(cl.id_sede, 0)) AS id_sede
+             FROM conversaciones c
+             LEFT JOIN clientes_contactos cl ON c.id_cliente = cl.id
+             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+             WHERE c.id = ? LIMIT 1",
+            "i",
+            [$conversacion_id]
+        );
+        $sede_sug = intval($rowMetaSug['id_sede'] ?? ($agente_info_global['id_sede'] ?? 0));
+        $nombre_cli_sug = trim((string)($rowMetaSug['cliente_nombre'] ?? ''));
+
+        $resAssist = IaConnector::asistirRespuestaAsesor($con, $sede_sug, $conversacion_id, $draft, $tone, $nombre_cli_sug);
+        if (empty($resAssist['ok'])) {
+            echo json_encode(['status' => 'error', 'message' => $resAssist['message'] ?? 'No se pudo generar la sugerencia IA.']);
+            exit;
+        }
+
+        registrar_auditoria(
+            'bandeja',
+            'IA_ASISTIR_RESPUESTA',
+            "Copiloto IA ({$resAssist['mode']}) ejecutado en conversación #$conversacion_id (tono: {$resAssist['tone']})",
+            ['draft_length' => mb_strlen($draft, 'UTF-8'), 'tone' => $tone],
+            [
+                'conversacion_id' => $conversacion_id,
+                'mode' => $resAssist['mode'],
+                'tone' => $resAssist['tone'],
+                'source' => $resAssist['source'],
+                'sentimiento' => $resAssist['sentimiento']
+            ],
+            $con,
+            $agente_id,
+            $sede_sug ?: null
+        );
+
+        echo json_encode([
+            'status' => 'success',
+            'suggestion' => $resAssist['suggestion'],
+            'mode' => $resAssist['mode'],
+            'tone' => $resAssist['tone'],
+            'sentimiento' => $resAssist['sentimiento'],
+            'sentimiento_label' => $resAssist['sentimiento_label'],
+            'source' => $resAssist['source']
+        ]);
+        break;
+
+    case 'ia_set_sentiment':
+        $conversacion_id = intval($_POST['conversacion_id'] ?? 0);
+        $sent_input = strtoupper(trim((string)($_POST['sentimiento'] ?? 'AUTO')));
+        if ($conversacion_id <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Conversación inválida.']);
+            exit;
+        }
+        if (!authorize_conversacion_access($con, $conversacion_id, $agente_info_global, true)) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado a esta conversación o sede.']);
+            exit;
+        }
+        $rowPrevSent = bandeja_fetch_one(
+            $con,
+            "SELECT c.sentimiento_cliente, IFNULL(l.id_sede, 0) AS id_sede
+             FROM conversaciones c
+             LEFT JOIN lineas_whatsapp l ON c.id_linea = l.id
+             WHERE c.id = ? LIMIT 1",
+            "i",
+            [$conversacion_id]
+        );
+        $forzar = ($sent_input === '' || $sent_input === 'AUTO') ? null : IaConnector::normalizarSentimiento($sent_input);
+        $sentNuevo = IaConnector::actualizarSentimientoConversacion($con, $conversacion_id, $forzar);
+        if (!is_string($sentNuevo) || $sentNuevo === '') {
+            echo json_encode(['status' => 'error', 'message' => 'No se pudo actualizar el sentimiento.']);
+            exit;
+        }
+        $sentLabel = IaConnector::etiquetaHumanaSentimiento($sentNuevo);
+        $sede_st = intval($rowPrevSent['id_sede'] ?? ($agente_info_global['id_sede'] ?? 0));
+        registrar_auditoria(
+            'bandeja',
+            'ACTUALIZAR_SENTIMIENTO_CHAT',
+            "Sentimiento de conversación #$conversacion_id etiquetado como $sentNuevo",
+            ['sentimiento_anterior' => $rowPrevSent['sentimiento_cliente'] ?? 'NEUTRO'],
+            ['conversacion_id' => $conversacion_id, 'sentimiento' => $sentNuevo, 'modo' => ($forzar === null ? 'AUTO_IA' : 'MANUAL')],
+            $con,
+            $agente_id,
+            $sede_st ?: null
+        );
+        echo json_encode([
+            'status' => 'success',
+            'sentimiento' => $sentNuevo,
+            'sentimiento_label' => $sentLabel
         ]);
         break;
 

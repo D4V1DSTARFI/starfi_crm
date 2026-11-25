@@ -378,11 +378,12 @@ foreach ($riiUi as $fi) {
 
     $isBackendEndpoint = (
         strpos($base, 'back_') === 0 ||
+        strpos($rel, 'core/services/') === 0 ||
         in_array($rel, [
             'webhook.php', 'api_notificaciones.php', 'cron_campanas_autopilot.php', 'cron_waba_billing.php',
             'get_media.php', 'ver_documento.php', 'recover_password.php', 'register.php', 'logout.php',
             'config/database.php', 'core/IaConnector.php', 'core/IaContextEngine.php', 'core/audit.php',
-            'core/crm_sprint2_helper.php', 'core/services/MailerService.php',
+            'core/crm_sprint2_helper.php',
         ], true)
     );
     if (!$isBackendEndpoint) {
@@ -884,6 +885,106 @@ if ($con) {
             $audOk === true &&
             is_array($antDecoded) && ($antDecoded['etapa'] ?? '') === 'NUEVO_LEAD' && ($antDecoded['api_token'] ?? '') === '[REDACTED]' &&
             is_array($nueDecoded) && ($nueDecoded['etapa'] ?? '') === 'COTIZADO' && (float)($nueDecoded['monto_estimado_usd'] ?? 0) === 2500.0
+        );
+
+        // 7. Pruebas Funcionales y Transaccionales OT-STARFI-2026-11 SPRINT 3 ([IA-01]..[IA-04])
+        require_once $root . '/core/IaConnector.php';
+        require_once $root . '/core/services/MetaTemplateService.php';
+        require_once $root . '/core/services/DripRemarketingService.php';
+
+        // [IA-01] Resumen Ejecutivo de Conversación en 3 Viñetas
+        $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($cvAlfa, 'CLIENTE', 'TEXTO', 'Hola, necesito cotizar 15 láminas MDF 18mm urgente porque tengo retraso en mi obra')");
+        $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($cvAlfa, 'BOT', 'TEXTO', 'Hola Cliente Alfa, con gusto revisamos disponibilidad inmediata en Sede Alfa.')");
+        $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido) VALUES ($cvAlfa, 'CLIENTE', 'TEXTO', 'Por favor confírmame precio en USD y despacho hoy mismo')");
+
+        $sumQa = IaConnector::resumirConversacionEjecutiva($con, 9951, $cvAlfa, 'Cliente Alfa');
+        $rowConvSum = $con->query("SELECT resumen_ia, sentimiento_cliente FROM conversaciones WHERE id = $cvAlfa")->fetch_assoc();
+        $savedBullets = !empty($rowConvSum['resumen_ia']) ? json_decode((string)$rowConvSum['resumen_ia'], true) : [];
+        $bandejaViewSrc = (string)file_get_contents($root . '/modules/bandeja/bandeja.php');
+        $bandejaBackSrc = (string)file_get_contents($root . '/modules/bandeja/back_bandeja.php');
+
+        qa_check("[IA-01] IaConnector::resumirConversacionEjecutiva() genera exactamente 3 viñetas ejecutivas y las persiste en conversaciones",
+            !empty($sumQa['ok']) && is_array($sumQa['bullets']) && count($sumQa['bullets']) === 3 && is_array($savedBullets) && count($savedBullets) === 3
+        );
+        qa_check("[IA-01] Bandeja integra botón #btnIaSummarize, tarjeta #iaSummaryCard y endpoint ia_summarize_chat",
+            strpos($bandejaViewSrc, 'btnIaSummarize') !== false &&
+            strpos($bandejaViewSrc, 'iaSummaryCard') !== false &&
+            strpos($bandejaBackSrc, "case 'ia_summarize_chat':") !== false
+        );
+
+        // [IA-02] Sugerir Respuesta / Mejorar Tono con IA + Etiquetado Automático de Sentimiento
+        $sPos = IaConnector::clasificarSentimientoTexto('Muchas gracias, excelente servicio y atención impecable');
+        $sNeu = IaConnector::clasificarSentimientoTexto('Buenas tardes, ¿tienen tapacantos blancos disponibles?');
+        $sUrg = IaConnector::clasificarSentimientoTexto('Urgente, pésimo servicio, llevo horas esperando reclamo');
+        qa_check("[IA-02] IaConnector::clasificarSentimientoTexto() clasifica con precisión SATISFECHO, NEUTRO y URGENTE_MOLESTO",
+            $sPos === 'SATISFECHO' && $sNeu === 'NEUTRO' && $sUrg === 'URGENTE_MOLESTO'
+        );
+
+        $updSentQa = IaConnector::actualizarSentimientoConversacion($con, $cvAlfa, null);
+        $cliTagsRow = $con->query("SELECT etiquetas FROM clientes_contactos WHERE id = $cAlfa")->fetch_assoc();
+        qa_check("[IA-02] actualizarSentimientoConversacion() sincroniza sentimiento en conversaciones y etiqueta en clientes_contactos",
+            $updSentQa === 'URGENTE_MOLESTO' && strpos((string)($cliTagsRow['etiquetas'] ?? ''), 'Urgente/Molesto') !== false
+        );
+
+        $sugEmpty = IaConnector::asistirRespuestaAsesor($con, 9951, $cvAlfa, '', 'empatico', 'Cliente Alfa');
+        $sugDraft = IaConnector::asistirRespuestaAsesor($con, 9951, $cvAlfa, 'si tenemos laminas cuestan 45 dolares', 'cierre', 'Cliente Alfa');
+        qa_check("[IA-02] asistirRespuestaAsesor() opera en modo SUGGEST_REPLY (vacío) e IMPROVE_TONE (con borrador) + UI cableada",
+            !empty($sugEmpty['ok']) && $sugEmpty['mode'] === 'SUGGEST_REPLY' && !empty($sugEmpty['suggestion']) &&
+            !empty($sugDraft['ok']) && $sugDraft['mode'] === 'IMPROVE_TONE' && !empty($sugDraft['suggestion']) &&
+            strpos($bandejaViewSrc, 'btnIaSuggestReply') !== false &&
+            strpos($bandejaViewSrc, 'chatSentimentBadge') !== false
+        );
+
+        // [IA-03] Constructor y Clonador de Plantillas Oficiales Meta (POST /{waba_id}/message_templates)
+        $normTplName = MetaTemplateService::normalizeTemplateName('Promo Navideña 2026!');
+        $builtTpl = MetaTemplateService::buildMetaComponentsPayload([
+            'name'          => $normTplName,
+            'category'      => 'MARKETING',
+            'language'      => 'es',
+            'header_format' => 'TEXT',
+            'header_text'   => 'Oferta STARFI {{1}}',
+            'body'          => 'Hola {{1}}, en {{2}} tenemos {{3}} disponible hoy.',
+            'body_examples' => ['Carlos', 'Sede Alfa', '15% de descuento'],
+            'footer'        => 'STARFI CRM',
+            'buttons'       => [['type' => 'QUICK_REPLY', 'text' => 'Quiero cotizar']],
+        ]);
+        $campModalsSrc = (string)file_get_contents($root . '/modules/campanas/modals_campanas.php');
+        $campBackSrc   = (string)file_get_contents($root . '/modules/campanas/back_campanas.php');
+
+        qa_check("[IA-03] MetaTemplateService construye payload oficial Graph API v23.0 (HEADER, BODY con examples, FOOTER y BUTTONS)",
+            !empty($builtTpl['ok']) &&
+            $normTplName === 'promo_navidena_2026' &&
+            count($builtTpl['components']) === 4 &&
+            ($builtTpl['components'][1]['type'] ?? '') === 'BODY' &&
+            count($builtTpl['components'][1]['example']['body_text'][0] ?? []) === 3 &&
+            strpos($campModalsSrc, 'modalMetaTemplateBuilder') !== false &&
+            strpos($campBackSrc, "case 'clone_meta_template_sedes':") !== false
+        );
+
+        // [IA-04] Secuencias Automáticas de Remarketing (Drip Campaigns: Leídos sin responder en X horas)
+        $con->query("INSERT INTO campanas_difusion (id_sede, `$nameColCamp`, `$tplColCamp`, categoria_meta, estado, drip_activo, drip_horas_espera, drip_accion, drip_template_name) VALUES (9952, 'QA Campaña Drip Sprint 3', 'starfi_difusion_directa', 'MARKETING', 'COMPLETADA', 1, 12, 'AMBOS', 'starfi_difusion_directa')");
+        $campDripId = (int)$con->insert_id;
+
+        $con->query("INSERT INTO campanas_difusion_destinatarios (id_campana, id_sede, id_cliente, nombre, telefono, estado_envio, respondido, fecha_envio, fecha_lectura) VALUES ($campDripId, 9952, $cBeta, 'Cliente Drip Leido Sin Resp', '584147770001', 'LEIDO', 0, DATE_SUB(NOW(), INTERVAL 16 HOUR), DATE_SUB(NOW(), INTERVAL 14 HOUR))");
+        $destDripDue = (int)$con->insert_id;
+
+        $con->query("INSERT INTO campanas_difusion_destinatarios (id_campana, id_sede, id_cliente, nombre, telefono, estado_envio, respondido, fecha_envio, fecha_lectura, fecha_respuesta) VALUES ($campDripId, 9952, $cBeta, 'Cliente Drip Ya Respondio', '584147770002', 'RESPONDIDO', 1, DATE_SUB(NOW(), INTERVAL 16 HOUR), DATE_SUB(NOW(), INTERVAL 14 HOUR), DATE_SUB(NOW(), INTERVAL 13 HOUR))");
+        $destDripReplied = (int)$con->insert_id;
+
+        $dripExec = DripRemarketingService::processDueDripSequences($con, $campDripId, 50, false);
+        $rowDueAfter = $con->query("SELECT drip_ejecutado, drip_estado, drip_id_asesor FROM campanas_difusion_destinatarios WHERE id = $destDripDue")->fetch_assoc();
+        $rowRepAfter = $con->query("SELECT drip_ejecutado FROM campanas_difusion_destinatarios WHERE id = $destDripReplied")->fetch_assoc();
+        $cronSrc = (string)file_get_contents($root . '/cron_campanas_autopilot.php');
+
+        qa_check("[IA-04] DripRemarketingService procesa únicamente destinatarios LEIDOS sin respuesta tras X horas (re-impacta + asigna vendedor) e ignora respondidos",
+            !empty($dripExec['ok']) &&
+            intval($dripExec['processed']) === 1 &&
+            intval($dripExec['reimpacted']) === 1 &&
+            intval($dripExec['assigned']) === 1 &&
+            intval($rowDueAfter['drip_ejecutado'] ?? 0) === 1 &&
+            intval($rowDueAfter['drip_id_asesor'] ?? 0) > 0 &&
+            intval($rowRepAfter['drip_ejecutado'] ?? 0) === 0 &&
+            strpos($cronSrc, 'DripRemarketingService::processDueDripSequences') !== false
         );
 
         // ROLLBACK OBLIGATORIO (0 residuos en base de datos)

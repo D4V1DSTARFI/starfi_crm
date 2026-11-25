@@ -189,5 +189,269 @@
         </div>
     </div>
 
+    <!-- MODAL 4: [IA-03] CONSTRUCTOR Y CLONADOR DE PLANTILLAS OFICIALES META (POST /{waba_id}/message_templates) -->
+    <div class="modal fade" id="modalMetaTemplateBuilder" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow-lg" style="border-radius: 18px;">
+                <div class="modal-header bg-dark text-white" style="border-radius: 18px 18px 0 0;">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fa-brands fa-meta text-info fs-4"></i>
+                        <div>
+                            <h6 class="modal-title fw-bold mb-0">Constructor y Clonador Oficial de Plantillas Meta WABA</h6>
+                            <small class="text-white-50">Publica vía <code>POST /{waba_id}/message_templates</code> y clona plantillas entre sedes sin salir del CRM</small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-3 gap-2" id="tabsMetaBuilder" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active fw-bold btn-sm px-3" id="tabBtnCrearTpl" data-bs-toggle="pill" data-bs-target="#paneCrearMetaTpl" type="button" role="tab">
+                                <i class="fa-solid fa-plus-circle me-1"></i>1. Crear Nueva Plantilla Oficial
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-bold btn-sm px-3" id="tabBtnClonarTpl" data-bs-toggle="pill" data-bs-target="#paneClonarMetaTpl" type="button" role="tab" onclick="cargarPlantillasOrigenClonador()">
+                                <i class="fa-solid fa-clone me-1"></i>2. Clonar Plantilla entre Sedes
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- PESTAÑA 1: CREAR NUEVA PLANTILLA OFICIAL META -->
+                        <div class="tab-pane fade show active" id="paneCrearMetaTpl" role="tabpanel">
+                            <form id="formMetaTemplateBuilder" autocomplete="off">
+                                <div class="row g-3">
+                                    <div class="col-12 col-lg-7">
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-12 col-md-5">
+                                                <label class="form-label small fw-bold mb-1">Nombre Técnico (snake_case) *</label>
+                                                <input type="text" id="mtbName" class="form-control form-control-sm font-monospace" placeholder="ej: promo_fin_de_mes" oninput="normalizarInputNombrePlantilla(this); actualizarPreviewConstructorMeta();">
+                                            </div>
+                                            <div class="col-6 col-md-4">
+                                                <label class="form-label small fw-bold mb-1">Categoría Meta *</label>
+                                                <select id="mtbCategory" class="form-select form-select-sm" onchange="actualizarPreviewConstructorMeta()">
+                                                    <option value="MARKETING" selected>MARKETING (Promocional)</option>
+                                                    <option value="UTILITY">UTILITY (Transaccional / Seguimiento)</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-6 col-md-3">
+                                                <label class="form-label small fw-bold mb-1">Idioma *</label>
+                                                <select id="mtbLanguage" class="form-select form-select-sm">
+                                                    <option value="es" selected>Español (es)</option>
+                                                    <option value="es_LA">Español LATAM (es_LA)</option>
+                                                    <option value="en_US">Inglés (en_US)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-12 col-md-4">
+                                                <label class="form-label small fw-bold mb-1">Cabecera (Header)</label>
+                                                <select id="mtbHeaderFormat" class="form-select form-select-sm" onchange="actualizarPreviewConstructorMeta()">
+                                                    <option value="NONE" selected>Sin cabecera</option>
+                                                    <option value="TEXT">Texto corto (máx. 60 car.)</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-12 col-md-8 d-none" id="mtbHeaderTextWrap">
+                                                <label class="form-label small fw-bold mb-1">Texto de Cabecera</label>
+                                                <input type="text" id="mtbHeaderText" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Novedades STARFI {{1}}" oninput="actualizarPreviewConstructorMeta()">
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-2">
+                                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-1">
+                                                <label class="form-label small fw-bold mb-0">Cuerpo del Mensaje (Body) *</label>
+                                                <div class="d-flex align-items-center gap-1">
+                                                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:0.7rem;" onclick="insertarVariableMtb('{{1}}')">+ {{1}}</button>
+                                                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:0.7rem;" onclick="insertarVariableMtb('{{2}}')">+ {{2}}</button>
+                                                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:0.7rem;" onclick="insertarVariableMtb('{{3}}')">+ {{3}}</button>
+                                                    <button type="button" id="btnMtbDraftIa" class="btn btn-sm py-0 px-2 text-white fw-bold" style="font-size:0.7rem; background: linear-gradient(135deg, #6D28D9, #8B5CF6);" onclick="redactarCuerpoPlantillaConIa()">
+                                                        <i class="fa-solid fa-wand-magic-sparkles me-1"></i>Redactar con IA
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <textarea id="mtbBody" class="form-control form-control-sm" rows="4" placeholder="Hola {{1}}, te escribimos de {{2}} para informarte sobre {{3}}." oninput="renderizarInputsEjemplosMtb(); actualizarPreviewConstructorMeta();">Hola {{1}}, te saludamos de {{2}}. Queremos compartirte {{3}}. Responde este mensaje si deseas atención inmediata.</textarea>
+                                            <small class="text-muted" style="font-size:0.7rem;">Meta exige no colocar variables <code>{{1}}</code> ni al inicio exacto ni al final exacto de la oración.</small>
+                                        </div>
+
+                                        <div id="mtbExamplesBox" class="p-2.5 px-3 rounded-3 border bg-light mb-2"></div>
+
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-12 col-md-5">
+                                                <label class="form-label small fw-bold mb-1">Pie de Mensaje (Footer opcional)</label>
+                                                <input type="text" id="mtbFooter" class="form-control form-control-sm" maxlength="60" placeholder="Ej: Responde STOP para baja" oninput="actualizarPreviewConstructorMeta()">
+                                            </div>
+                                            <div class="col-6 col-md-3">
+                                                <label class="form-label small fw-bold mb-1">Botón Interactivo</label>
+                                                <select id="mtbBtn1Type" class="form-select form-select-sm" onchange="actualizarPreviewConstructorMeta()">
+                                                    <option value="NONE">Sin botón</option>
+                                                    <option value="QUICK_REPLY" selected>Respuesta Rápida</option>
+                                                    <option value="URL">Enlace Web (https)</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-6 col-md-4" id="mtbBtn1TextWrap">
+                                                <label class="form-label small fw-bold mb-1">Texto del Botón</label>
+                                                <input type="text" id="mtbBtn1Text" class="form-control form-control-sm" maxlength="25" value="Quiero más info" oninput="actualizarPreviewConstructorMeta()">
+                                            </div>
+                                            <div class="col-12 d-none" id="mtbBtn1UrlWrap">
+                                                <label class="form-label small fw-bold mb-1">URL Destino segura SSL (ej: tuempresa.com/catalogo)</label>
+                                                <input type="text" id="mtbBtn1Url" class="form-control form-control-sm" placeholder="tuempresa.com/catalogo">
+                                            </div>
+                                        </div>
+
+                                        <div class="p-2.5 px-3 rounded-3 border bg-light">
+                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                                <label class="form-label small fw-bold text-dark mb-0"><i class="fa-solid fa-store text-primary me-1"></i>Sedes WABA Destino donde se creará:</label>
+                                                <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none fw-bold" style="font-size:0.72rem;" id="btnMtbSelectAllSedes" onclick="toggleTodasSedesMetaBuilder('mtbTargetSedesList')">Seleccionar todas</button>
+                                            </div>
+                                            <div id="mtbTargetSedesList" class="d-flex flex-wrap gap-2 mt-1"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-12 col-lg-5">
+                                        <div class="p-3 rounded-3 border bg-light h-100 d-flex flex-column justify-content-between">
+                                            <div>
+                                                <div class="small fw-bold text-secondary mb-2"><i class="fa-brands fa-whatsapp text-success me-1"></i>Vista Previa Oficial WhatsApp</div>
+                                                <div class="wa-phone-mockup">
+                                                    <div class="wa-phone-header">
+                                                        <div class="wa-phone-avatar"><i class="fa-brands fa-whatsapp"></i></div>
+                                                        <div>
+                                                            <div class="fw-bold" style="font-size:0.82rem;">Vista Previa Plantilla</div>
+                                                            <div style="font-size:0.68rem; opacity:0.85;">Graph API v23.0</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="wa-preview-frame">
+                                                        <div class="wa-bubble" id="mtbLivePreviewBubble"></div>
+                                                    </div>
+                                                </div>
+                                                <div id="mtbCreateResultsBox" class="mt-3"></div>
+                                            </div>
+                                            <div class="mt-3 d-grid">
+                                                <button type="button" id="btnSubmitCreateMetaTpl" class="btn fw-bold text-white py-2" style="background-color:#E85B14; border-radius:10px;" onclick="enviarNuevaPlantillaOficialMeta()">
+                                                    <i class="fa-solid fa-cloud-arrow-up me-1"></i>Enviar Plantilla a Revisión en Meta
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- PESTAÑA 2: CLONAR PLANTILLA EXISTENTE ENTRE SEDES -->
+                        <div class="tab-pane fade" id="paneClonarMetaTpl" role="tabpanel">
+                            <form id="formMetaTemplateCloner" autocomplete="off">
+                                <div class="row g-3">
+                                    <div class="col-12 col-lg-6">
+                                        <div class="mb-2">
+                                            <label class="form-label small fw-bold mb-1">1. Sede Origen (de donde se copiará la plantilla)</label>
+                                            <div class="input-group input-group-sm">
+                                                <select id="mtcSourceSede" class="form-select" onchange="cargarPlantillasOrigenClonador()"></select>
+                                                <button type="button" class="btn btn-outline-secondary" onclick="cargarPlantillasOrigenClonador()" title="Sincronizar con Meta">
+                                                    <i class="fa-solid fa-rotate"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-2">
+                                            <label class="form-label small fw-bold mb-1">2. Plantilla Oficial a Clonar</label>
+                                            <select id="mtcSourceTemplate" class="form-select form-select-sm" onchange="seleccionarPlantillaClonador()"></select>
+                                        </div>
+                                        <div class="mb-2">
+                                            <label class="form-label small fw-bold mb-1">3. Nombre en Sedes Destino (snake_case)</label>
+                                            <input type="text" id="mtcTargetName" class="form-control form-control-sm font-monospace" oninput="normalizarInputNombrePlantilla(this)">
+                                        </div>
+                                        <div class="p-2.5 px-3 rounded-3 border bg-light">
+                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                                <label class="form-label small fw-bold text-dark mb-0">4. Sedes Destino donde se clonará:</label>
+                                                <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none fw-bold" style="font-size:0.72rem;" onclick="toggleTodasSedesMetaBuilder('mtcTargetSedesList')">Seleccionar todas</button>
+                                            </div>
+                                            <div id="mtcTargetSedesList" class="d-flex flex-wrap gap-2 mt-1"></div>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-lg-6">
+                                        <div class="p-3 rounded-3 border bg-light h-100 d-flex flex-column justify-content-between">
+                                            <div>
+                                                <div class="small fw-bold text-secondary mb-2"><i class="fa-solid fa-eye text-primary me-1"></i>Estructura Detectada a Clonar</div>
+                                                <div id="mtcClonePreviewBox" class="p-3 rounded-3 bg-white border small text-dark" style="min-height:130px;">
+                                                    Seleccione una sede y plantilla origen para inspeccionar su estructura.
+                                                </div>
+                                                <div id="mtcResultsContainer" class="mt-3"></div>
+                                            </div>
+                                            <div class="mt-3 d-grid">
+                                                <button type="button" id="btnSubmitCloneMetaTpl" class="btn btn-primary fw-bold py-2" style="border-radius:10px;" onclick="ejecutarClonacionPlantillaMeta()">
+                                                    <i class="fa-solid fa-clone me-1"></i>Clonar Plantilla en Sedes Seleccionadas
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 5: [IA-04] CONFIGURAR Y EJECUTAR REGLA DRIP REMARKETING EN CAMPAÑA -->
+    <div class="modal fade" id="modalConfigDripCampana" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                <form id="formConfigDripCampana" autocomplete="off">
+                    <input type="hidden" id="mdlDripCampanaId" value="0">
+                    <div class="modal-header bg-dark text-white" style="border-radius: 16px 16px 0 0;">
+                        <div>
+                            <h6 class="modal-title fw-bold mb-0"><i class="fa-solid fa-arrows-spin text-info me-2"></i>Secuencia Drip Remarketing</h6>
+                            <small class="text-white-50" id="mdlDripSubtituloCampana">Seguimiento automático a leídos sin respuesta</small>
+                        </div>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        <div class="form-check form-switch mb-3 p-2.5 px-3 rounded-3 border bg-light">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="mdlDripActivo">
+                            <label class="form-check-label fw-bold small text-dark" for="mdlDripActivo">
+                                Activar Regla Automática en Cron para esta campaña
+                            </label>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-5">
+                                <label class="form-label small fw-bold mb-1">Horas sin respuesta tras LEÍDO</label>
+                                <input type="number" id="mdlDripHoras" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
+                            </div>
+                            <div class="col-7">
+                                <label class="form-label small fw-bold mb-1">Acción al cumplirse el plazo</label>
+                                <select id="mdlDripAccion" class="form-select form-select-sm fw-semibold">
+                                    <option value="ASIGNAR_ASESOR">👤 Asignar a Vendedor (Round-Robin)</option>
+                                    <option value="REIMPACTAR_PLANTILLA">📲 Re-impactar con Plantilla Meta</option>
+                                    <option value="AMBOS">🚀 Re-impactar + Asignar a Vendedor</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold mb-1">Plantilla Oficial de Re-impacto</label>
+                            <select id="mdlDripTemplate" class="form-select form-select-sm"></select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold mb-1">Mensaje de Seguimiento ({{2}})</label>
+                            <textarea id="mdlDripParamTexto" class="form-control form-control-sm" rows="2" placeholder="vimos que leíste nuestra información y queremos saber si podemos ayudarte con precios o disponibilidad..."></textarea>
+                        </div>
+                        <div id="mdlDripResultadoBox" class="mt-2"></div>
+                    </div>
+                    <div class="modal-footer bg-light d-flex justify-content-between">
+                        <button type="button" id="btnEjecutarDripAhoraModal" class="btn btn-outline-primary btn-sm fw-bold" onclick="ejecutarDripCampanaAhora()">
+                            <i class="fa-solid fa-bolt me-1"></i>Evaluar Vencidos Ahora
+                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+                            <button type="button" id="btnGuardarReglaDripModal" class="btn btn-sm fw-bold text-white" style="background-color:#E85B14;" onclick="guardarReglaDripModal()">
+                                <i class="fa-solid fa-floppy-disk me-1"></i>Guardar Regla Drip
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- CONTENEDOR DE TOASTS CORPORATIVOS -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="starfiToastContainer" style="z-index: 1090;"></div>

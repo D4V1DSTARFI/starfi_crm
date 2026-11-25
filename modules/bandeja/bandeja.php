@@ -428,6 +428,88 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
             background-color: #DBEAFE;
             transform: translateY(-1px);
         }
+
+        /* [SPRINT 3: IA-01 & IA-02] Copiloto IA de Resumen 3 Viñetas, Tono y Sentimiento */
+        .sentiment-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            transition: all 0.2s ease;
+        }
+        .sentiment-pill.sent-sm {
+            padding: 2px 8px;
+            font-size: 0.63rem;
+            margin-left: 4px;
+        }
+        .sentiment-pill.sent-SATISFECHO {
+            background-color: #ECFDF5;
+            color: #047857;
+            border: 1px solid #A7F3D0;
+        }
+        .sentiment-pill.sent-NEUTRO {
+            background-color: #F8FAFC;
+            color: #475569;
+            border: 1px solid #CBD5E1;
+        }
+        .sentiment-pill.sent-URGENTE_MOLESTO {
+            background-color: #FEF2F2;
+            color: #DC2626;
+            border: 1px solid #FECACA;
+            animation: pulseSlaRed 1.8s infinite;
+        }
+        .btn-ia-copilot {
+            background: linear-gradient(135deg, #6D28D9 0%, #8B5CF6 100%) !important;
+            color: #ffffff !important;
+            border: none !important;
+            box-shadow: 0 3px 10px rgba(109, 40, 217, 0.22);
+            font-size: 0.76rem !important;
+            padding: 6px 12px !important;
+            transition: all 0.2s ease;
+        }
+        .btn-ia-copilot:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 14px rgba(109, 40, 217, 0.32);
+            color: #ffffff !important;
+        }
+        .btn-ia-copilot:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+        .ia-summary-banner {
+            display: none;
+            background: linear-gradient(135deg, #F5F3FF 0%, #FDF4FF 100%);
+            border-bottom: 1px solid #DDD6FE;
+            padding: 12px 26px;
+            box-shadow: inset 0 -1px 0 rgba(139, 92, 246, 0.12);
+        }
+        .ia-summary-banner.active {
+            display: block;
+        }
+        .ia-summary-list {
+            margin: 6px 0 0 0;
+            padding-left: 18px;
+            font-size: 0.84rem;
+            color: #1E293B;
+            line-height: 1.45;
+        }
+        .ia-summary-list li {
+            margin-bottom: 3px;
+        }
+        .ia-tone-select {
+            width: auto !important;
+            max-width: 175px;
+            border-radius: 999px !important;
+            font-size: 0.75rem !important;
+            font-weight: 600;
+            padding: 4px 28px 4px 12px !important;
+            border-color: #DDD6FE !important;
+            background-color: #F5F3FF !important;
+            color: #5B21B6 !important;
+        }
     </style>
 </head>
 <body>
@@ -541,6 +623,7 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                         <button class="tab" data-target="ventas"><i class="fa-solid fa-shopping-bag me-1"></i> Ventas</button>
                     <?php endif; ?>
                     <button class="tab" data-target="sla-critico" id="tabSlaCritico" title="Conversaciones con más de <?= $a_min_init ?> min sin respuesta humana"><i class="fa-solid fa-bell text-danger me-1"></i> <span id="slaTabCriticoLabel">SLA &gt;<?= $a_min_init ?>m</span> <span class="badge bg-danger ms-1" id="badgeSlaCritico" style="display:none;">0</span></button>
+                    <button class="tab" data-target="urgentes" id="tabSentUrgentes" title="Conversaciones con sentimiento Urgente/Molesto detectado por IA"><i class="fa-solid fa-fire-flame-curved text-danger me-1"></i> Urgentes</button>
                     <button class="tab" data-target="no-leido">No Leído <span class="badge" id="badgeNoLeidos" style="display:none;">0</span></button>
                     <button class="tab" data-target="cerrados">Cerrados</button>
                 </div>
@@ -584,17 +667,40 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                                 <span id="btnQuickDeal" class="deal-header-chip" title="Actualizar Etapa del Embudo y Monto Estimado USD">
                                     <i class="bi bi-cash-coin"></i> <span id="chatDealChipText">Nuevo Lead · $0.00</span>
                                 </span>
+                                <!-- [IA-02] Etiqueta Automática de Sentimiento del Cliente -->
+                                <span id="chatSentimentBadge" class="sentiment-pill sent-NEUTRO" data-sentimiento="NEUTRO" style="cursor:pointer;" title="Sentimiento detectado por IA (clic para cambiar o re-evaluar)">
+                                    😐 <span>Neutro</span>
+                                </span>
                             </div>
                             <span id="chatHeaderPhone">...</span>
                         </div>
                     </div>
                     <div class="conv-actions">
+                        <button type="button" class="btn btn-sm rounded-pill fw-bold btn-ia-copilot me-1" id="btnIaSummarize" title="Resumen ejecutivo en 3 viñetas con IA antes de intervenir">
+                            <i class="fa-solid fa-wand-magic-sparkles me-1"></i> Resumir IA
+                        </button>
                         <button class="icon-btn" title="Reactivar con Plantilla Oficial Meta" id="btnHeaderMetaTemplate" style="color:#E85B14 !important;"><i class="fa-brands fa-whatsapp"></i></button>
                         <button class="icon-btn" title="Ver Perfil 360" id="btnToggleProfile"><i class="fa-solid fa-id-card"></i></button>
                         <button class="icon-btn" title="Reasignar" id="btnReasign"><i class="fa-solid fa-user-plus"></i></button>
                         <button class="icon-btn" title="Cerrar Chat" id="btnCloseChat"><i class="fa-solid fa-check"></i></button>
                     </div>
                 </header>
+
+                <!-- [IA-01] Tarjeta de Resumen Ejecutivo IA en 3 Viñetas -->
+                <div id="iaSummaryCard" class="ia-summary-banner">
+                    <div class="d-flex align-items-center justify-content-between gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge rounded-pill px-2 py-1 text-white" style="background: linear-gradient(135deg, #6D28D9, #8B5CF6); font-size: 0.7rem;">
+                                <i class="fa-solid fa-wand-magic-sparkles me-1"></i> Resumen Ejecutivo IA (3 Viñetas)
+                            </span>
+                            <small class="text-muted fw-semibold" id="iaSummarySourceBadge" style="font-size: 0.7rem;">Gemini IA</small>
+                        </div>
+                        <button type="button" class="btn btn-sm p-0 border-0 text-secondary" id="btnCloseIaSummary" title="Ocultar resumen">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <ul id="iaSummaryBulletsList" class="ia-summary-list"></ul>
+                </div>
 
                 <div class="messages-area" id="messagesArea">
                     <!-- Mensajes cargan aquí -->
@@ -621,12 +727,23 @@ $nombre_agente = $agente['nombre_completo'] ?? 'Usuario';
                     <div id="emojiPicker" class="emoji-picker">
                         <!-- Populated by JS -->
                     </div>
-                    <div class="tools">
+                    <div class="tools d-flex align-items-center flex-wrap gap-1 mb-2">
                         <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,video/mp4,image/webp">
                         <button class="tool-btn" id="btnAttach" title="Adjuntar"><i class="fa-solid fa-paperclip"></i></button>
                         <button class="tool-btn" id="btnTemplates" title="Respuestas Rápidas"><i class="fa-solid fa-bolt"></i></button>
                         <button class="tool-btn" id="btnEmoji" title="Emoji"><i class="fa-regular fa-face-smile"></i></button>
-                        <button class="tool-btn" id="btnInternalNote" title="Nota Interna (Sólo Agentes)" style="margin-left: 10px; color: #9CA3AF;"><i class="fa-solid fa-user-secret"></i></button>
+                        <button class="tool-btn" id="btnInternalNote" title="Nota Interna (Sólo Agentes)" style="margin-left: 6px; color: #9CA3AF;"><i class="fa-solid fa-user-secret"></i></button>
+                        <div class="ms-auto d-inline-flex align-items-center gap-2 flex-wrap">
+                            <select id="selIaTone" class="form-select form-select-sm ia-tone-select" title="Tono deseado para sugerir o mejorar respuesta con IA">
+                                <option value="profesional">🎯 Tono Profesional</option>
+                                <option value="empatico">🤝 Empático / Calmar</option>
+                                <option value="cierre">💼 Cierre Comercial</option>
+                                <option value="conciso">⚡ Breve y Directo</option>
+                            </select>
+                            <button type="button" class="btn btn-sm rounded-pill fw-bold btn-ia-copilot" id="btnIaSuggestReply" title="Sugiere una respuesta al cliente o mejora la redacción/tono de tu borrador">
+                                <i class="fa-solid fa-wand-magic-sparkles me-1"></i> <span id="lblIaSuggestBtn">Sugerir Respuesta IA</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="input-box" id="inputBoxContainer">
                         <textarea placeholder="Escribe un mensaje..." rows="1" id="chatInput"></textarea>

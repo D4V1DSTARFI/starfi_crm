@@ -2121,6 +2121,86 @@ switch ($action) {
         ]);
         break;
 
+    // --- [IA-03] CONSTRUCTOR Y CLONADOR DE PLANTILLAS OFICIALES META (POST /{waba_id}/message_templates) ---
+    case 'list_meta_templates_sede':
+        require_once __DIR__ . '/../../core/services/MetaTemplateService.php';
+        $id_sede_tpl = cfg_resolve_scoped_sede($es_master, $user_sede, $_POST['id_sede'] ?? ($_GET['id_sede'] ?? 0));
+        if ($id_sede_tpl <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Seleccione una sede válida.']);
+            exit;
+        }
+        $fetched = MetaTemplateService::fetchTemplatesForSede($con, $id_sede_tpl);
+        echo json_encode([
+            'status' => $fetched['ok'] ? 'success' : 'error',
+            'id_sede' => $id_sede_tpl,
+            'source' => $fetched['source'] ?? 'LOCAL_CACHE',
+            'waba_id' => $fetched['waba_id'] ?? '',
+            'templates' => $fetched['templates'] ?? [],
+            'warning' => $fetched['meta_error'] ?? null
+        ]);
+        break;
+
+    case 'create_official_meta_template':
+    case 'clone_meta_template_sedes':
+        require_once __DIR__ . '/../../core/services/MetaTemplateService.php';
+        $ag_id_tpl = intval($agente['id'] ?? 1);
+        $rawTargets = $_POST['target_sedes'] ?? [];
+        if (is_string($rawTargets)) {
+            $decT = json_decode($rawTargets, true);
+            $rawTargets = is_array($decT) ? $decT : array_filter(array_map('intval', explode(',', $rawTargets)));
+        }
+        $targetSedes = is_array($rawTargets) ? array_values(array_unique(array_filter(array_map('intval', $rawTargets)))) : [];
+        if (empty($targetSedes) && !empty($_POST['id_sede'])) {
+            $targetSedes = [intval($_POST['id_sede'])];
+        }
+        if (!$es_master) {
+            if ($user_sede <= 0) {
+                cfg_deny_sede_scope('Tu usuario no posee una sede asignada.');
+            }
+            foreach ($targetSedes as $ts) {
+                if ($ts !== $user_sede) {
+                    cfg_deny_sede_scope('Solo usuarios Master pueden publicar o clonar plantillas hacia otras sedes.');
+                }
+            }
+            $targetSedes = [$user_sede];
+        }
+        if (empty($targetSedes)) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona al menos una sede destino.']);
+            exit;
+        }
+
+        $specTpl = [
+            'name'            => $_POST['name'] ?? ($_POST['template_name'] ?? ''),
+            'category'        => $_POST['category'] ?? 'MARKETING',
+            'language'        => $_POST['language'] ?? 'es',
+            'header_format'   => $_POST['header_format'] ?? 'NONE',
+            'header_text'     => $_POST['header_text'] ?? '',
+            'header_example'  => $_POST['header_example'] ?? '',
+            'body'            => $_POST['body'] ?? '',
+            'body_examples'   => isset($_POST['body_examples']) && is_string($_POST['body_examples']) ? (json_decode($_POST['body_examples'], true) ?: []) : ($_POST['body_examples'] ?? []),
+            'footer'          => $_POST['footer'] ?? '',
+            'buttons'         => isset($_POST['buttons']) && is_string($_POST['buttons']) ? (json_decode($_POST['buttons'], true) ?: []) : ($_POST['buttons'] ?? []),
+        ];
+
+        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $ag_id_tpl, $action === 'clone_meta_template_sedes' ? 'CLONAR' : 'CREAR');
+        if (!$pubRes['ok']) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => $pubRes['message'] ?? 'No se pudo publicar la plantilla en Meta.',
+                'results' => $pubRes['results'] ?? []
+            ]);
+            exit;
+        }
+        echo json_encode([
+            'status' => 'success',
+            'message' => "Plantilla '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
+            'template_name' => $pubRes['template_name'],
+            'success_count' => $pubRes['success_count'],
+            'fail_count' => $pubRes['fail_count'],
+            'results' => $pubRes['results']
+        ]);
+        break;
+
     default:
         echo json_encode(['status' => 'error', 'message' => 'Acción no válida.']);
         break;

@@ -48,6 +48,78 @@ function syncServerClock(serverEpoch) {
     }
 }
 
+function normalizeBandejaSentiment(code) {
+    const c = String(code || '').toUpperCase().trim();
+    if (c === 'SATISFECHO' || c === 'POSITIVO') return 'SATISFECHO';
+    if (c === 'URGENTE_MOLESTO' || c === 'URGENTE' || c === 'MOLESTO') return 'URGENTE_MOLESTO';
+    return 'NEUTRO';
+}
+
+function getSentimentMeta(code) {
+    const norm = normalizeBandejaSentiment(code);
+    if (norm === 'SATISFECHO') {
+        return { code: 'SATISFECHO', icon: '😊', label: 'Satisfecho', css: 'sent-SATISFECHO' };
+    }
+    if (norm === 'URGENTE_MOLESTO') {
+        return { code: 'URGENTE_MOLESTO', icon: '🚨', label: 'Urgente/Molesto', css: 'sent-URGENTE_MOLESTO' };
+    }
+    return { code: 'NEUTRO', icon: '😐', label: 'Neutro', css: 'sent-NEUTRO' };
+}
+
+function getSentimentPillHtml(code, isSmall = true) {
+    const m = getSentimentMeta(code);
+    const sizeCls = isSmall ? 'sent-sm' : '';
+    return `<span class="sentiment-pill ${sizeCls} ${m.css}" title="Sentimiento IA: ${escapeHtmlBandeja(m.label)}">${m.icon} ${escapeHtmlBandeja(m.label)}</span>`;
+}
+
+function updateHeaderSentimentBadge(code) {
+    const badge = $('#chatSentimentBadge');
+    if (!badge.length) return;
+    const m = getSentimentMeta(code);
+    badge.removeClass('sent-SATISFECHO sent-NEUTRO sent-URGENTE_MOLESTO').addClass(m.css);
+    badge.attr('data-sentimiento', m.code);
+    badge.html(`${m.icon} <span>${escapeHtmlBandeja(m.label)}</span>`);
+    if (activeChatId) {
+        const $item = $(`#chatList .chat-item[data-id="${activeChatId}"]`);
+        if ($item.length) {
+            $item.attr('data-sentimiento', m.code);
+            $item.find('.sentiment-slot').html(getSentimentPillHtml(m.code, true));
+        }
+    }
+}
+
+function renderIaSummaryCard(bullets, sourceLabel) {
+    const card = $('#iaSummaryCard');
+    const list = $('#iaSummaryBulletsList');
+    if (!card.length || !list.length) return;
+    if (!Array.isArray(bullets) || bullets.length === 0) {
+        card.removeClass('active');
+        list.empty();
+        return;
+    }
+    list.empty();
+    bullets.slice(0, 3).forEach(function (b) {
+        const clean = String(b || '').replace(/^[\s\-\*•\d\.\)]+/, '').trim();
+        if (clean) {
+            list.append(`<li>${escapeHtmlBandeja(clean)}</li>`);
+        }
+    });
+    const srcTag = sourceLabel === 'GEMINI_IA' ? 'Gemini IA' : 'Análisis Inteligente CRM';
+    $('#iaSummarySourceBadge').text(srcTag);
+    card.addClass('active');
+}
+
+function refreshIaSuggestBtnLabel() {
+    const lbl = $('#lblIaSuggestBtn');
+    if (!lbl.length) return;
+    const hasDraft = (($('#chatInput').val() || '').trim().length > 0);
+    if (hasDraft) {
+        lbl.text('Mejorar Tono IA');
+    } else {
+        lbl.text('Sugerir Respuesta IA');
+    }
+}
+
 function getServerNowEpoch() {
     return Math.floor(Date.now() / 1000) + serverClockOffsetSec;
 }
@@ -135,6 +207,146 @@ $(document).ready(function () {
             e.preventDefault();
             sendMessage();
         }
+    });
+
+    $('#chatInput').on('input', function () {
+        refreshIaSuggestBtnLabel();
+    });
+
+    // [IA-01] Botón Resumir Conversación con IA en 3 Viñetas
+    $('#btnIaSummarize').on('click', function () {
+        const $btn = $(this);
+        if (!activeChatId || activeChatId <= 0) {
+            Swal.fire({ icon: 'warning', text: 'Selecciona una conversación activa primero para resumirla.' });
+            return;
+        }
+        if (!acquireBandejaLock('ia_summarize', $btn, '<i class="fa-solid fa-spinner fa-spin me-1"></i> Resumiendo...')) {
+            return;
+        }
+        $.ajax({
+            url: 'back_bandeja.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { action: 'ia_summarize_chat', conversacion_id: activeChatId },
+            success: function (res) {
+                if (res && res.status === 'success' && Array.isArray(res.bullets)) {
+                    renderIaSummaryCard(res.bullets, res.source);
+                    if (res.sentimiento) {
+                        updateHeaderSentimentBadge(res.sentimiento);
+                    }
+                } else {
+                    Swal.fire('Aviso IA', (res && res.message) ? res.message : 'No se pudo generar el resumen ejecutivo.', 'warning');
+                }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de red al consultar el Copiloto IA.', 'error');
+            },
+            complete: function () {
+                releaseBandejaLock('ia_summarize', $btn, '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> Resumir IA');
+            }
+        });
+    });
+
+    $('#btnCloseIaSummary').on('click', function () {
+        $('#iaSummaryCard').removeClass('active');
+    });
+
+    // [IA-02] Botón Sugerir Respuesta / Mejorar Tono con IA
+    $('#btnIaSuggestReply').on('click', function () {
+        const $btn = $(this);
+        if (!activeChatId || activeChatId <= 0) {
+            Swal.fire({ icon: 'warning', text: 'Selecciona una conversación activa primero.' });
+            return;
+        }
+        const currentDraft = ($('#chatInput').val() || '').trim();
+        const selectedTone = $('#selIaTone').val() || 'profesional';
+        const loadingLbl = currentDraft.length > 0
+            ? '<i class="fa-solid fa-spinner fa-spin me-1"></i> Mejorando tono...'
+            : '<i class="fa-solid fa-spinner fa-spin me-1"></i> Redactando...';
+
+        if (!acquireBandejaLock('ia_suggest_reply', $btn, loadingLbl)) {
+            return;
+        }
+
+        $.ajax({
+            url: 'back_bandeja.php',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'ia_suggest_or_improve',
+                conversacion_id: activeChatId,
+                draft: currentDraft,
+                tone: selectedTone
+            },
+            success: function (res) {
+                if (res && res.status === 'success' && res.suggestion) {
+                    $('#chatInput').val(res.suggestion).focus();
+                    if (res.sentimiento) {
+                        updateHeaderSentimentBadge(res.sentimiento);
+                    }
+                    Swal.fire({
+                        toast: true,
+                        position: 'top-end',
+                        icon: 'success',
+                        title: res.mode === 'IMPROVE_TONE' ? '✨ Tono mejorado con IA' : '🪄 Respuesta sugerida por IA',
+                        showConfirmButton: false,
+                        timer: 2200
+                    });
+                } else {
+                    Swal.fire('Aviso IA', (res && res.message) ? res.message : 'No se pudo sugerir una respuesta.', 'warning');
+                }
+            },
+            error: function () {
+                Swal.fire('Error', 'Fallo de conexión con el Copiloto IA.', 'error');
+            },
+            complete: function () {
+                releaseBandejaLock('ia_suggest_reply', $btn, '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> <span id="lblIaSuggestBtn">Sugerir Respuesta IA</span>');
+                refreshIaSuggestBtnLabel();
+            }
+        });
+    });
+
+    // [IA-02] Clic en insignia de Sentimiento para re-evaluar o etiquetar manualmente
+    $('#chatSentimentBadge').on('click', function () {
+        if (!activeChatId || activeChatId <= 0 || bandejaInFlight.has('ia_set_sentiment')) return;
+        const curSent = $(this).attr('data-sentimiento') || 'NEUTRO';
+        Swal.fire({
+            title: 'Sentimiento del Cliente (IA)',
+            html: `
+                <p class="text-muted small mb-2">El sistema clasifica y etiqueta automáticamente cada mensaje entrante. También puedes re-evaluar o ajustar la etiqueta:</p>
+                <select id="swalSelectSentiment" class="form-select">
+                    <option value="AUTO">🤖 Re-evaluar automáticamente con IA</option>
+                    <option value="SATISFECHO" ${curSent === 'SATISFECHO' ? 'selected' : ''}>😊 Satisfecho</option>
+                    <option value="NEUTRO" ${curSent === 'NEUTRO' ? 'selected' : ''}>😐 Neutro</option>
+                    <option value="URGENTE_MOLESTO" ${curSent === 'URGENTE_MOLESTO' ? 'selected' : ''}>🚨 Urgente/Molesto</option>
+                </select>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Aplicar Etiqueta',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#6D28D9',
+            preConfirm: function () {
+                return document.getElementById('swalSelectSentiment').value;
+            }
+        }).then(function (r) {
+            if (!r.isConfirmed) return;
+            if (!acquireBandejaLock('ia_set_sentiment')) return;
+            $.post('back_bandeja.php', {
+                action: 'ia_set_sentiment',
+                conversacion_id: activeChatId,
+                sentimiento: r.value
+            }, function (res) {
+                if (res && res.status === 'success') {
+                    updateHeaderSentimentBadge(res.sentimiento);
+                    if ($('#modalProfile360').hasClass('show')) {
+                        loadProfile360();
+                    }
+                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Sentimiento: ${res.sentimiento_label}`, showConfirmButton: false, timer: 2000 });
+                }
+            }, 'json').always(function () {
+                releaseBandejaLock('ia_set_sentiment');
+            });
+        });
     });
 
     // Búsqueda híbrida: filtrado visual inmediato + búsqueda en servidor (con debounce de 350ms)
@@ -941,12 +1153,14 @@ function renderChatList(chats, append = false, has_more = false) {
         const safePhone = escapeHtmlBandeja(chat.numero_whatsapp || '');
         const safeSede = escapeHtmlBandeja(chat.nombre_sede || 'Sede Principal');
         const safeDealEtapa = escapeHtmlBandeja(chat.deal_etapa || '');
+        const safeSent = escapeHtmlBandeja(normalizeBandejaSentiment(chat.sentimiento_cliente || 'NEUTRO'));
+        const sentimentBadgeHtml = getSentimentPillHtml(safeSent, true);
         const safeAvatar = escapeHtmlBandeja(getLocalAvatarSvg(name));
         const safeFullDate = escapeHtmlBandeja(formatFullDateTime(lastTime));
         const safeShortDate = escapeHtmlBandeja(formatChatListDate(lastTime));
 
         let html = `
-            <article class="chat-item ${isActiveClass} ${stageClass}" style="cursor: pointer;" data-id="${parseInt(chat.id, 10) || 0}" data-cliente-id="${parseInt(chat.id_cliente, 10) || 0}" data-name="${safeName}" data-phone="${safePhone}" data-sede="${safeSede}" data-asesor="${safeAsesor}" data-no-leidos="${unreadNum}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${safeDealEtapa}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? parseFloat(chat.deal_monto_usd) : ''}">
+            <article class="chat-item ${isActiveClass} ${stageClass}" style="cursor: pointer;" data-id="${parseInt(chat.id, 10) || 0}" data-cliente-id="${parseInt(chat.id_cliente, 10) || 0}" data-name="${safeName}" data-phone="${safePhone}" data-sede="${safeSede}" data-asesor="${safeAsesor}" data-no-leidos="${unreadNum}" data-sla-since="${slaSince}" data-sla-replied="${slaReplied}" data-last-cli="${lastCliEp}" data-deal-etapa="${safeDealEtapa}" data-deal-monto="${chat.deal_monto_usd !== null && chat.deal_monto_usd !== undefined ? parseFloat(chat.deal_monto_usd) : ''}" data-sentimiento="${safeSent}">
                 <div class="chat-avatar">
                     <img src="${safeAvatar}" alt="Avatar">
                 </div>
@@ -958,6 +1172,7 @@ function renderChatList(chats, append = false, has_more = false) {
                     <div style="font-size: 0.75rem; margin-top: 2px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
                         <span class="badge bg-dark rounded-pill px-2 py-0.5 text-white" style="font-size: 0.65rem; background-color: #37414A !important; font-family: var(--font-heading); font-weight: 500;"><i class="fa-solid fa-store me-1"></i> ${safeSede}</span>
                         <span class="sla-slot"></span>
+                        <span class="sentiment-slot">${sentimentBadgeHtml}</span>
                         ${tipoBadge}
                         ${estadoBadge}
                         ${dealBadgeHtml}
@@ -1222,10 +1437,15 @@ function selectChat(id, cliente_id, name, phone, nombre_sede, asesor, no_leidos)
         const dEtapa = activeItem.attr('data-deal-etapa') || '';
         const dMonto = activeItem.attr('data-deal-monto');
         activeDealInfo = dEtapa ? { etapa: dEtapa, monto_estimado_usd: parseFloat(dMonto || 0), titulo: '' } : null;
+        updateHeaderSentimentBadge(activeItem.attr('data-sentimiento') || 'NEUTRO');
     } else {
         activeWindowExpiresAtEpoch = 0;
         activeDealInfo = null;
+        updateHeaderSentimentBadge('NEUTRO');
     }
+    $('#iaSummaryCard').removeClass('active');
+    $('#iaSummaryBulletsList').empty();
+    refreshIaSuggestBtnLabel();
     updateActiveWindow24hUI();
     updateHeaderDealChip(activeDealInfo);
 
@@ -1404,6 +1624,12 @@ function loadMessages(id, scrollToBottom = true) {
                 if (typeof response.deal !== 'undefined') {
                     activeDealInfo = response.deal || null;
                     updateHeaderDealChip(activeDealInfo);
+                }
+                if (response.sentimiento) {
+                    updateHeaderSentimentBadge(response.sentimiento);
+                }
+                if (scrollToBottom && Array.isArray(response.resumen_ia_bullets) && response.resumen_ia_bullets.length === 3) {
+                    renderIaSummaryCard(response.resumen_ia_bullets, 'GEMINI_IA');
                 }
                 renderMessages(response.data, scrollToBottom);
                 if (currentFilter === 'no-leido' || $('#chatList').find('.chat-item[data-id="' + id + '"] div[style*="background:#e85b14"]').length > 0) {

@@ -29,13 +29,27 @@ if (!function_exists('starfi_db_schema_hash')) {
     }
 }
 
+if (!function_exists('starfi_tx_is_active')) {
+    function starfi_tx_is_active($con) {
+        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
+        return !empty($GLOBALS['__starfi_active_tx'][$oid]);
+    }
+    function starfi_tx_set_active($con, $active) {
+        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
+        $GLOBALS['__starfi_active_tx'][$oid] = (bool)$active;
+    }
+}
+
 if (!function_exists('starfi_ensure_sprint2_schema')) {
     function starfi_ensure_sprint2_schema($con) {
         if (!$con) {
             return;
         }
+        if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
+            return;
+        }
         $dbHash = starfi_db_schema_hash($con);
-        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint2_schema_v4_' . $dbHash . '.flag';
+        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint3_schema_v5_' . $dbHash . '.flag';
         if (@file_exists($flag) && (time() - @filemtime($flag)) < 86400) {
             $chkTbl = @mysqli_query($con, "SHOW TABLES LIKE 'pipeline_oportunidades'");
             if ($chkTbl && mysqli_num_rows($chkTbl) > 0) {
@@ -64,6 +78,33 @@ if (!function_exists('starfi_ensure_sprint2_schema')) {
         $r_idx_u = @mysqli_query($con, "SHOW INDEX FROM `usuario` WHERE Key_name = 'idx_sede_online_rr'");
         if ($r_idx_u && mysqli_num_rows($r_idx_u) === 0) {
             @mysqli_query($con, "ALTER TABLE `usuario` ADD INDEX `idx_sede_online_rr` (`id_sede`, `estado`, `disponible_chat`, `ultima_actividad`)");
+        }
+
+        // 1b. Columnas Sprint 3 IA ([IA-01] Resumen Ejecutivo y [IA-02] Sentimiento Cliente) en `conversaciones`
+        $c_cols = [];
+        $res_c = @mysqli_query($con, "SHOW COLUMNS FROM `conversaciones`");
+        if ($res_c) {
+            while ($rc = mysqli_fetch_assoc($res_c)) {
+                $c_cols[$rc['Field']] = true;
+            }
+        }
+        if (!empty($c_cols)) {
+            if (!isset($c_cols['sentimiento_cliente'])) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD COLUMN `sentimiento_cliente` VARCHAR(30) NOT NULL DEFAULT 'NEUTRO'");
+            }
+            if (!isset($c_cols['sentimiento_actualizado'])) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD COLUMN `sentimiento_actualizado` DATETIME DEFAULT NULL");
+            }
+            if (!isset($c_cols['resumen_ia'])) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD COLUMN `resumen_ia` TEXT DEFAULT NULL");
+            }
+            if (!isset($c_cols['resumen_ia_actualizado'])) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD COLUMN `resumen_ia_actualizado` DATETIME DEFAULT NULL");
+            }
+            $r_idx_sent = @mysqli_query($con, "SHOW INDEX FROM `conversaciones` WHERE Key_name = 'idx_sede_sentimiento'");
+            if ($r_idx_sent && mysqli_num_rows($r_idx_sent) === 0) {
+                @mysqli_query($con, "ALTER TABLE `conversaciones` ADD INDEX `idx_sede_sentimiento` (`id_sede`, `sentimiento_cliente`, `estado`)");
+            }
         }
 
         // 2. Índice compuesto para Ventana Meta 24h ([COM-01]) y Semáforo SLA ([COM-04])
@@ -107,17 +148,6 @@ if (!function_exists('starfi_ensure_sprint2_schema')) {
         @mysqli_query($con, "INSERT IGNORE INTO `config_sla` (`id_sede`, `verde_max_min`, `amarillo_max_min`, `round_robin_online_min`, `alerta_sonora_activa`) VALUES (0, 5, 15, 5, 1)");
 
         @file_put_contents($flag, date('Y-m-d H:i:s'));
-    }
-}
-
-if (!function_exists('starfi_tx_is_active')) {
-    function starfi_tx_is_active($con) {
-        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
-        return !empty($GLOBALS['__starfi_active_tx'][$oid]);
-    }
-    function starfi_tx_set_active($con, $active) {
-        $oid = function_exists('spl_object_id') ? spl_object_id($con) : 0;
-        $GLOBALS['__starfi_active_tx'][$oid] = (bool)$active;
     }
 }
 

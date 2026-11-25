@@ -805,6 +805,12 @@ function save_mensaje($con, $id_mensaje_meta, $telefono_cliente, $timestamp, $cu
         $stmt_msg->close();
     }
 
+    // 4.05 [IA-02] ETIQUETADO AUTOMÁTICO DE SENTIMIENTO DEL CLIENTE (Satisfecho, Neutro, Urgente/Molesto)
+    if ($tipo_bd === 'TEXTO' && trim((string)$cuerpo_mensaje) !== '') {
+        require_once __DIR__ . '/core/IaConnector.php';
+        @IaConnector::actualizarSentimientoConversacion($con, $id_conversacion, null);
+    }
+
     // 4.1 ECOSISTEMA DE CAMPAÑAS DE DIFUSIÓN: REGISTRAR RESPUESTA DEL CLIENTE (CONVERSIÓN)
     $tel_clean_camp = preg_replace('/[^0-9]/', '', $telefono_cliente);
     $tel_tail = strlen($tel_clean_camp) >= 10 ? substr($tel_clean_camp, -10) : $tel_clean_camp;

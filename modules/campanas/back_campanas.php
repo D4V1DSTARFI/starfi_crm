@@ -7,6 +7,9 @@ date_default_timezone_set('America/Caracas');
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../core/crm_sprint2_helper.php';
 require_once __DIR__ . '/../../core/audit.php';
+require_once __DIR__ . '/../../core/IaConnector.php';
+require_once __DIR__ . '/../../core/services/MetaTemplateService.php';
+require_once __DIR__ . '/../../core/services/DripRemarketingService.php';
 
 if (!defined('CAMPANAS_LIB_ONLY')) {
     require_once __DIR__ . '/../../core/auth.php';
@@ -217,8 +220,10 @@ function ensureCampaignTables(mysqli $con) {
     if (function_exists('starfi_tx_is_active') && starfi_tx_is_active($con)) {
         return;
     }
-    $lock_file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'starfi_crm_camp_schema_v5.ok';
+    MetaTemplateService::ensureTable($con);
+    $lock_file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'starfi_crm_camp_schema_v6.ok';
     if (@file_exists($lock_file) && (time() - @filemtime($lock_file)) < 86400) {
+        DripRemarketingService::ensureSchema($con);
         return;
     }
 
@@ -403,6 +408,8 @@ function ensureCampaignTables(mysqli $con) {
         costo_utility_usd DECIMAL(10,4) NOT NULL DEFAULT 0.0150,
         actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    DripRemarketingService::ensureSchema($con);
 
     @file_put_contents($lock_file, (string)time());
 }
@@ -1825,6 +1832,19 @@ switch ($action) {
         }
         $id_campana = intval($stmt->insert_id);
         $stmt->close();
+
+        // [IA-04] Persistir Regla de Secuencia Automática de Remarketing (Drip Campaign) si fue configurada en el Wizard
+        if (isset($_POST['drip_activo']) && intval($_POST['drip_activo']) === 1) {
+            DripRemarketingService::saveCampaignDripRule($con, $id_campana, [
+                'drip_activo'            => 1,
+                'drip_horas_espera'      => max(1, min(720, intval($_POST['drip_horas_espera'] ?? 24))),
+                'drip_accion'            => (string)($_POST['drip_accion'] ?? 'AMBOS'),
+                'drip_template_name'     => (string)($_POST['drip_template_name'] ?? $template_name),
+                'drip_template_language' => (string)($_POST['drip_template_language'] ?? $template_language),
+                'drip_template_category' => (string)($_POST['drip_template_category'] ?? 'MARKETING'),
+                'drip_params_json'       => (string)($_POST['drip_params_json'] ?? ''),
+            ], $id_usuario);
+        }
 
         $stmt_d = $con->prepare(
             'INSERT INTO campanas_difusion_destinatarios
@@ -3929,6 +3949,213 @@ switch ($action) {
             'status' => 'success',
             'campana' => $campana,
             'destinatarios' => $destinatarios
+        ]);
+        break;
+
+    // =========================================================================
+    // 9. [IA-03] CONSTRUCTOR Y CLONADOR DE PLANTILLAS OFICIALES META (POST /{waba_id}/message_templates)
+    // =========================================================================
+    case 'list_all_waba_templates':
+        $id_sede_req = intval($_POST['id_sede'] ?? ($_GET['id_sede'] ?? 0));
+        if (!$es_global) {
+            if ($id_sede_usuario <= 0 || ($id_sede_req > 0 && $id_sede_req !== $id_sede_usuario)) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'Acceso denegado: solo puedes consultar plantillas de tu sede asignada.']);
+                exit;
+            }
+            $id_sede_req = $id_sede_usuario;
+        }
+        if ($id_sede_req <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona una sede válida.']);
+            exit;
+        }
+        $resTpls = MetaTemplateService::fetchTemplatesForSede($con, $id_sede_req);
+        echo json_encode([
+            'status' => $resTpls['ok'] ? 'success' : 'error',
+            'id_sede' => $id_sede_req,
+            'source' => $resTpls['source'] ?? 'LOCAL_CACHE',
+            'waba_id' => $resTpls['waba_id'] ?? '',
+            'templates' => $resTpls['templates'] ?? [],
+            'warning' => $resTpls['meta_error'] ?? null
+        ]);
+        break;
+
+    case 'create_official_meta_template':
+    case 'clone_meta_template_sedes':
+        $rawTargets = $_POST['target_sedes'] ?? [];
+        if (is_string($rawTargets)) {
+            $decT = json_decode($rawTargets, true);
+            $rawTargets = is_array($decT) ? $decT : array_filter(array_map('intval', explode(',', $rawTargets)));
+        }
+        $targetSedes = is_array($rawTargets) ? array_values(array_unique(array_filter(array_map('intval', $rawTargets)))) : [];
+        if (empty($targetSedes) && !empty($_POST['id_sede'])) {
+            $targetSedes = [intval($_POST['id_sede'])];
+        }
+
+        if (!$es_global) {
+            if ($id_sede_usuario <= 0) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'Tu usuario no posee una sede asignada.']);
+                exit;
+            }
+            foreach ($targetSedes as $ts) {
+                if ($ts !== $id_sede_usuario) {
+                    http_response_code(403);
+                    echo json_encode(['status' => 'error', 'message' => 'Acceso denegado: solo usuarios Master pueden clonar o crear plantillas en otras sedes.']);
+                    exit;
+                }
+            }
+            $targetSedes = [$id_sede_usuario];
+        }
+
+        if (empty($targetSedes)) {
+            echo json_encode(['status' => 'error', 'message' => 'Selecciona al menos una sede destino.']);
+            exit;
+        }
+
+        $specTpl = [
+            'name'           => $_POST['name'] ?? ($_POST['template_name'] ?? ''),
+            'category'       => $_POST['category'] ?? 'MARKETING',
+            'language'       => $_POST['language'] ?? 'es',
+            'header_format'  => $_POST['header_format'] ?? 'NONE',
+            'header_text'    => $_POST['header_text'] ?? '',
+            'header_example' => $_POST['header_example'] ?? '',
+            'body'           => $_POST['body'] ?? '',
+            'body_examples'  => isset($_POST['body_examples']) && is_string($_POST['body_examples']) ? (json_decode($_POST['body_examples'], true) ?: []) : ($_POST['body_examples'] ?? []),
+            'footer'         => $_POST['footer'] ?? '',
+            'buttons'        => isset($_POST['buttons']) && is_string($_POST['buttons']) ? (json_decode($_POST['buttons'], true) ?: []) : ($_POST['buttons'] ?? []),
+        ];
+
+        $modoOp = ($action_init === 'clone_meta_template_sedes' || ($_POST['action'] ?? '') === 'clone_meta_template_sedes') ? 'CLONAR' : 'CREAR';
+        $pubRes = MetaTemplateService::publishTemplateToSedes($con, $targetSedes, $specTpl, $id_usuario, $modoOp);
+        if (!$pubRes['ok']) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => $pubRes['message'] ?? 'Meta rechazó la creación de la plantilla.',
+                'results' => $pubRes['results'] ?? []
+            ]);
+            exit;
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => "Plantilla oficial '{$pubRes['template_name']}' procesada en {$pubRes['success_count']} sede(s).",
+            'template_name' => $pubRes['template_name'],
+            'success_count' => $pubRes['success_count'],
+            'fail_count' => $pubRes['fail_count'],
+            'results' => $pubRes['results']
+        ]);
+        break;
+
+    case 'ia_draft_template_body':
+        $id_sede_ai = !$es_global && $id_sede_usuario > 0 ? $id_sede_usuario : intval($_POST['id_sede'] ?? 0);
+        $objetivo = trim((string)($_POST['objetivo'] ?? 'Promoción especial y atención inmediata'));
+        $categoria = strtoupper(trim((string)($_POST['category'] ?? 'MARKETING')));
+        $cfgIa = $id_sede_ai > 0 ? IaConnector::obtenerConfigIaSede($con, $id_sede_ai, false) : null;
+        $draftBody = '';
+        $sourceAi = 'LOCAL_SMART';
+
+        if ($cfgIa !== null) {
+            $sysCopy = "Eres experto en plantillas oficiales de WhatsApp Business Cloud API v23.0. Redacta únicamente el cuerpo (BODY) en español para categoría {$categoria}, usando las variables {{1}} (nombre del cliente), {{2}} (nombre de la sede) y {{3}} (detalle/beneficio). Regla estricta Meta: NO inicies ni termines el texto con una variable {{n}}. Máximo 380 caracteres. Devuelve SOLO el texto plano.";
+            $usrCopy = "Objetivo de la plantilla: {$objetivo}";
+            $aiCall = IaConnector::ejecutarPromptCopilotoSede($cfgIa, $sysCopy, $usrCopy, 0.35);
+            if (!empty($aiCall['success']) && !empty($aiCall['text'])) {
+                $cand = trim((string)$aiCall['text'], " \t\n\r\0\x0B\"'");
+                if (mb_strlen($cand, 'UTF-8') >= 25) {
+                    $draftBody = $cand;
+                    $sourceAi = 'GEMINI_IA';
+                }
+            }
+        }
+
+        if ($draftBody === '') {
+            if ($categoria === 'UTILITY') {
+                $draftBody = "Estimado(a) {{1}}, desde {{2}} te informamos sobre {{3}}. Si deseas asistencia personalizada de nuestro equipo, responde a este mensaje.";
+            } else {
+                $draftBody = "Hola {{1}}, en {{2}} tenemos disponible para ti {{3}} con atención inmediata. Responde este mensaje para enviarte cotización hoy mismo.";
+            }
+        }
+
+        registrar_auditoria(
+            'campanas',
+            'IA_REDACTAR_PLANTILLA',
+            "Borrador IA generado para constructor de plantillas Meta ({$sourceAi})",
+            null,
+            ['categoria' => $categoria, 'source' => $sourceAi],
+            $con,
+            $id_usuario,
+            $id_sede_ai > 0 ? $id_sede_ai : null
+        );
+
+        echo json_encode([
+            'status' => 'success',
+            'body' => $draftBody,
+            'source' => $sourceAi
+        ]);
+        break;
+
+    // =========================================================================
+    // 10. [IA-04] SECUENCIAS AUTOMÁTICAS DE REMARKETING (DRIP CAMPAIGNS)
+    // =========================================================================
+    case 'save_campaign_drip_rule':
+        $id_campana = intval($_POST['id_campana'] ?? 0);
+        if ($id_campana <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'ID de campaña inválido.']);
+            exit;
+        }
+        $campDrip = obtenerCampanaPorId($con, $id_campana);
+        if (!$campDrip) {
+            echo json_encode(['status' => 'error', 'message' => 'Campaña no encontrada.']);
+            exit;
+        }
+        if (!$es_global && $id_sede_usuario > 0 && intval($campDrip['id_sede']) !== $id_sede_usuario) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado a campaña de otra sede.']);
+            exit;
+        }
+
+        $resSaveDrip = DripRemarketingService::saveCampaignDripRule($con, $id_campana, [
+            'drip_activo'            => intval($_POST['drip_activo'] ?? 0),
+            'drip_horas_espera'      => intval($_POST['drip_horas_espera'] ?? 24),
+            'drip_accion'            => (string)($_POST['drip_accion'] ?? 'ASIGNAR_ASESOR'),
+            'drip_template_name'     => (string)($_POST['drip_template_name'] ?? ($campDrip['template_name'] ?? 'starfi_difusion_directa')),
+            'drip_template_language' => (string)($_POST['drip_template_language'] ?? ($campDrip['template_language'] ?? 'es')),
+            'drip_template_category' => (string)($_POST['drip_template_category'] ?? 'MARKETING'),
+            'drip_params_json'       => (string)($_POST['drip_params_json'] ?? ''),
+        ], $id_usuario);
+
+        if (!$resSaveDrip['ok']) {
+            echo json_encode(['status' => 'error', 'message' => $resSaveDrip['message'] ?? 'No se pudo guardar la regla Drip.']);
+            exit;
+        }
+        echo json_encode([
+            'status' => 'success',
+            'message' => $resSaveDrip['message'],
+            'rule' => $resSaveDrip['rule']
+        ]);
+        break;
+
+    case 'run_campaign_drip_now':
+        $id_campana = intval($_POST['id_campana'] ?? 0);
+        if ($id_campana <= 0) {
+            echo json_encode(['status' => 'error', 'message' => 'ID de campaña inválido.']);
+            exit;
+        }
+        $campRun = obtenerCampanaPorId($con, $id_campana);
+        if (!$campRun) {
+            echo json_encode(['status' => 'error', 'message' => 'Campaña no encontrada.']);
+            exit;
+        }
+        if (!$es_global && $id_sede_usuario > 0 && intval($campRun['id_sede']) !== $id_sede_usuario) {
+            http_response_code(403);
+            echo json_encode(['status' => 'error', 'message' => 'Acceso denegado a campaña de otra sede.']);
+            exit;
+        }
+        $runRes = DripRemarketingService::processDueDripSequences($con, $id_campana, 50, true);
+        echo json_encode([
+            'status' => 'success',
+            'message' => "Evaluación Drip completada: {$runRes['processed']} procesado(s) ({$runRes['reimpacted']} re-impactados, {$runRes['assigned']} asignados a vendedor).",
+            'summary' => $runRes
         ]);
         break;
 

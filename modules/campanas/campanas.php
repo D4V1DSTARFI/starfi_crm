@@ -540,7 +540,11 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
 
                         <!-- Botones de Acción Rápida -->
                         <div class="col-12 col-lg-2 text-lg-end">
-                            <button id="btnAbrirFlujoSede" class="btn btn-outline-light btn-sm w-100 mb-2 fw-semibold"
+                            <button type="button" id="btnAbrirMetaBuilderTop" class="btn btn-light btn-sm w-100 mb-1.5 fw-bold text-dark" style="margin-bottom: 6px;"
+                                onclick="abrirModalMetaTemplateBuilder('CREAR')">
+                                <i class="fa-solid fa-layer-group text-primary me-1"></i> Crear / Clonar Plantilla
+                            </button>
+                            <button id="btnAbrirFlujoSede" class="btn btn-outline-light btn-sm w-100 mb-1.5 fw-semibold" style="margin-bottom: 6px;"
                                 onclick="abrirModalFlujoSede()">
                                 <i class="fa-solid fa-sliders me-1"></i> Límite y Ritmo Diario
                             </button>
@@ -627,7 +631,12 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                                 value="Gran Inauguración Carpintero Express Boleíta - 16 Nov">
                                         </div>
                                         <div class="col-12 col-md-5">
-                                            <label class="form-label small fw-bold text-secondary mb-1">Plantilla Oficial Meta</label>
+                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                                <label class="form-label small fw-bold text-secondary mb-0">Plantilla Oficial Meta</label>
+                                                <button type="button" id="btnCrearClonarPlantillaStep1" class="btn btn-link btn-sm p-0 text-decoration-none fw-bold" style="font-size: 0.72rem; color: #6D28D9;" onclick="abrirModalMetaTemplateBuilder('CREAR')" title="Crear o clonar plantillas oficiales Meta entre sedes">
+                                                    <i class="fa-solid fa-plus-circle me-1"></i>Crear / Clonar
+                                                </button>
+                                            </div>
                                             <select id="campTemplate" class="form-select form-select-sm"
                                                 onchange="cambiarPlantillaSeleccionada()">
                                                 <option value="starfi_difusion_directa" data-lang="es">
@@ -932,6 +941,53 @@ $es_global = ($id_agente === 1 || $rol_agente === 'MASTER' || $rol_agente === 'M
                                         <div class="mt-2 pt-2 border-top border-warning-subtle small"
                                             style="font-size: 0.78rem; color: #7C2D12;" id="lblResumenFlujoYPresupuesto">
                                             Seleccione destinatarios para proyectar el costo total y el cronograma de tandas diarias.
+                                        </div>
+                                    </div>
+
+                                    <!-- [IA-04] Secuencias Automáticas de Remarketing (Drip Campaigns) -->
+                                    <div class="p-3 rounded-3 border mb-3" style="background: linear-gradient(135deg, #F5F3FF 0%, #EFF6FF 100%); border-color: #C4B5FD !important;">
+                                        <div class="d-flex align-items-center justify-content-between gap-2">
+                                            <div class="form-check form-switch mb-0">
+                                                <input class="form-check-input" type="checkbox" id="campDripActivo" onchange="toggleBoxCampDripConfig()">
+                                                <label class="form-check-label small fw-bold text-dark" for="campDripActivo" style="font-size: 0.79rem;">
+                                                    <i class="fa-solid fa-arrows-spin text-primary me-1"></i>Secuencia Drip Remarketing (Leídos sin responder)
+                                                </label>
+                                            </div>
+                                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.66rem;">Auto Cron</span>
+                                        </div>
+                                        <small class="text-muted d-block mt-1" style="font-size: 0.72rem;">
+                                            Re-impacta o asigna a un vendedor automáticamente a quienes abran la campaña (doble check azul) pero no respondan en <strong>X horas</strong>.
+                                        </small>
+
+                                        <div id="boxCampDripConfig" class="mt-2 pt-2 border-top d-none" style="border-color: #DDD6FE !important;">
+                                            <div class="row g-2 mb-2">
+                                                <div class="col-5">
+                                                    <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Esperar tras lectura (Horas)</label>
+                                                    <input type="number" id="campDripHoras" class="form-control form-control-sm fw-bold" min="1" max="720" value="24">
+                                                </div>
+                                                <div class="col-7">
+                                                    <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Acción Automática en Cron</label>
+                                                    <select id="campDripAccion" class="form-select form-select-sm fw-semibold" onchange="toggleBoxCampDripConfig()">
+                                                        <option value="ASIGNAR_ASESOR">👤 Asignar a Vendedor (Round-Robin)</option>
+                                                        <option value="REIMPACTAR_PLANTILLA">📲 Re-impactar con Plantilla Meta</option>
+                                                        <option value="AMBOS" selected>🚀 Re-impactar + Asignar a Vendedor</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div id="boxCampDripTemplateWrap">
+                                                <div class="row g-2">
+                                                    <div class="col-12 col-sm-5">
+                                                        <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Plantilla Seguimiento</label>
+                                                        <select id="campDripTemplate" class="form-select form-select-sm">
+                                                            <option value="starfi_difusion_directa">starfi_difusion_directa</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="col-12 col-sm-7">
+                                                        <label class="form-label small fw-bold text-dark mb-1" style="font-size: 0.72rem;">Mensaje de Seguimiento ({{2}})</label>
+                                                        <input type="text" id="campDripParamTexto" class="form-control form-control-sm" value="vimos que revisaste nuestra información y un asesor está listo para ayudarte con cotización o disponibilidad inmediata">
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
