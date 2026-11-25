@@ -1,12 +1,13 @@
-# INFORME DE REMEDIACIÓN INTEGRAL Y CERTIFICACIÓN PRE-GO — STARFI CRM (`OT-QA-CRM-2026-1121-01` + `OT-QA-CRM-2026-1125-01`)
+# INFORME DE REMEDIACIÓN INTEGRAL Y CERTIFICACIÓN PRE-GO — STARFI CRM (`OT-QA-CRM-2026-1121-01` + `OT-QA-CRM-2026-1125-01` + `OT-QA-CRM-2026-1125-03`)
 
 - **Auditorías Atendidas:**
   - Fase 1: `QA-AUDIT-2026-1120-CRM-09` (`16 / 16` hallazgos cerrados)
   - Fase 2: `OT-QA-CRM-2026-1121-01` (`QA-BUG-CRM2-01` al `QA-BUG-CRM2-12` — `12 / 12` cerrados en commit `f9c0081`)
-  - Fase 3 (Re-Auditoría Forense Integral): `OT-QA-CRM-2026-1125-01` (`QA-BUG-CRM3-01` al `QA-BUG-CRM3-08` — `3 S0`, `4 S1`, `1 S2/S3` — `8 / 8` cerrados)
+  - Fase 3 (Re-Auditoría Forense Integral): `OT-QA-CRM-2026-1125-01` (`QA-BUG-CRM3-01` al `QA-BUG-CRM3-08` — `8 / 8` cerrados en commit `1887e5d`)
+  - Fase 4 (Cierre Final Pre-GO): `OT-QA-CRM-2026-1125-03` (`QA-BUG-CRM4-01` al `QA-BUG-CRM4-03` — `2 S1` + `1 S2` — `3 / 3` cerrados)
 - **Norma Cumplida:** `QA-STD-GLOBAL-2.1` (`MANUAL_GLOBAL_QA.md` v2.1.0 — 45 Controles Oficiales en Compuertas `A–F` + 6 Políticas de Tolerancia Cero §1.2 + Gobernanza `/test_ia/` §3.3 + Protocolo Caja Negra §3.4 + Acta Formal §7)
 - **Fecha de Certificación Local:** `2026-11-25`
-- **Suite Automatizada de Certificación:** [test_sprint2_qa.php](file:///c:/xampp/htdocs/starfi_crm/modules/pipeline/test_ia/test_sprint2_qa.php) (`100 / 100 PASS` — `100% PASS` con `ROLLBACK` transaccional, sondas reales `php-cgi` HTTP `403` sobre los 13 `modals_*.php` y generación binaria `FPDF 1.85`)
+- **Suite Automatizada de Certificación:** [test_sprint2_qa.php](file:///c:/xampp/htdocs/starfi_crm/modules/pipeline/test_ia/test_sprint2_qa.php) (`103 / 103 PASS` — `100% PASS` con `ROLLBACK` transaccional, sondas reales `php-cgi` HTTP `403` sobre los 13 `modals_*.php` y generación binaria `FPDF 1.85`)
 
 ---
 
@@ -25,6 +26,16 @@
 
 ---
 
+## 1.5. Matriz de Cierre Final `OT-QA-CRM-2026-1125-03` (`QA-BUG-CRM4-01` .. `QA-BUG-CRM4-03`)
+
+| ID Defecto | Sev. | Controles `QA-STD-GLOBAL-2.1` | Archivos Intervenidos | Solución Quirúrgica Verificada |
+| :--- | :---: | :--- | :--- | :--- |
+| `QA-BUG-CRM4-01` | **S1** | `CHK-UIX-02` | [funciones_bandeja.js](file:///c:/xampp/htdocs/starfi_crm/modules/bandeja/funciones_bandeja.js) | Refactorizada `resolveBandejaMediaUrl(rawPath, chatId)` para que cualquier ruta sin `/` o perteneciente a `/assets/uploads/`, `assets/uploads/` o `../../assets/uploads/` (excepto `comprobantes_waba/`) extraiga el `basename` y enrute siempre hacia `../../get_media.php?id=<fname>&chat_id=<chatId>`, eliminando el `HTTP 403` de Apache al visualizar o descargar multimedia WABA cacheada o subida desde Bandeja. |
+| `QA-BUG-CRM4-02` | **S1** | `CHK-SEC-03` | [funciones_campanas.js](file:///c:/xampp/htdocs/starfi_crm/modules/campanas/funciones_campanas.js), [funciones_bandeja.js](file:///c:/xampp/htdocs/starfi_crm/modules/bandeja/funciones_bandeja.js) | Escapado `${escapeHtml(mensaje)}` en `mostrarToastStarfi()` de Campañas y `${escapeHtmlBandeja(ag.nombre_completo)}` en el objeto `inputOptions` del selector de reasignación SweetAlert2 (`#btnReasign`) en Bandeja. |
+| `QA-BUG-CRM4-03` | **S2** | `CHK-UIX-03`, `05`, §3.4 P5 | [imprimir_orden_waba.php](file:///c:/xampp/htdocs/starfi_crm/imprimir_orden_waba.php) | Declarado `$this->SetFont('helvetica', 'B', 10);` **antes** de `$this->GetStringWidth($badgeTxt)` en `StarfiOrdenWabaPDF::Header()` para dimensionar dinámicamente el badge cuando el cliente no tiene logo gráfico, e incorporado `starfi_pdf_ellipsis(..., 50)` con sufijo `'...'` respetando límites de palabra en las tablas A y B. |
+
+---
+
 ## 2. Resumen Histórico de Cierre Previo (`OT-QA-CRM-2026-1121-01` — `12/12 CERRADOS`)
 
 - **`QA-BUG-CRM2-01..12`:** Purga total de volcados `.sql` y rotación SHA-256 (`rotate_compromised_api_tokens.php`), aislamiento IA multi-sede en `webhook.php` con firma `X-Hub-Signature-256` obligatoria, `100%` `mysqli_prepare()`, bloqueo `HTTP 403` en `install.php` y `database/*.php`, validación `finfo` (`<= 5 MB`) + candado `FOR UPDATE` en referencias bancarias WABA, escudo anti-fatiga `24h` (`Meta 131049`), modo `100% Offline LAN` (`0` CDNs, `0` `alert()`, `100%` `isologo.ico`, `100%` `<form autocomplete="off">`), y `0` fugas de errores SQL en JSON.
@@ -34,9 +45,9 @@
 ## 3. Acta Oficial de Certificación de Calidad (`QA SIGN-OFF` — §7 `MANUAL_GLOBAL_QA.md`)
 
 ### ACTA DE CERTIFICACIÓN DE CALIDAD (QA SIGN-OFF) — STARFI 2.0
-- **Fecha / Hora:** 2026-11-25 12:00 (VET)
-- **Módulo / Release Evaluado:** Ecosistema Integral `STARFI CRM` — Remediación Consolidada `OT-QA-CRM-2026-1125-01` sobre rama `development`
-- **Commit Base Auditado:** `f9c0081` (`f9c0081807225168780b25056c7fca1056b14209`) -> Remediación Integral `OT-QA-CRM-2026-1125-01`
+- **Fecha / Hora:** 2026-11-25 15:20 (VET)
+- **Módulo / Release Evaluado:** Ecosistema Integral `STARFI CRM` — Cierre Final `OT-QA-CRM-2026-1125-03` sobre rama `development`
+- **Commit Base Auditado:** `1887e5df` (`1887e5df2663d3f7e6625661a47c2d9afc2bc14f`) -> Cierre Final `OT-QA-CRM-2026-1125-03`
 - **Autor del Desarrollo (Humano / IA):** `Starfironal <ronalstarfi@gmail.com>` / Arquitectura de Seguridad y Calidad STARFI 2.0
 - **Auditor QA Responsable:** Pendiente de Re-Certificación Independiente QA (`QA-STD-GLOBAL-2.1` v2.1.0)
 
@@ -52,4 +63,4 @@
 - **S0 (Críticos):** `0`  |  **S1 (Mayores):** `0`  |  **S2 (Medios):** `0`  |  **S3 (Menores):** `0`
 
 #### DICTAMEN DE PRE-ENTREGA DE INGENIERÍA: `[ LISTO PARA RE-AUDITORÍA Y PASE A GO — MAIN / OTA ]`
-- **Evidencia Automatizada Adjunta:** `php -l` con `0` errores sobre el `100%` de los archivos `.php` del repositorio (`75/75`) y ejecución limpia de `modules/pipeline/test_ia/test_sprint2_qa.php` con **`100 / 100 PASS` (`EXIT=0`)** y `ROLLBACK` transaccional verificado (`0` residuos en base de datos).
+- **Evidencia Automatizada Adjunta:** `php -l` con `0` errores sobre el `100%` de los archivos `.php` del repositorio (`75/75`) y ejecución limpia de `modules/pipeline/test_ia/test_sprint2_qa.php` con **`103 / 103 PASS` (`EXIT=0`)** y `ROLLBACK` transaccional verificado (`0` residuos en base de datos).

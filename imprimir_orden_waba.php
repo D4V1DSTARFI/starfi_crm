@@ -39,6 +39,24 @@ if (!function_exists('starfi_pdf_txt')) {
     }
 }
 
+if (!function_exists('starfi_pdf_ellipsis')) {
+    /**
+     * Trunca texto largo de forma limpia respetando límites de palabra y añadiendo '...' cuando supera $maxChars.
+     */
+    function starfi_pdf_ellipsis($text, int $maxChars = 50): string {
+        $str = trim((string)$text);
+        if ($str === '' || mb_strlen($str, 'UTF-8') <= $maxChars) {
+            return $str;
+        }
+        $cut = mb_substr($str, 0, max(1, $maxChars - 3), 'UTF-8');
+        $lastSpace = mb_strrpos($cut, ' ', 0, 'UTF-8');
+        if ($lastSpace !== false && $lastSpace > intval($maxChars * 0.6)) {
+            $cut = mb_substr($cut, 0, $lastSpace, 'UTF-8');
+        }
+        return rtrim($cut, " \t\n\r\0\x0B.,;:-/") . '...';
+    }
+}
+
 if (!function_exists('starfi_resolve_pdf_embeddable_image')) {
     /**
      * Valida que una ruta de imagen exista bajo la raíz del proyecto y sea PNG/JPEG integrable en FPDF
@@ -110,15 +128,15 @@ if (!class_exists('StarfiOrdenWabaPDF')) {
                 $infoStartY = 27.5;
             } else {
                 $badgeTxt = starfi_pdf_txt(mb_substr($this->clientCommercialName ?: 'EMPRESA CLIENTE', 0, 38, 'UTF-8'));
+                $this->SetFont('helvetica', 'B', 10);
                 $this->SetFillColor(30, 41, 59);
                 $this->SetDrawColor(232, 91, 20);
                 $this->SetLineWidth(0.6);
-                $badgeW = min(92, max(48, $this->GetStringWidth($badgeTxt) + 14));
+                $badgeW = min(98, max(48, $this->GetStringWidth($badgeTxt) + 12));
                 $this->Rect(12, 10, $badgeW, 10, 'F');
                 $this->SetFillColor(232, 91, 20);
                 $this->Rect(12, 10, 2.2, 10, 'F');
                 $this->SetXY(16, 12);
-                $this->SetFont('helvetica', 'B', 10);
                 $this->SetTextColor(255, 255, 255);
                 $this->Cell($badgeW - 6, 6, $badgeTxt, 0, 1, 'L');
                 $infoStartY = 22;
@@ -613,7 +631,7 @@ if (!function_exists('starfi_create_waba_order_fpdf')) {
             foreach ($vm['items_pagados'] as $idx => $it) {
                 $fill = ($idx % 2 === 1);
                 $pdf->SetFillColor(248, 250, 252);
-                $pdf->Cell($wDesc, 6.2, starfi_pdf_txt(mb_substr($it['concepto'], 0, 52, 'UTF-8')), 'LRB', 0, 'L', $fill);
+                $pdf->Cell($wDesc, 6.2, starfi_pdf_txt(starfi_pdf_ellipsis($it['concepto'], 50)), 'LRB', 0, 'L', $fill);
                 $pdf->Cell($wCat,  6.2, starfi_pdf_txt($it['categoria']), 'RB', 0, 'C', $fill);
                 $pdf->Cell($wCant, 6.2, number_format(intval($it['pagados'])), 'RB', 0, 'C', $fill);
                 $pdf->Cell($wUnit, 6.2, '$' . number_format(floatval($it['precio_unit']), 4), 'RB', 0, 'R', $fill);
@@ -635,7 +653,7 @@ if (!function_exists('starfi_create_waba_order_fpdf')) {
             foreach ($vm['items_gratuitos'] as $idx => $it) {
                 $fill = ($idx % 2 === 1);
                 $pdf->SetFillColor(240, 253, 250);
-                $pdf->Cell($wDesc, 6.0, starfi_pdf_txt(mb_substr($it['concepto'], 0, 52, 'UTF-8')), 'LRB', 0, 'L', $fill);
+                $pdf->Cell($wDesc, 6.0, starfi_pdf_txt(starfi_pdf_ellipsis($it['concepto'], 50)), 'LRB', 0, 'L', $fill);
                 $pdf->Cell($wCat,  6.0, starfi_pdf_txt($it['categoria']), 'RB', 0, 'C', $fill);
                 $pdf->Cell($wCant, 6.0, number_format(intval($it['gratuitos'])), 'RB', 0, 'C', $fill);
                 $pdf->Cell($wUnit, 6.0, '$0.0000', 'RB', 0, 'R', $fill);

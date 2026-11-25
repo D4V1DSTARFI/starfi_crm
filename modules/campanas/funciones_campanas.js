@@ -221,7 +221,7 @@ function mostrarToastStarfi(mensaje, tipo = 'info') {
             <i class="fa-solid ${palette.icon} fs-5 me-3"></i>
             <div class="toast-body p-0">
                 <div class="fw-bold" style="font-size: 0.78rem; opacity: 0.85; text-transform: uppercase;">${palette.title}</div>
-                <div style="font-size: 0.88rem;">${mensaje}</div>
+                <div style="font-size: 0.88rem;">${escapeHtml(mensaje)}</div>
             </div>
             <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="toast"></button>
         </div>

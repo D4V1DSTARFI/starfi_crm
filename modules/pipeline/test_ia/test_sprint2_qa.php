@@ -510,12 +510,27 @@ qa_check("QA-BUG-CRM3-02: get_media.php aplica lista blanca estricta MIME con fi
     stripos($getMediaSrc, "'image/svg+xml'") === false
 );
 
-$fnBandejaSrc = (string)file_get_contents($root . '/modules/bandeja/funciones_bandeja.js');
-$fnDirSrc     = (string)file_get_contents($root . '/modules/directorio/funciones_directorio.js');
-$fnBotsSrc    = (string)file_get_contents($root . '/modules/gestor_bots/funciones_gestor_bots.js');
-$fnWabaOrdSrc = (string)file_get_contents($root . '/modules/waba_ordenes/funciones_waba_ordenes.js');
-$fnWabaAnaSrc = (string)file_get_contents($root . '/modules/whatsapp_analytics/funciones_whatsapp_analytics.js');
-$fnDashSrc    = (string)file_get_contents($root . '/modules/dashboard/funciones_dashboard.js');
+$fnBandejaSrc  = (string)file_get_contents($root . '/modules/bandeja/funciones_bandeja.js');
+$fnCampanasSrc = (string)file_get_contents($root . '/modules/campanas/funciones_campanas.js');
+$fnDirSrc      = (string)file_get_contents($root . '/modules/directorio/funciones_directorio.js');
+$fnBotsSrc     = (string)file_get_contents($root . '/modules/gestor_bots/funciones_gestor_bots.js');
+$fnWabaOrdSrc  = (string)file_get_contents($root . '/modules/waba_ordenes/funciones_waba_ordenes.js');
+$fnWabaAnaSrc  = (string)file_get_contents($root . '/modules/whatsapp_analytics/funciones_whatsapp_analytics.js');
+$fnDashSrc     = (string)file_get_contents($root . '/modules/dashboard/funciones_dashboard.js');
+
+$resolveFnMatch = [];
+$hasSafeMediaResolver = false;
+if (preg_match('/function\s+resolveBandejaMediaUrl\s*\([^)]*\)\s*\{(.*?)\r?\n\}/s', $fnBandejaSrc, $resolveFnMatch)) {
+    $resolveBody = $resolveFnMatch[1];
+    $hasSafeMediaResolver = (
+        strpos($resolveBody, 'get_media.php?id=') !== false &&
+        strpos($resolveBody, 'assets/uploads/') !== false &&
+        strpos($resolveBody, '../../assets/uploads/') === false
+    );
+}
+qa_check("QA-BUG-CRM4-01: resolveBandejaMediaUrl() enruta /assets/uploads/media_* y ../../assets/uploads/media_* hacia get_media.php (0 HTTP 403 en Bandeja)",
+    $hasSafeMediaResolver
+);
 
 qa_check("QA-BUG-CRM3-03: funciones_bandeja.js escapa el 100% de msg.contenido (0 interpolaciones crudas \${msg.contenido}) y usa data-tag delegado",
     strpos($fnBandejaSrc, '${msg.contenido}') === false &&
@@ -523,6 +538,11 @@ qa_check("QA-BUG-CRM3-03: funciones_bandeja.js escapa el 100% de msg.contenido (
     strpos($fnBandejaSrc, 'data-tag=') !== false &&
     !preg_match('/onclick=["\']removeTag\(/', $fnBandejaSrc) &&
     strpos($fnBandejaSrc, 'back_bandeja.php?action=sse_updates') !== false
+);
+qa_check("QA-BUG-CRM4-02: mostrarToastStarfi() usa escapeHtml(mensaje) y #btnReasign usa escapeHtmlBandeja(ag.nombre_completo) (CHK-SEC-03)",
+    strpos($fnCampanasSrc, '${escapeHtml(mensaje)}') !== false &&
+    strpos($fnBandejaSrc, '${escapeHtmlBandeja(ag.nombre_completo)}') !== false &&
+    strpos($fnBandejaSrc, '${ag.nombre_completo}') === false
 );
 qa_check("QA-BUG-CRM3-03: Escapado HTML activo en Directorio, Bots (Drawflow integrado), WABA Órdenes, WABA Analytics, Dashboard y Configuración",
     strpos($fnDirSrc, 'escapeHtmlDir(') !== false &&
@@ -556,6 +576,14 @@ qa_check("QA-BUG-CRM3-06: imprimir_orden_waba.php exige requirePermission('waba_
     strpos($impSrc, 'GothamMedium.ttf') !== false &&
     stripos($impSrc, 'Arial, Helvetica') === false &&
     ord(starfi_pdf_txt('€')) === 128
+);
+
+$posBadgeFont  = strpos($impSrc, "\$this->SetFont('helvetica', 'B', 10);");
+$posBadgeWidth = strpos($impSrc, '$this->GetStringWidth($badgeTxt)');
+qa_check("QA-BUG-CRM4-03: imprimir_orden_waba.php declara SetFont('helvetica', 'B', 10) antes de GetStringWidth(\$badgeTxt) y aplica elipsis limpia '...'",
+    $posBadgeFont !== false && $posBadgeWidth !== false && $posBadgeFont < $posBadgeWidth &&
+    function_exists('starfi_pdf_ellipsis') &&
+    substr(starfi_pdf_ellipsis(str_repeat('Servicio Mensajería ', 5), 50), -3) === '...'
 );
 
 $samplePdfBin = starfi_build_waba_order_pdf_binary(

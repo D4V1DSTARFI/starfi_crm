@@ -570,7 +570,7 @@ $(document).ready(function () {
                     let options = {};
                     res.data.forEach(ag => {
                         const onlineTag = (parseInt(ag.en_linea || 0, 10) === 1) ? '🟢 En línea' : '⚪ Desconectado';
-                        options[ag.id] = `${ag.nombre_completo} (${onlineTag})`;
+                        options[ag.id] = `${escapeHtmlBandeja(ag.nombre_completo)} (${onlineTag})`;
                     });
 
                     Swal.fire({
@@ -710,13 +710,19 @@ function resolveBandejaMediaUrl(rawPath, chatId) {
     if (/^(javascript|data|vbscript|https?|ftp):/i.test(p) || p.indexOf('//') === 0) {
         return '';
     }
-    if (p.indexOf('/') === -1) {
-        return `../../get_media.php?id=${encodeURIComponent(p)}&chat_id=${encodeURIComponent(chatId || 0)}`;
+    if (p.indexOf('get_media.php') !== -1) {
+        return p;
     }
-    if (p.indexOf('/assets/uploads/') !== -1) {
-        return p.replace(/^.*\/assets\/uploads\//, '../../assets/uploads/');
+    if (p.indexOf('comprobantes_waba/') === -1 && (
+        p.indexOf('/') === -1 ||
+        p.indexOf('assets/uploads/') !== -1 ||
+        /^media_[A-Za-z0-9._-]+$/i.test(p.split('/').pop().split('?')[0])
+    )) {
+        const fname = p.split('/').pop().split('?')[0];
+        if (!fname) return '';
+        return `../../get_media.php?id=${encodeURIComponent(fname)}&chat_id=${encodeURIComponent(chatId || 0)}`;
     }
-    if (p.indexOf('assets/uploads/') === 0) {
+    if (p.indexOf('uploads/documentos/') === 0) {
         return '../../' + p;
     }
     return p;
