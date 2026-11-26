@@ -488,8 +488,8 @@ $(document).ready(function () {
             Swal.fire({
                 title: 'Nueva Respuesta Rápida',
                 html: `
-                    <input type="text" id="swal-qr-title" class="swal2-input" placeholder="Título (ej: Saludo)">
-                    <textarea id="swal-qr-msg" class="swal2-textarea" placeholder="Mensaje a enviar..."></textarea>
+                    <input type="text" id="swal-qr-title" autocomplete="off" class="swal2-input" placeholder="Título (ej: Saludo)">
+                    <textarea id="swal-qr-msg" autocomplete="off" class="swal2-textarea" placeholder="Mensaje a enviar..."></textarea>
                 `,
                 focusConfirm: false,
                 showCancelButton: true,
@@ -602,6 +602,9 @@ $(document).ready(function () {
     $('#btnInternalNote').on('click', function() {
         $(this).toggleClass('note-mode');
         if ($(this).hasClass('note-mode')) {
+            if (typeof cancelActiveVoiceRecording === 'function' && activeVoiceRecorder) {
+                cancelActiveVoiceRecording(true);
+            }
             $(this).css({ 'color': '#E85B14', 'background-color': 'rgba(232, 91, 20, 0.1)' });
             $('#inputBoxContainer').css({ 'background-color': '#FEF3C7', 'border-color': '#FDE68A' });
             $('#chatInput').attr('placeholder', 'Escribiendo nota interna (oculta al cliente)...');
@@ -2534,6 +2537,8 @@ function updateActiveWindow24hUI() {
     const chatInput = $('#chatInput');
     const sendBtn = $('#sendBtn');
     const btnAttach = $('#btnAttach');
+    const btnVoice = $('#btnVoiceRecord');
+    const btnQuotePdf = $('#btnQuickQuotePdf');
     const isNoteMode = $('#btnInternalNote').hasClass('note-mode');
 
     if (activeChatId === null && !activeClientId) {
@@ -2543,6 +2548,8 @@ function updateActiveWindow24hUI() {
         chatInput.prop('disabled', false);
         sendBtn.prop('disabled', false);
         btnAttach.prop('disabled', false).css('opacity', '');
+        btnVoice.prop('disabled', false).css('opacity', '').show();
+        btnQuotePdf.prop('disabled', false).css('opacity', '');
         return;
     }
 
@@ -2564,27 +2571,40 @@ function updateActiveWindow24hUI() {
 
         banner.removeClass('active');
         btnAttach.prop('disabled', false).css('opacity', '');
+        btnQuotePdf.prop('disabled', false).css('opacity', '');
         inputBox.removeClass('locked-24h');
         chatInput.prop('disabled', false);
         sendBtn.prop('disabled', false);
-        if (!isNoteMode) {
+        if (isNoteMode) {
+            if (typeof cancelActiveVoiceRecording === 'function' && activeVoiceRecorder) {
+                cancelActiveVoiceRecording(true);
+            }
+            btnVoice.prop('disabled', true).hide();
+        } else {
+            btnVoice.prop('disabled', false).css('opacity', '').show();
             chatInput.attr('placeholder', 'Escribe un mensaje...');
         }
     } else {
+        if (typeof cancelActiveVoiceRecording === 'function' && activeVoiceRecorder) {
+            cancelActiveVoiceRecording(true);
+        }
         badge.addClass('win-expired');
         timerText.text('Ventana 24h Expirada');
         banner.addClass('active');
         btnAttach.prop('disabled', true).css('opacity', '0.45');
+        btnQuotePdf.prop('disabled', true).css('opacity', '0.5');
 
         if (isNoteMode) {
-            // Permitir escribir Notas Internas privadas aunque la ventana de Meta haya expirado
+            // Permitir escribir Notas Internas privadas aunque la ventana de Meta haya expirado (ocultando micrófono público)
             inputBox.removeClass('locked-24h');
             chatInput.prop('disabled', false).attr('placeholder', 'Escribiendo nota interna (oculta al cliente)...');
             sendBtn.prop('disabled', false);
+            btnVoice.prop('disabled', true).hide();
         } else {
             inputBox.addClass('locked-24h');
             chatInput.prop('disabled', true).attr('placeholder', 'Ventana Meta 24h cerrada — Reactiva con Plantilla Oficial Meta o usa Nota Interna...');
             sendBtn.prop('disabled', true);
+            btnVoice.prop('disabled', true).css('opacity', '0.45').show();
         }
     }
 }
@@ -3115,6 +3135,10 @@ function startBrowserVoiceRecording() {
     if (bandejaInFlight.has('send_voice_note')) return;
     if (activeChatId === null && !activeClientId) {
         Swal.fire({ icon: 'warning', text: 'Selecciona una conversación primero.' });
+        return;
+    }
+    if ($('#btnInternalNote').hasClass('note-mode')) {
+        Swal.fire({ icon: 'info', text: 'Desactiva el modo Nota Interna para grabar y enviar una nota de voz al cliente.' });
         return;
     }
     if (activeWindowExpiresAtEpoch <= getServerNowEpoch()) {

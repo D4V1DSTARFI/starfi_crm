@@ -31,6 +31,9 @@ function starfi_base_rel_prefix() {
  * Detecta si la petición espera respuesta JSON (fetch con Accept: application/json, XHR o controlador back_*.php).
  */
 function starfi_expects_json_response() {
+    if (isset($_REQUEST['ajax_agenda_topbar'])) {
+        return true;
+    }
     if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
         return true;
     }
@@ -39,7 +42,7 @@ function starfi_expects_json_response() {
         return true;
     }
     $scriptBase = basename((string)($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? ''));
-    if (strpos($scriptBase, 'back_') === 0) {
+    if (strpos($scriptBase, 'back_') === 0 || $scriptBase === 'api_notificaciones.php') {
         return true;
     }
     foreach (headers_list() as $hdr) {
@@ -50,7 +53,14 @@ function starfi_expects_json_response() {
     return false;
 }
 
-function requireAuth() {
+/**
+ * Valida la sesión activa, expiración por inactividad (1800 s) y vigencia del usuario en BD.
+ *
+ * @param bool $touchActivity Si es false (ej. sondeo pasivo en segundo plano), NO renueva
+ *                            $_SESSION['last_activity'] ni starfi_touch_agent_presence(), garantizando
+ *                            que la inactividad real de 30 minutos cierre la sesión puntualmente (CHK-SEC-01).
+ */
+function requireAuth($touchActivity = true) {
     // Límite de inactividad: 30 minutos (1800 segundos)
     $timeout_duration = 1800; 
 
@@ -62,7 +72,7 @@ function requireAuth() {
         if ($is_json) {
             http_response_code(401);
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['success' => false, 'status' => 'error', 'message' => 'no_session', 'redirect' => $login_url]);
+            echo json_encode(['success' => false, 'status' => 'error', 'code' => 'NO_SESSION', 'message' => 'no_session', 'redirect' => $login_url]);
             exit();
         } else {
             header("Location: " . $login_url);
@@ -77,7 +87,7 @@ function requireAuth() {
         if ($is_json) {
             http_response_code(401);
             header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['success' => false, 'status' => 'error', 'message' => 'session_expired', 'redirect' => $login_url . '?error=expired']);
+            echo json_encode(['success' => false, 'status' => 'error', 'code' => 'SESSION_EXPIRED', 'message' => 'session_expired', 'redirect' => $login_url . '?error=expired']);
             exit();
         } else {
             header("Location: " . $login_url . "?error=expired");
@@ -102,7 +112,7 @@ function requireAuth() {
                 if ($is_json) {
                     http_response_code(401);
                     header('Content-Type: application/json; charset=utf-8');
-                    echo json_encode(['success' => false, 'status' => 'error', 'message' => 'account_inactive', 'redirect' => $login_url . '?state=inactive']);
+                    echo json_encode(['success' => false, 'status' => 'error', 'code' => 'ACCOUNT_INACTIVE', 'message' => 'account_inactive', 'redirect' => $login_url . '?state=inactive']);
                     exit();
                 } else {
                     header("Location: " . $login_url . "?state=inactive");
@@ -110,13 +120,15 @@ function requireAuth() {
                 }
             }
         }
-        if ($uid_check > 1) {
+        if ($touchActivity && $uid_check > 1) {
             starfi_touch_agent_presence($con_hb, $uid_check, false);
         }
     }
 
-    // 4. Actualizar marca de tiempo de la última actividad
-    $_SESSION['last_activity'] = time();
+    // 4. Actualizar marca de tiempo de la última actividad únicamente en interacciones humanas reales
+    if ($touchActivity) {
+        $_SESSION['last_activity'] = time();
+    }
 }
 
 function getAgenteInfo() {
@@ -411,15 +423,16 @@ function starfi_render_topbar_agenda_widget($baseRelPrefix = null) {
     if ($baseRelPrefix === null) {
         $baseRelPrefix = starfi_base_rel_prefix();
     }
-    $endpointUrl = $baseRelPrefix . 'index.php';
+    $endpointUrl = $baseRelPrefix . 'api_notificaciones.php';
     $bandejaUrl = $baseRelPrefix . 'modules/bandeja/bandeja.php';
-    $scriptUrl = $baseRelPrefix . 'assets/js/starfi_topbar_agenda.js?v=401';
+    $loginUrl = $baseRelPrefix . 'login.php';
+    $scriptUrl = $baseRelPrefix . 'assets/js/starfi_topbar_agenda.js?v=402';
 
     $html  = '<style>'
         . '@keyframes starfiBellPulse{0%{box-shadow:0 0 0 0 rgba(232,91,20,.45)}70%{box-shadow:0 0 0 7px rgba(232,91,20,0)}100%{box-shadow:0 0 0 0 rgba(232,91,20,0)}}'
         . '#btnTopbarAgendaBell.has-urgent-tasks{border-color:#FDBA74 !important;background:#FFF7ED !important;color:#EA580C !important;animation:starfiBellPulse 2s infinite;}'
         . '</style>';
-    $html .= '<div class="dropdown" id="starfiTopbarAgendaWrap" data-endpoint="' . htmlspecialchars($endpointUrl, ENT_QUOTES, 'UTF-8') . '" data-bandeja-url="' . htmlspecialchars($bandejaUrl, ENT_QUOTES, 'UTF-8') . '">';
+    $html .= '<div class="dropdown" id="starfiTopbarAgendaWrap" data-endpoint="' . htmlspecialchars($endpointUrl, ENT_QUOTES, 'UTF-8') . '" data-bandeja-url="' . htmlspecialchars($bandejaUrl, ENT_QUOTES, 'UTF-8') . '" data-login-url="' . htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8') . '">';
     $html .= '    <button class="btn btn-light border position-relative d-inline-flex align-items-center justify-content-center" type="button" id="btnTopbarAgendaBell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Agenda Comercial y Recordatorios en Tiempo Real" style="width:38px;height:38px;border-radius:10px;color:#334155;">';
     $html .= '        <i class="fa-solid fa-bell" style="font-size:0.95rem;"></i>';
     $html .= '        <span id="topbarAgendaBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-white" style="display:none;font-size:0.65rem;padding:3px 6px;background-color:#DC2626;">0</span>';

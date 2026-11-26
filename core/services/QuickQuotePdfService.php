@@ -1,12 +1,13 @@
 <?php
 /**
  * core/services/QuickQuotePdfService.php
- * Motor Empresarial de Cotizador Rápido PDF en el Chat ([OMN-03] — OT-STARFI-2026-11 SPRINT 4):
+ * Motor Empresarial de Cotizador Rápido PDF en el Chat ([OMN-03] — OT-STARFI-2026-11 SPRINT 4 / Remediado OT-QA-CRM-2026-1126-06):
  * - Genera cotización comercial PDF membretada dinámicamente por Sede con FPDF 1.85.
- * - Cumple 100% QA-STD-GLOBAL-2.1 (SetTitle antes de SetAutoPageBreak, SetFont antes de GetStringWidth,
- *   chr(128) Euro, logo corporativo de empresa/sede arriba-izquierda y sello "Generado por Starfi" + isologo_ni.png abajo-derecha).
- * - Envía el PDF al WhatsApp del cliente vía Meta Cloud API v23.0 y lo adjunta en mensajes_y_eventos.
- * - Registra/actualiza automáticamente la oportunidad en pipeline_oportunidades (etapa COTIZADO + monto USD) con SELECT ... FOR UPDATE.
+ * - Aislamiento estricto Multi-Sede de `empresa_perfil` por `id_sede` (0 fugas de RIF/logo entre sedes — CHK-CLD-01)
+ *   e insignia corporativa vectorial de respaldo cuando no existe archivo de logo en disco (CHK-UIX-03).
+ * - Paginación determinista sin desfase entre Condiciones/Notas y Cuadro de Totales USD (CHK-UIX-05).
+ * - Correlativo diario `MAX(...) + 1` a prueba de bajas, lock `FOR UPDATE` efectivo incluso en `id_sede = 0`
+ *   y eliminación garantizada de PDF en `rollback()` (0 archivos huérfanos — CHK-SEC-05, CHK-ARC-07).
  */
 
 require_once __DIR__ . '/../crm_sprint2_helper.php';
@@ -58,6 +59,51 @@ if (!class_exists('StarfiQuickQuotePDF')) {
             return $suffix;
         }
 
+        /**
+         * Calcula cuántas líneas reales ocupará un texto en un MultiCell de ancho $maxWidthMm
+         * usando la fuente activa (CHK-PDF-03: llamar siempre después de SetFont).
+         */
+        public function estimateWrappedLines(float $maxWidthMm, string $utf8Text): int
+        {
+            $usableW = max(10.0, $maxWidthMm - ($this->cMargin * 2.0));
+            $paragraphs = explode("\n", str_replace(["\r\n", "\r"], "\n", trim($utf8Text)));
+            $totalLines = 0;
+
+            foreach ($paragraphs as $para) {
+                $paraTrim = trim($para);
+                if ($paraTrim === '') {
+                    $totalLines++;
+                    continue;
+                }
+                $words = preg_split('/\s+/u', $paraTrim, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+                $curLine = '';
+                foreach ($words as $word) {
+                    $candidate = ($curLine === '') ? $word : ($curLine . ' ' . $word);
+                    if ($this->GetStringWidth(starfi_quote_pdf_enc($candidate)) <= $usableW) {
+                        $curLine = $candidate;
+                    } else {
+                        if ($curLine !== '') {
+                            $totalLines++;
+                        }
+                        // Si una sola palabra es más larga que la columna, estimar sus quiebres forzosos
+                        $wordW = $this->GetStringWidth(starfi_quote_pdf_enc($word));
+                        if ($wordW > $usableW) {
+                            $extraWraps = (int)floor($wordW / $usableW);
+                            $totalLines += max(1, $extraWraps);
+                            $curLine = '';
+                        } else {
+                            $curLine = $word;
+                        }
+                    }
+                }
+                if ($curLine !== '') {
+                    $totalLines++;
+                }
+            }
+
+            return max(1, $totalLines);
+        }
+
         public function Header()
         {
             $margin = 14.0;
@@ -72,6 +118,8 @@ if (!class_exists('StarfiQuickQuotePDF')) {
             $yTop = 11.0;
             $xText = $margin;
             $logoPath = (string)($this->sedeHeader['logo_abs'] ?? '');
+            $logoDrawn = false;
+
             if ($logoPath !== '' && is_file($logoPath)) {
                 $imgInfo = @getimagesize($logoPath);
                 if (is_array($imgInfo) && !empty($imgInfo[0]) && !empty($imgInfo[1])) {
@@ -82,36 +130,65 @@ if (!class_exists('StarfiQuickQuotePDF')) {
                     $drawH = max(8.0, $imgInfo[1] * $ratio);
                     @$this->Image($logoPath, $margin, $yTop, $drawW, $drawH);
                     $xText = $margin + $drawW + 4.0;
+                    $logoDrawn = true;
                 }
             }
 
-            // Bloque Izquierdo: Membrete Corporativo + Sede Específica
+            // CHK-UIX-03: Insignia corporativa limpia arriba a la izquierda si la sede no posee archivo físico de logo
+            if (!$logoDrawn) {
+                $badgeW = 24.0;
+                $badgeH = 15.5;
+                $this->SetFillColor(30, 41, 59);
+                $this->Rect($margin, $yTop, $badgeW, $badgeH, 'F');
+                $this->SetFillColor(232, 91, 20);
+                $this->Rect($margin, $yTop, 2.2, $badgeH, 'F');
+
+                $rawBrand = trim((string)($this->sedeHeader['empresa_nombre'] ?? ($this->sedeHeader['nombre_sede'] ?? 'STARFI')));
+                $words = preg_split('/\s+/u', $rawBrand, -1, PREG_SPLIT_NO_EMPTY) ?: ['ST'];
+                $monogram = count($words) >= 2
+                    ? mb_strtoupper(mb_substr($words[0], 0, 1, 'UTF-8') . mb_substr($words[1], 0, 1, 'UTF-8'), 'UTF-8')
+                    : mb_strtoupper(mb_substr($rawBrand, 0, 3, 'UTF-8'), 'UTF-8');
+
+                $this->SetXY($margin + 2.2, $yTop + 2.8);
+                $this->SetFont('Helvetica', 'B', 11.5);
+                $this->SetTextColor(255, 255, 255);
+                $this->Cell($badgeW - 2.2, 5.5, $this->clipTextToWidth($monogram, $badgeW - 3.5), 0, 1, 'C');
+
+                $this->SetX($margin + 2.2);
+                $this->SetFont('Helvetica', 'B', 5.8);
+                $this->SetTextColor(255, 138, 77);
+                $this->Cell($badgeW - 2.2, 3.8, starfi_quote_pdf_enc('SEDE OFICIAL'), 0, 0, 'C');
+
+                $xText = $margin + $badgeW + 4.0;
+            }
+
+            // Bloque Izquierdo: Membrete Corporativo + Sede Específica (estrictamente aislada por id_sede)
             $leftMaxW = 108.0 - ($xText - $margin);
             $this->SetXY($xText, $yTop);
-            $this->SetFont('Helvetica', 'B', 11);
+            $this->SetFont('Helvetica', 'B', 10.8);
             $this->SetTextColor(15, 23, 42);
             $empresaNom = (string)($this->sedeHeader['empresa_nombre'] ?? 'STARFI CRM');
-            $this->Cell($leftMaxW, 5.2, $this->clipTextToWidth($empresaNom, $leftMaxW), 0, 1, 'L');
+            $this->Cell($leftMaxW, 5.0, $this->clipTextToWidth($empresaNom, $leftMaxW), 0, 1, 'L');
 
             $this->SetX($xText);
-            $this->SetFont('Helvetica', 'B', 8.5);
+            $this->SetFont('Helvetica', 'B', 8.4);
             $this->SetTextColor(232, 91, 20);
             $sedeNom = 'SEDE: ' . strtoupper((string)($this->sedeHeader['nombre_sede'] ?? 'PRINCIPAL'));
-            $this->Cell($leftMaxW, 4.4, $this->clipTextToWidth($sedeNom, $leftMaxW), 0, 1, 'L');
+            $this->Cell($leftMaxW, 4.3, $this->clipTextToWidth($sedeNom, $leftMaxW), 0, 1, 'L');
 
             $this->SetX($xText);
-            $this->SetFont('Helvetica', '', 7.8);
+            $this->SetFont('Helvetica', '', 7.6);
             $this->SetTextColor(71, 85, 105);
             $rifLine = 'RIF: ' . (string)($this->sedeHeader['rif'] ?? 'N/A');
             if (!empty($this->sedeHeader['telefono_sede'])) {
-                $rifLine .= '  |  WhatsApp Sede: +' . preg_replace('/[^0-9]/', '', (string)$this->sedeHeader['telefono_sede']);
+                $rifLine .= '  |  WhatsApp: +' . preg_replace('/[^0-9]/', '', (string)$this->sedeHeader['telefono_sede']);
             }
-            $this->Cell($leftMaxW, 4.0, $this->clipTextToWidth($rifLine, $leftMaxW), 0, 1, 'L');
+            $this->Cell($leftMaxW, 3.9, $this->clipTextToWidth($rifLine, $leftMaxW), 0, 1, 'L');
 
             if (!empty($this->sedeHeader['direccion'])) {
                 $this->SetX($xText);
-                $this->SetFont('Helvetica', '', 7.3);
-                $this->Cell($leftMaxW, 3.8, $this->clipTextToWidth((string)$this->sedeHeader['direccion'], $leftMaxW), 0, 1, 'L');
+                $this->SetFont('Helvetica', '', 7.2);
+                $this->Cell($leftMaxW, 3.7, $this->clipTextToWidth((string)$this->sedeHeader['direccion'], $leftMaxW), 0, 1, 'L');
             }
 
             // Bloque Derecho: Identificación de la Cotización
@@ -191,7 +268,7 @@ class QuickQuotePdfService
         }
 
         $dbHash = function_exists('starfi_db_schema_hash') ? starfi_db_schema_hash($con) : 'default';
-        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint4_quotes_v1_' . $dbHash . '.flag';
+        $flag = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_sprint4_quotes_v2_' . $dbHash . '.flag';
         if (@file_exists($flag) && (time() - @filemtime($flag)) < 86400) {
             $chk = @mysqli_query($con, "SHOW TABLES LIKE 'cotizaciones_rapidas'");
             if ($chk && mysqli_num_rows($chk) > 0) {
@@ -244,7 +321,7 @@ class QuickQuotePdfService
     }
 
     /**
-     * Normaliza y calcula la matriz de ítems y totales financieros en USD.
+     * Normaliza y calcula la matriz de ítems y totales financieros en USD (100% server-side).
      */
     public static function calculateQuoteTotals(array $rawItems, float $descuentoUsd = 0.0, bool $aplicaIva = false, float $ivaPct = 16.0): array
     {
@@ -296,56 +373,94 @@ class QuickQuotePdfService
     }
 
     /**
-     * Resuelve los datos fiscales y de membrete de la Sede e identidad de empresa.
+     * Resuelve los datos fiscales y de membrete estrictamente para la Sede emisora (QA-BUG-CRM6-02 / CHK-CLD-01).
+     * Jamás adjudica el RIF, dirección ni logo de otra sede si la sede actual no posee fila propia en `empresa_perfil`.
      */
     public static function resolveSedeLetterhead($con, int $idSede, int $idEmpresa = 1, int $agenteId = 0): array
     {
         $sedeRow = [];
-        $stmtS = $con->prepare("SELECT * FROM sedes WHERE id = ? LIMIT 1");
-        if ($stmtS) {
-            $stmtS->bind_param("i", $idSede);
-            $stmtS->execute();
-            $rS = $stmtS->get_result();
-            $sedeRow = ($rS && $rS->num_rows > 0) ? $rS->fetch_assoc() : [];
-            $stmtS->close();
+        if ($idSede > 0) {
+            $stmtS = $con->prepare("SELECT * FROM sedes WHERE id = ? LIMIT 1");
+            if ($stmtS) {
+                $stmtS->bind_param("i", $idSede);
+                $stmtS->execute();
+                $rS = $stmtS->get_result();
+                $sedeRow = ($rS && $rS->num_rows > 0) ? $rS->fetch_assoc() : [];
+                $stmtS->close();
+            }
         }
         if (!empty($sedeRow['id_empresa'])) {
             $idEmpresa = intval($sedeRow['id_empresa']);
         }
 
-        $perfilRow = [];
-        $chkPerf = @mysqli_query($con, "SHOW TABLES LIKE 'empresa_perfil'");
-        if ($chkPerf && mysqli_num_rows($chkPerf) > 0) {
-            $stmtP = $con->prepare("SELECT * FROM empresa_perfil WHERE id_empresa = ? ORDER BY id ASC LIMIT 1");
-            if ($stmtP) {
-                $stmtP->bind_param("i", $idEmpresa);
-                $stmtP->execute();
-                $rP = $stmtP->get_result();
-                $perfilRow = ($rP && $rP->num_rows > 0) ? $rP->fetch_assoc() : [];
-                $stmtP->close();
-            }
-            if (empty($perfilRow)) {
-                $stmtP2 = $con->prepare("SELECT * FROM empresa_perfil ORDER BY id ASC LIMIT 1");
-                if ($stmtP2 && $stmtP2->execute()) {
-                    $rP2 = $stmtP2->get_result();
-                    $perfilRow = ($rP2 && $rP2->num_rows > 0) ? $rP2->fetch_assoc() : [];
+        // Respaldo opcional de nombre comercial matriz en `empresas` (sin cruzar RIF entre sedes)
+        $empBaseRow = [];
+        $chkEmpTbl = @$con->prepare("SHOW TABLES LIKE 'empresas'");
+        if ($chkEmpTbl && $chkEmpTbl->execute()) {
+            $rEmpTbl = $chkEmpTbl->get_result();
+            $hasEmpTbl = ($rEmpTbl && $rEmpTbl->num_rows > 0);
+            $chkEmpTbl->close();
+            if ($hasEmpTbl && $idEmpresa > 0) {
+                $stmtEmp = @$con->prepare("SELECT * FROM empresas WHERE id = ? LIMIT 1");
+                if ($stmtEmp) {
+                    $stmtEmp->bind_param("i", $idEmpresa);
+                    if ($stmtEmp->execute()) {
+                        $rEmp = $stmtEmp->get_result();
+                        $empBaseRow = ($rEmp && $rEmp->num_rows > 0) ? $rEmp->fetch_assoc() : [];
+                    }
+                    $stmtEmp->close();
                 }
-                if ($stmtP2) {
-                    $stmtP2->close();
+            }
+        }
+
+        // Consultar `empresa_perfil` inspeccionando sus columnas reales y filtrando ESTRICTAMENTE por `id_sede = ?`
+        $perfilRow = [];
+        $empPerfilCols = [];
+        $stmtCols = @$con->prepare("SHOW COLUMNS FROM empresa_perfil");
+        if ($stmtCols && $stmtCols->execute()) {
+            $rc = $stmtCols->get_result();
+            while ($rc && ($col = $rc->fetch_assoc())) {
+                $empPerfilCols[$col['Field']] = true;
+            }
+            $stmtCols->close();
+        }
+
+        if (!empty($empPerfilCols)) {
+            if (isset($empPerfilCols['id_sede'])) {
+                if ($idSede > 0) {
+                    $stmtP = $con->prepare("SELECT * FROM empresa_perfil WHERE id_sede = ? ORDER BY id ASC LIMIT 1");
+                    if ($stmtP) {
+                        $stmtP->bind_param("i", $idSede);
+                        $stmtP->execute();
+                        $rP = $stmtP->get_result();
+                        $perfilRow = ($rP && $rP->num_rows > 0) ? $rP->fetch_assoc() : [];
+                        $stmtP->close();
+                    }
+                }
+            } elseif (isset($empPerfilCols['id_empresa']) && $idEmpresa > 0) {
+                $stmtP = $con->prepare("SELECT * FROM empresa_perfil WHERE id_empresa = ? ORDER BY id ASC LIMIT 1");
+                if ($stmtP) {
+                    $stmtP->bind_param("i", $idEmpresa);
+                    $stmtP->execute();
+                    $rP = $stmtP->get_result();
+                    $perfilRow = ($rP && $rP->num_rows > 0) ? $rP->fetch_assoc() : [];
+                    $stmtP->close();
                 }
             }
         }
 
         $lineaPhone = '';
-        $stmtL = $con->prepare("SELECT numero_telefono FROM lineas_whatsapp WHERE id_sede = ? ORDER BY (estado = 'ACTIVO') DESC, id ASC LIMIT 1");
-        if ($stmtL) {
-            $stmtL->bind_param("i", $idSede);
-            $stmtL->execute();
-            $rL = $stmtL->get_result();
-            if ($rL && ($rwL = $rL->fetch_assoc())) {
-                $lineaPhone = (string)($rwL['numero_telefono'] ?? '');
+        if ($idSede > 0) {
+            $stmtL = $con->prepare("SELECT numero_telefono FROM lineas_whatsapp WHERE id_sede = ? ORDER BY (estado = 'ACTIVO') DESC, id ASC LIMIT 1");
+            if ($stmtL) {
+                $stmtL->bind_param("i", $idSede);
+                $stmtL->execute();
+                $rL = $stmtL->get_result();
+                if ($rL && ($rwL = $rL->fetch_assoc())) {
+                    $lineaPhone = (string)($rwL['numero_telefono'] ?? '');
+                }
+                $stmtL->close();
             }
-            $stmtL->close();
         }
 
         $asesorNombre = 'Asesor Comercial';
@@ -362,18 +477,32 @@ class QuickQuotePdfService
             }
         }
 
+        $nombreSede = trim((string)($sedeRow['nombre_sede'] ?? 'Sede Principal'));
         $empresaNombre = trim((string)(
             $perfilRow['nombre_comercial']
-            ?? ($perfilRow['razon_social'] ?? ($sedeRow['nombre_sede'] ?? 'STARFI COMERCIAL'))
+            ?? ($perfilRow['razon_social']
+            ?? ($sedeRow['razon_social']
+            ?? ($empBaseRow['nombre_comercial']
+            ?? ($empBaseRow['razon_social']
+            ?? $nombreSede))))
         ));
-        $nombreSede = trim((string)($sedeRow['nombre_sede'] ?? 'Sede Principal'));
-        $rifRaw = trim((string)($sedeRow['rif'] ?? ($sedeRow['rif_sede'] ?? ($perfilRow['rif'] ?? 'N/A'))));
+        if ($empresaNombre === '') {
+            $empresaNombre = 'STARFI COMERCIAL';
+        }
+
+        // RIF y dirección provienen exclusivamente del perfil propio de la sede o de la fila de `sedes`
+        $rifRaw = trim((string)($perfilRow['rif'] ?? ($sedeRow['rif'] ?? ($sedeRow['rif_sede'] ?? ''))));
         if (!empty($perfilRow['letra']) && $rifRaw !== '' && $rifRaw !== 'N/A' && strpos($rifRaw, '-') === false) {
             $rif = trim((string)$perfilRow['letra']) . '-' . $rifRaw;
         } else {
-            $rif = $rifRaw !== '' ? $rifRaw : 'N/A';
+            $rif = ($rifRaw !== '') ? $rifRaw : 'N/A';
         }
-        $direccion = trim((string)($sedeRow['direccion'] ?? ($perfilRow['direccion_fiscal'] ?? ($perfilRow['direccion'] ?? ''))));
+
+        $direccion = trim((string)(
+            $perfilRow['direccion_fiscal']
+            ?? ($perfilRow['direccion']
+            ?? ($sedeRow['direccion'] ?? ''))
+        ));
 
         $rootReal = realpath(__DIR__ . '/../..');
         $logoAbs = '';
@@ -491,180 +620,211 @@ class QuickQuotePdfService
 
         try {
             $pdf = new StarfiQuickQuotePDF('P', 'mm', 'Letter');
-        $pdf->sedeHeader = $letterhead;
-        $pdf->quoteMeta = $quoteMeta;
-        $pdf->sealAbsPath = $sealAbs;
-        $pdf->AliasNbPages();
-        // CHK-PDF-02: SetTitle antes de SetAutoPageBreak
-        $pdf->SetTitle('Cotizacion ' . ($quoteMeta['codigo'] ?? 'STARFI'), true);
-        $pdf->SetAuthor('STARFI CRM', true);
-        $pdf->SetMargins(14, 14, 14);
-        $pdf->SetAutoPageBreak(true, 24);
-        $pdf->AddPage();
-
-        $margin = 14.0;
-        $contentW = $pdf->GetPageWidth() - ($margin * 2.0);
-
-        // Tarjeta de Datos del Cliente y Asesor
-        $boxStartY = $pdf->GetY();
-        $pdf->SetFillColor(248, 250, 252);
-        $pdf->SetDrawColor(226, 232, 240);
-        $pdf->Rect($margin, $boxStartY, $contentW, 21.0, 'DF');
-
-        $colW = ($contentW - 8.0) / 2.0;
-        $pdf->SetXY($margin + 3.5, $boxStartY + 2.5);
-        $pdf->SetFont('Helvetica', 'B', 7.5);
-        $pdf->SetTextColor(100, 116, 139);
-        $pdf->Cell($colW, 4.0, starfi_quote_pdf_enc('PREPARADO PARA EL CLIENTE:'), 0, 1, 'L');
-
-        $pdf->SetX($margin + 3.5);
-        $pdf->SetFont('Helvetica', 'B', 9.8);
-        $pdf->SetTextColor(15, 23, 42);
-        $cliName = trim((string)($clientInfo['nombre'] ?? 'Cliente Comercial')) ?: 'Cliente Comercial';
-        $pdf->Cell($colW, 4.8, $pdf->clipTextToWidth($cliName, $colW), 0, 1, 'L');
-
-        $pdf->SetX($margin + 3.5);
-        $pdf->SetFont('Helvetica', '', 8.0);
-        $pdf->SetTextColor(71, 85, 105);
-        $cliSub = 'WhatsApp: +' . preg_replace('/[^0-9]/', '', (string)($clientInfo['numero_whatsapp'] ?? ''));
-        if (!empty($clientInfo['email'])) {
-            $cliSub .= '  |  ' . trim((string)$clientInfo['email']);
-        }
-        $pdf->Cell($colW, 4.2, $pdf->clipTextToWidth($cliSub, $colW), 0, 1, 'L');
-
-        // Columna derecha: Atención comercial en sede
-        $rightX = $margin + 4.5 + $colW;
-        $pdf->SetXY($rightX, $boxStartY + 2.5);
-        $pdf->SetFont('Helvetica', 'B', 7.5);
-        $pdf->SetTextColor(100, 116, 139);
-        $pdf->Cell($colW, 4.0, starfi_quote_pdf_enc('ATENCIÓN COMERCIAL EN SEDE:'), 0, 1, 'L');
-
-        $pdf->SetX($rightX);
-        $pdf->SetFont('Helvetica', 'B', 9.0);
-        $pdf->SetTextColor(15, 23, 42);
-        $asesorLine = 'Asesor: ' . (string)($letterhead['asesor_nombre'] ?? 'Asesor Comercial');
-        $pdf->Cell($colW, 4.8, $pdf->clipTextToWidth($asesorLine, $colW), 0, 1, 'L');
-
-        $pdf->SetX($rightX);
-        $pdf->SetFont('Helvetica', '', 8.0);
-        $pdf->SetTextColor(71, 85, 105);
-        $monedaLine = 'Moneda: USD ($)  |  Validez: ' . intval($quoteMeta['validez_dias'] ?? 7) . ' días continuos';
-        $pdf->Cell($colW, 4.2, $pdf->clipTextToWidth($monedaLine, $colW), 0, 1, 'L');
-
-        $pdf->SetY($boxStartY + 25.0);
-
-        // Encabezado de Tabla de Ítems
-        $wIdx = 12.0;
-        $wQty = 22.0;
-        $wUnit = 34.0;
-        $wSub = 36.0;
-        $wDesc = $contentW - ($wIdx + $wQty + $wUnit + $wSub);
-
-        $drawTableHeader = function () use ($pdf, $wIdx, $wDesc, $wQty, $wUnit, $wSub) {
-            $pdf->SetFillColor(55, 65, 74);
-            $pdf->SetTextColor(255, 255, 255);
-            $pdf->SetDrawColor(55, 65, 74);
-            $pdf->SetFont('Helvetica', 'B', 8.2);
-            $pdf->Cell($wIdx, 7.5, '#', 1, 0, 'C', true);
-            $pdf->Cell($wDesc, 7.5, starfi_quote_pdf_enc('  Descripción del Producto / Servicio'), 1, 0, 'L', true);
-            $pdf->Cell($wQty, 7.5, 'Cant.', 1, 0, 'C', true);
-            $pdf->Cell($wUnit, 7.5, 'Precio Unit. USD', 1, 0, 'R', true);
-            $pdf->Cell($wSub, 7.5, 'Subtotal USD', 1, 1, 'R', true);
-        };
-
-        $drawTableHeader();
-
-        $rowAlt = false;
-        foreach (($calc['items'] ?? []) as $item) {
-            if ($pdf->GetY() > ($pdf->GetPageHeight() - 52)) {
-                $pdf->AddPage();
-                $drawTableHeader();
-            }
-            if ($rowAlt) {
-                $pdf->SetFillColor(248, 250, 252);
-            } else {
-                $pdf->SetFillColor(255, 255, 255);
-            }
-            $pdf->SetDrawColor(226, 232, 240);
-            $pdf->SetTextColor(30, 41, 59);
-            $pdf->SetFont('Helvetica', '', 8.4);
-
-            $qtyFmt = (floor($item['cantidad']) == $item['cantidad'])
-                ? number_format($item['cantidad'], 0)
-                : number_format($item['cantidad'], 2);
-
-            $pdf->Cell($wIdx, 7.0, (string)intval($item['orden']), 1, 0, 'C', true);
-            $pdf->Cell($wDesc, 7.0, '  ' . $pdf->clipTextToWidth((string)$item['descripcion'], $wDesc - 4.0), 1, 0, 'L', true);
-            $pdf->Cell($wQty, 7.0, $qtyFmt, 1, 0, 'C', true);
-            $pdf->Cell($wUnit, 7.0, '$' . number_format((float)$item['precio_unitario_usd'], 2) . ' ', 1, 0, 'R', true);
-            $pdf->SetFont('Helvetica', 'B', 8.4);
-            $pdf->Cell($wSub, 7.0, '$' . number_format((float)$item['subtotal_usd'], 2) . ' ', 1, 1, 'R', true);
-
-            $rowAlt = !$rowAlt;
-        }
-
-        if ($pdf->GetY() > ($pdf->GetPageHeight() - 62)) {
+            $pdf->sedeHeader = $letterhead;
+            $pdf->quoteMeta = $quoteMeta;
+            $pdf->sealAbsPath = $sealAbs;
+            $pdf->AliasNbPages();
+            // CHK-PDF-02: SetTitle antes de SetAutoPageBreak
+            $pdf->SetTitle('Cotizacion ' . ($quoteMeta['codigo'] ?? 'STARFI'), true);
+            $pdf->SetAuthor('STARFI CRM', true);
+            $pdf->SetMargins(14, 14, 14);
+            $pdf->SetAutoPageBreak(true, 24);
             $pdf->AddPage();
-        }
 
-        $yAfterTable = $pdf->GetY() + 4.0;
-        $notesW = $contentW - 76.0;
-        $totW = 70.0;
-        $totX = $margin + $contentW - $totW;
+            $margin = 14.0;
+            $contentW = $pdf->GetPageWidth() - ($margin * 2.0);
 
-        // Bloque de Condiciones / Observaciones a la izquierda
-        $pdf->SetXY($margin, $yAfterTable);
-        $condText = trim((string)($quoteMeta['condiciones'] ?? ''));
-        $notasText = trim((string)($quoteMeta['notas'] ?? ''));
-        if ($condText !== '' || $notasText !== '') {
-            $pdf->SetFont('Helvetica', 'B', 8.0);
-            $pdf->SetTextColor(55, 65, 74);
-            $pdf->Cell($notesW, 4.8, starfi_quote_pdf_enc('CONDICIONES COMERCIALES Y OBSERVACIONES:'), 0, 1, 'L');
-            $pdf->SetFont('Helvetica', '', 7.8);
+            // Tarjeta de Datos del Cliente y Asesor
+            $boxStartY = $pdf->GetY();
+            $pdf->SetFillColor(248, 250, 252);
+            $pdf->SetDrawColor(226, 232, 240);
+            $pdf->Rect($margin, $boxStartY, $contentW, 21.0, 'DF');
+
+            $colW = ($contentW - 8.0) / 2.0;
+            $pdf->SetXY($margin + 3.5, $boxStartY + 2.5);
+            $pdf->SetFont('Helvetica', 'B', 7.5);
+            $pdf->SetTextColor(100, 116, 139);
+            $pdf->Cell($colW, 4.0, starfi_quote_pdf_enc('PREPARADO PARA EL CLIENTE:'), 0, 1, 'L');
+
+            $pdf->SetX($margin + 3.5);
+            $pdf->SetFont('Helvetica', 'B', 9.8);
+            $pdf->SetTextColor(15, 23, 42);
+            $cliName = trim((string)($clientInfo['nombre'] ?? 'Cliente Comercial')) ?: 'Cliente Comercial';
+            $pdf->Cell($colW, 4.8, $pdf->clipTextToWidth($cliName, $colW), 0, 1, 'L');
+
+            $pdf->SetX($margin + 3.5);
+            $pdf->SetFont('Helvetica', '', 8.0);
             $pdf->SetTextColor(71, 85, 105);
+            $cliSub = 'WhatsApp: +' . preg_replace('/[^0-9]/', '', (string)($clientInfo['numero_whatsapp'] ?? ''));
+            if (!empty($clientInfo['email'])) {
+                $cliSub .= '  |  ' . trim((string)$clientInfo['email']);
+            }
+            $pdf->Cell($colW, 4.2, $pdf->clipTextToWidth($cliSub, $colW), 0, 1, 'L');
+
+            // Columna derecha: Atención comercial en sede
+            $rightX = $margin + 4.5 + $colW;
+            $pdf->SetXY($rightX, $boxStartY + 2.5);
+            $pdf->SetFont('Helvetica', 'B', 7.5);
+            $pdf->SetTextColor(100, 116, 139);
+            $pdf->Cell($colW, 4.0, starfi_quote_pdf_enc('ATENCIÓN COMERCIAL EN SEDE:'), 0, 1, 'L');
+
+            $pdf->SetX($rightX);
+            $pdf->SetFont('Helvetica', 'B', 9.0);
+            $pdf->SetTextColor(15, 23, 42);
+            $asesorLine = 'Asesor: ' . (string)($letterhead['asesor_nombre'] ?? 'Asesor Comercial');
+            $pdf->Cell($colW, 4.8, $pdf->clipTextToWidth($asesorLine, $colW), 0, 1, 'L');
+
+            $pdf->SetX($rightX);
+            $pdf->SetFont('Helvetica', '', 8.0);
+            $pdf->SetTextColor(71, 85, 105);
+            $monedaLine = 'Moneda: USD ($)  |  Validez: ' . intval($quoteMeta['validez_dias'] ?? 7) . ' días continuos';
+            $pdf->Cell($colW, 4.2, $pdf->clipTextToWidth($monedaLine, $colW), 0, 1, 'L');
+
+            $pdf->SetY($boxStartY + 25.0);
+
+            // Encabezado de Tabla de Ítems
+            $wIdx = 12.0;
+            $wQty = 22.0;
+            $wUnit = 34.0;
+            $wSub = 36.0;
+            $wDesc = $contentW - ($wIdx + $wQty + $wUnit + $wSub);
+
+            $drawTableHeader = function () use ($pdf, $wIdx, $wDesc, $wQty, $wUnit, $wSub) {
+                $pdf->SetFillColor(55, 65, 74);
+                $pdf->SetTextColor(255, 255, 255);
+                $pdf->SetDrawColor(55, 65, 74);
+                $pdf->SetFont('Helvetica', 'B', 8.2);
+                $pdf->Cell($wIdx, 7.5, '#', 1, 0, 'C', true);
+                $pdf->Cell($wDesc, 7.5, starfi_quote_pdf_enc('  Descripción del Producto / Servicio'), 1, 0, 'L', true);
+                $pdf->Cell($wQty, 7.5, 'Cant.', 1, 0, 'C', true);
+                $pdf->Cell($wUnit, 7.5, 'Precio Unit. USD', 1, 0, 'R', true);
+                $pdf->Cell($wSub, 7.5, 'Subtotal USD', 1, 1, 'R', true);
+            };
+
+            $drawTableHeader();
+
+            $rowAlt = false;
+            foreach (($calc['items'] ?? []) as $item) {
+                if ($pdf->GetY() > ($pdf->GetPageHeight() - 36.0)) {
+                    $pdf->AddPage();
+                    $drawTableHeader();
+                }
+                if ($rowAlt) {
+                    $pdf->SetFillColor(248, 250, 252);
+                } else {
+                    $pdf->SetFillColor(255, 255, 255);
+                }
+                $pdf->SetDrawColor(226, 232, 240);
+                $pdf->SetTextColor(30, 41, 59);
+                $pdf->SetFont('Helvetica', '', 8.4);
+
+                $qtyFmt = (floor($item['cantidad']) == $item['cantidad'])
+                    ? number_format($item['cantidad'], 0)
+                    : number_format($item['cantidad'], 2);
+
+                $pdf->Cell($wIdx, 7.0, (string)intval($item['orden']), 1, 0, 'C', true);
+                $pdf->Cell($wDesc, 7.0, '  ' . $pdf->clipTextToWidth((string)$item['descripcion'], $wDesc - 4.0), 1, 0, 'L', true);
+                $pdf->Cell($wQty, 7.0, $qtyFmt, 1, 0, 'C', true);
+                $pdf->Cell($wUnit, 7.0, '$' . number_format((float)$item['precio_unitario_usd'], 2) . ' ', 1, 0, 'R', true);
+                $pdf->SetFont('Helvetica', 'B', 8.4);
+                $pdf->Cell($wSub, 7.0, '$' . number_format((float)$item['subtotal_usd'], 2) . ' ', 1, 1, 'R', true);
+
+                $rowAlt = !$rowAlt;
+            }
+
+            // QA-BUG-CRM6-02: Pre-calcular alturas reales de Condiciones/Notas y Cuadro de Totales USD
+            // para que ambos arranquen sincronizados en la misma coordenada Y sin desfases multipágina.
+            $notesW = $contentW - 76.0;
+            $totW = 70.0;
+            $totX = $margin + $contentW - $totW;
+
+            $condText = trim((string)($quoteMeta['condiciones'] ?? ''));
+            $notasText = trim((string)($quoteMeta['notas'] ?? ''));
             $combinedNotes = trim($condText . ($condText !== '' && $notasText !== '' ? "\n" : '') . $notasText);
-            $pdf->MultiCell($notesW, 4.2, starfi_quote_pdf_enc($combinedNotes), 0, 'L');
-        }
 
-        // Cuadro Resumen de Totales USD a la derecha
-        $pdf->SetXY($totX, $yAfterTable);
-        $pdf->SetFont('Helvetica', '', 8.4);
-        $pdf->SetTextColor(71, 85, 105);
-        $pdf->SetDrawColor(226, 232, 240);
-        $pdf->SetFillColor(248, 250, 252);
-        $pdf->Cell(38, 6.2, 'Subtotal:', 1, 0, 'R', true);
-        $pdf->SetFont('Helvetica', 'B', 8.4);
-        $pdf->SetTextColor(15, 23, 42);
-        $pdf->Cell(32, 6.2, '$' . number_format((float)$calc['subtotal_usd'], 2) . ' ', 1, 1, 'R', true);
+            $notesHeight = 0.0;
+            if ($combinedNotes !== '') {
+                $pdf->SetFont('Helvetica', '', 7.8);
+                $wrappedLines = $pdf->estimateWrappedLines($notesW, $combinedNotes);
+                $notesHeight = 4.8 + ($wrappedLines * 4.2) + 2.0;
+            }
 
-        if ((float)$calc['descuento_usd'] > 0) {
-            $pdf->SetX($totX);
-            $pdf->SetFont('Helvetica', '', 8.4);
-            $pdf->SetTextColor(185, 28, 28);
-            $pdf->Cell(38, 6.2, 'Descuento:', 1, 0, 'R', true);
-            $pdf->SetFont('Helvetica', 'B', 8.4);
-            $pdf->Cell(32, 6.2, '-$' . number_format((float)$calc['descuento_usd'], 2) . ' ', 1, 1, 'R', true);
-        }
+            $totalsLineRows = 1; // Subtotal
+            if ((float)$calc['descuento_usd'] > 0) {
+                $totalsLineRows++;
+            }
+            if (!empty($calc['aplica_iva']) && (float)$calc['iva_monto_usd'] > 0) {
+                $totalsLineRows++;
+            }
+            $totalsHeight = ($totalsLineRows * 6.2) + 7.8 + 2.0;
 
-        if (!empty($calc['aplica_iva']) && (float)$calc['iva_monto_usd'] > 0) {
-            $pdf->SetX($totX);
+            $maxPrintableY = $pdf->GetPageHeight() - 25.0;
+            // Si el bloque combinado cabe en una hoja limpia pero no cabe en el remanente actual, saltar de hoja ANTES de dibujar ambos
+            $effectiveBlockH = max($totalsHeight, min($notesHeight, 165.0));
+            if (($pdf->GetY() + 4.0 + $effectiveBlockH) > $maxPrintableY) {
+                $pdf->AddPage();
+            }
+
+            $ySummaryTop = $pdf->GetY() + 4.0;
+
+            // 1) Dibujar primero el Cuadro Fijo de Totales USD en ($totX, $ySummaryTop) de la página activa
+            $pdf->SetXY($totX, $ySummaryTop);
             $pdf->SetFont('Helvetica', '', 8.4);
             $pdf->SetTextColor(71, 85, 105);
-            $pdf->Cell(38, 6.2, 'IVA (' . number_format((float)$calc['iva_pct'], 0) . '%):', 1, 0, 'R', true);
+            $pdf->SetDrawColor(226, 232, 240);
+            $pdf->SetFillColor(248, 250, 252);
+            $pdf->Cell(38, 6.2, 'Subtotal:', 1, 0, 'R', true);
             $pdf->SetFont('Helvetica', 'B', 8.4);
             $pdf->SetTextColor(15, 23, 42);
-            $pdf->Cell(32, 6.2, '$' . number_format((float)$calc['iva_monto_usd'], 2) . ' ', 1, 1, 'R', true);
-        }
+            $pdf->Cell(32, 6.2, '$' . number_format((float)$calc['subtotal_usd'], 2) . ' ', 1, 1, 'R', true);
 
-        $pdf->SetX($totX);
-        $pdf->SetFillColor(232, 91, 20);
-        $pdf->SetDrawColor(232, 91, 20);
-        $pdf->SetTextColor(255, 255, 255);
-        $pdf->SetFont('Helvetica', 'B', 9.2);
-        $pdf->Cell(38, 7.8, 'TOTAL USD:', 1, 0, 'R', true);
-        $pdf->Cell(32, 7.8, '$' . number_format((float)$calc['total_usd'], 2) . ' ', 1, 1, 'R', true);
+            if ((float)$calc['descuento_usd'] > 0) {
+                $pdf->SetX($totX);
+                $pdf->SetFont('Helvetica', '', 8.4);
+                $pdf->SetTextColor(185, 28, 28);
+                $pdf->Cell(38, 6.2, 'Descuento:', 1, 0, 'R', true);
+                $pdf->SetFont('Helvetica', 'B', 8.4);
+                $pdf->SetTextColor(185, 28, 28);
+                $pdf->Cell(32, 6.2, '-$' . number_format((float)$calc['descuento_usd'], 2) . ' ', 1, 1, 'R', true);
+            }
 
-        return $pdf->Output('S');
+            if (!empty($calc['aplica_iva']) && (float)$calc['iva_monto_usd'] > 0) {
+                $pdf->SetX($totX);
+                $pdf->SetFont('Helvetica', '', 8.4);
+                $pdf->SetTextColor(71, 85, 105);
+                $pdf->Cell(38, 6.2, 'IVA (' . number_format((float)$calc['iva_pct'], 0) . '%):', 1, 0, 'R', true);
+                $pdf->SetFont('Helvetica', 'B', 8.4);
+                $pdf->SetTextColor(15, 23, 42);
+                $pdf->Cell(32, 6.2, '$' . number_format((float)$calc['iva_monto_usd'], 2) . ' ', 1, 1, 'R', true);
+            }
+
+            $pdf->SetX($totX);
+            $pdf->SetFillColor(232, 91, 20);
+            $pdf->SetDrawColor(232, 91, 20);
+            $pdf->SetTextColor(255, 255, 255);
+            $pdf->SetFont('Helvetica', 'B', 9.2);
+            $pdf->Cell(38, 7.8, 'TOTAL USD:', 1, 0, 'R', true);
+            $pdf->Cell(32, 7.8, '$' . number_format((float)$calc['total_usd'], 2) . ' ', 1, 1, 'R', true);
+            $totalsEndPage = $pdf->PageNo();
+            $totalsEndY = $pdf->GetY();
+
+            // 2) Dibujar Condiciones / Observaciones a la izquierda comenzando exactamente en $ySummaryTop
+            if ($combinedNotes !== '') {
+                $pdf->SetXY($margin, $ySummaryTop);
+                $pdf->SetFont('Helvetica', 'B', 8.0);
+                $pdf->SetTextColor(55, 65, 74);
+                $pdf->Cell($notesW, 4.8, starfi_quote_pdf_enc('CONDICIONES COMERCIALES Y OBSERVACIONES:'), 0, 1, 'L');
+                $pdf->SetX($margin);
+                $pdf->SetFont('Helvetica', '', 7.8);
+                $pdf->SetTextColor(71, 85, 105);
+                $pdf->MultiCell($notesW, 4.2, starfi_quote_pdf_enc($combinedNotes), 0, 'L');
+            }
+
+            if ($pdf->PageNo() === $totalsEndPage && $pdf->GetY() < $totalsEndY) {
+                $pdf->SetY($totalsEndY);
+            }
+
+            return $pdf->Output('S');
         } finally {
             foreach ($tmpLogoCleanup as $tf) {
                 if (is_string($tf) && $tf !== '' && is_file($tf)) {
@@ -768,7 +928,23 @@ class QuickQuotePdfService
             if (!$cliOnly) {
                 return ['ok' => false, 'http_code' => 404, 'message' => 'Cliente no encontrado.'];
             }
-            $cliSede = intval($cliOnly['id_sede'] ?? $userSede);
+            $cliSede = intval($cliOnly['id_sede'] ?? 0);
+            if ($cliSede <= 0) {
+                // Intentar resolver sede desde la conversación más reciente del cliente
+                $stmtCvS = $con->prepare("SELECT l.id_sede FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id_cliente = ? ORDER BY c.id DESC LIMIT 1");
+                if ($stmtCvS) {
+                    $stmtCvS->bind_param("i", $clienteId);
+                    $stmtCvS->execute();
+                    $rCvS = $stmtCvS->get_result();
+                    if ($rCvS && ($rwCvS = $rCvS->fetch_assoc())) {
+                        $cliSede = intval($rwCvS['id_sede'] ?? 0);
+                    }
+                    $stmtCvS->close();
+                }
+            }
+            if ($cliSede <= 0 && $userSede > 0) {
+                $cliSede = $userSede;
+            }
             if (!$isMaster && ($userSede <= 0 || ($cliSede > 0 && $cliSede !== $userSede))) {
                 return ['ok' => false, 'http_code' => 403, 'message' => 'No tienes autorización para cotizar a un cliente de otra sede.'];
             }
@@ -776,7 +952,7 @@ class QuickQuotePdfService
                 'id'              => 0,
                 'id_cliente'      => intval($cliOnly['id']),
                 'id_empresa'      => intval($cliOnly['id_empresa'] ?? 1),
-                'id_sede'         => $cliSede > 0 ? $cliSede : $userSede,
+                'id_sede'         => max(0, $cliSede),
                 'cliente_nombre'  => $cliOnly['cliente_nombre'] ?? '',
                 'numero_whatsapp' => $cliOnly['numero_whatsapp'] ?? '',
                 'cliente_email'   => $cliOnly['cliente_email'] ?? '',
@@ -808,7 +984,7 @@ class QuickQuotePdfService
             }
         }
 
-        $idSede = intval($chatRow['id_sede'] ?? 0);
+        $idSede = max(0, intval($chatRow['id_sede'] ?? 0));
         $idEmpresa = max(1, intval($chatRow['id_empresa'] ?? 1));
         $validezDias = max(1, min(90, intval($payload['validez_dias'] ?? 7)));
         $condiciones = trim((string)($payload['condiciones'] ?? 'Precios expresados en USD. Cotización sujeta a disponibilidad de inventario al momento del pago.'));
@@ -816,34 +992,60 @@ class QuickQuotePdfService
 
         $letterhead = self::resolveSedeLetterhead($con, $idSede, $idEmpresa, $agenteId);
 
-        // Transacción atómica compatible con transacciones externas de certificación QA
+        // Transacción atómica compatible con transacciones externas de certificación QA (SAVEPOINT literal sin interpolación)
         $ownTx = !(function_exists('starfi_tx_is_active') && starfi_tx_is_active($con));
         if ($ownTx) {
             $con->begin_transaction();
             if (function_exists('starfi_tx_set_active')) {
                 starfi_tx_set_active($con, true);
             }
+        } else {
+            @$con->query('SAVEPOINT sp_starfi_quick_quote');
         }
 
+        // QA-BUG-CRM6-03: Inicializar $pdfAbsPath fuera del try para limpieza garantizada ante rollback/excepción
+        $pdfAbsPath = '';
+
         try {
-            // Bloqueo pesimista sobre la sede para correlativo único libre de colisiones (CHK-SEC-05)
-            $stmtLock = $con->prepare("SELECT id FROM sedes WHERE id = ? FOR UPDATE");
-            if ($stmtLock) {
-                $stmtLock->bind_param("i", $idSede);
-                $stmtLock->execute();
-                $stmtLock->close();
+            // Bloqueo pesimista efectivo (CHK-SEC-05): sobre `sedes` si id_sede > 0, con fallback garantizado sobre `config_sla` id_sede = 0
+            $lockedRows = 0;
+            if ($idSede > 0) {
+                $stmtLock = $con->prepare("SELECT id FROM sedes WHERE id = ? FOR UPDATE");
+                if ($stmtLock) {
+                    $stmtLock->bind_param("i", $idSede);
+                    $stmtLock->execute();
+                    $rLock = $stmtLock->get_result();
+                    $lockedRows = $rLock ? $rLock->num_rows : 0;
+                    $stmtLock->close();
+                }
+            }
+            if ($lockedRows === 0) {
+                $stmtLockZero = $con->prepare("SELECT id_sede FROM config_sla WHERE id_sede = 0 FOR UPDATE");
+                if ($stmtLockZero) {
+                    $stmtLockZero->execute();
+                    $rZero = $stmtLockZero->get_result();
+                    if ($rZero) {
+                        $rZero->free();
+                    }
+                    $stmtLockZero->close();
+                }
             }
 
+            // QA-BUG-CRM6-03: Correlativo diario MAX(...) + 1 inmune a eliminaciones intermedias
             $prefixDay = 'COT-S' . $idSede . '-' . date('Ymd') . '-';
             $likeDay = $prefixDay . '%';
             $seqNext = 1;
-            $stmtSeq = $con->prepare("SELECT COUNT(*) AS c FROM cotizaciones_rapidas WHERE id_sede = ? AND codigo_cotizacion LIKE ?");
+            $stmtSeq = $con->prepare("
+                SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(codigo_cotizacion, '-', -1) AS UNSIGNED)), 0) AS max_seq
+                FROM cotizaciones_rapidas
+                WHERE id_sede = ? AND codigo_cotizacion LIKE ?
+            ");
             if ($stmtSeq) {
                 $stmtSeq->bind_param("is", $idSede, $likeDay);
                 $stmtSeq->execute();
                 $rSeq = $stmtSeq->get_result();
                 if ($rSeq && ($rwSeq = $rSeq->fetch_assoc())) {
-                    $seqNext = intval($rwSeq['c'] ?? 0) + 1;
+                    $seqNext = intval($rwSeq['max_seq'] ?? 0) + 1;
                 }
                 $stmtSeq->close();
             }
@@ -876,9 +1078,14 @@ class QuickQuotePdfService
             $pdfFilename = 'media_cot_' . $safeCodeSlug . '_' . bin2hex(random_bytes(3)) . '.pdf';
             $pdfAbsPath = rtrim($uploadsDir, '/\\') . DIRECTORY_SEPARATOR . $pdfFilename;
             if (@file_put_contents($pdfAbsPath, $pdfBinary) === false) {
+                $pdfAbsPath = '';
                 throw new RuntimeException('No se pudo escribir el archivo PDF de cotización en disco.');
             }
             $pdfRelDb = '../../assets/uploads/' . $pdfFilename;
+
+            if (PHP_SAPI === 'cli' && !empty($payload['__qa_force_rollback_after_pdf'])) {
+                throw new RuntimeException('Fallo transaccional simulado post-escritura PDF para prueba QA.');
+            }
 
             // Sincronizar oportunidad en Embudo de Ventas (pipeline_oportunidades) con SELECT ... FOR UPDATE
             $totalUsd = (float)$calc['total_usd'];
@@ -1001,6 +1208,8 @@ class QuickQuotePdfService
                 if (function_exists('starfi_tx_set_active')) {
                     starfi_tx_set_active($con, false);
                 }
+            } else {
+                @$con->query('RELEASE SAVEPOINT sp_starfi_quick_quote');
             }
         } catch (Throwable $e) {
             if ($ownTx) {
@@ -1008,6 +1217,11 @@ class QuickQuotePdfService
                 if (function_exists('starfi_tx_set_active')) {
                     starfi_tx_set_active($con, false);
                 }
+            } else {
+                @$con->query('ROLLBACK TO SAVEPOINT sp_starfi_quick_quote');
+            }
+            if ($pdfAbsPath !== '' && is_file($pdfAbsPath)) {
+                @unlink($pdfAbsPath);
             }
             starfi_log_exception('bandeja', 'Error en QuickQuotePdfService::createAndDispatchQuickQuote', ['error' => $e->getMessage()]);
             return ['ok' => false, 'http_code' => 500, 'message' => 'No se pudo generar la cotización PDF en este momento.'];

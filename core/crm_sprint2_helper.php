@@ -74,6 +74,125 @@ if (!function_exists('starfi_detect_safe_chat_media')) {
     }
 }
 
+if (!function_exists('starfi_find_local_ffmpeg_binary')) {
+    /**
+     * Localiza un binario local de FFmpeg (si está instalado en el servidor) sin invocar shells.
+     */
+    function starfi_find_local_ffmpeg_binary() {
+        $candidates = [
+            'C:/ffmpeg/bin/ffmpeg.exe',
+            'C:/xampp/ffmpeg/bin/ffmpeg.exe',
+            'C:/Program Files/ffmpeg/bin/ffmpeg.exe',
+            '/usr/bin/ffmpeg',
+            '/usr/local/bin/ffmpeg',
+        ];
+        $pathEnv = (string)(getenv('PATH') ?: '');
+        if ($pathEnv !== '') {
+            $sep = (DIRECTORY_SEPARATOR === '\\') ? ';' : ':';
+            foreach (explode($sep, $pathEnv) as $dir) {
+                $dir = rtrim(trim($dir, " \t\n\r\0\x0B\""), '/\\');
+                if ($dir === '') continue;
+                $candidates[] = $dir . DIRECTORY_SEPARATOR . (DIRECTORY_SEPARATOR === '\\' ? 'ffmpeg.exe' : 'ffmpeg');
+            }
+        }
+        foreach ($candidates as $bin) {
+            if (@is_file($bin) && @is_executable($bin)) {
+                return $bin;
+            }
+            if (DIRECTORY_SEPARATOR === '\\' && @is_file($bin)) {
+                return $bin;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('starfi_prepare_meta_compatible_voice_audio')) {
+    /**
+     * Garantiza compatibilidad estricta con Meta WhatsApp Cloud API v23.0 (QA-BUG-CRM6-04 / CHK-CLD-02).
+     * Meta /media admite únicamente audio/ogg (Opus), audio/mp4, audio/mpeg, audio/aac y audio/amr.
+     * Si recibe audio/webm o audio/wav:
+     *   1) Intenta transcodificar localmente a audio/ogg (Opus) mediante proc_open([ffmpeg, ...]) si existe FFmpeg.
+     *   2) Si no hay FFmpeg y la línea posee meta_token productivo activo ($requiresMetaCloud = true),
+     *      rechaza preventivamente antes de generar errores HTTP 400 (#100) o mensajes FALLIDO.
+     */
+    function starfi_prepare_meta_compatible_voice_audio($sourcePath, array $mediaSpec, $requiresMetaCloud = true, $forcedFfmpegBin = '__AUTO__') {
+        $metaNativeMimes = ['audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/aac', 'audio/amr'];
+        $curMime = strtolower((string)($mediaSpec['mime'] ?? ''));
+        if (in_array($curMime, $metaNativeMimes, true)) {
+            return [
+                'ok'         => true,
+                'source'     => $sourcePath,
+                'spec'       => $mediaSpec,
+                'transcoded' => false,
+                'temp_file'  => null,
+            ];
+        }
+
+        // Codecs no nativos de Meta Cloud API (ej. audio/webm, audio/wav)
+        $ffmpegBin = ($forcedFfmpegBin === '__AUTO__') ? starfi_find_local_ffmpeg_binary() : $forcedFfmpegBin;
+        if (is_string($ffmpegBin) && $ffmpegBin !== '' && @is_file($ffmpegBin) && function_exists('proc_open')) {
+            $tmpOgg = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'starfi_voice_opus_' . bin2hex(random_bytes(6)) . '.ogg';
+            $cmd = [
+                $ffmpegBin,
+                '-y',
+                '-i', $sourcePath,
+                '-vn',
+                '-c:a', 'libopus',
+                '-b:a', '32k',
+                $tmpOgg,
+            ];
+            $desc = [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ];
+            $proc = @proc_open($cmd, $desc, $pipes);
+            if (is_resource($proc)) {
+                @fclose($pipes[0]);
+                @stream_get_contents($pipes[1]);
+                @stream_get_contents($pipes[2]);
+                @fclose($pipes[1]);
+                @fclose($pipes[2]);
+                $exitCode = @proc_close($proc);
+                if ($exitCode === 0 && @is_file($tmpOgg) && @filesize($tmpOgg) > 0) {
+                    return [
+                        'ok'         => true,
+                        'source'     => $tmpOgg,
+                        'spec'       => [
+                            'ext'       => 'ogg',
+                            'mime'      => 'audio/ogg',
+                            'tipo_bd'   => 'AUDIO',
+                            'meta_type' => 'audio',
+                        ],
+                        'transcoded' => true,
+                        'temp_file'  => $tmpOgg,
+                    ];
+                }
+            }
+            if (@is_file($tmpOgg)) {
+                @unlink($tmpOgg);
+            }
+        }
+
+        if ($requiresMetaCloud) {
+            return [
+                'ok'      => false,
+                'code'    => 'UNSUPPORTED_VOICE_CODEC',
+                'message' => 'El formato de audio capturado (' . $curMime . ') no es admitido por Meta WhatsApp Cloud API v23.0 (requiere OGG/Opus, MP4/M4A, MP3 o AAC) y el servidor no dispone de FFmpeg local para convertirlo. Utiliza Google Chrome 126+, Microsoft Edge 126+, Firefox o Safari.',
+            ];
+        }
+
+        return [
+            'ok'         => true,
+            'source'     => $sourcePath,
+            'spec'       => $mediaSpec,
+            'transcoded' => false,
+            'temp_file'  => null,
+        ];
+    }
+}
+
 if (!function_exists('starfi_db_schema_hash')) {
     function starfi_db_schema_hash($con) {
         static $cached = [];

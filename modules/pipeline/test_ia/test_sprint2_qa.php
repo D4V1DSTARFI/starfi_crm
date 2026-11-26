@@ -1259,6 +1259,256 @@ if ($con) {
             implode(', ', $unexpectedRootItems)
         );
 
+        // =====================================================================
+        // 10. Pruebas Forenses de Remediación OT-QA-CRM-2026-1126-06 (QA-BUG-CRM6-01 .. QA-BUG-CRM6-04)
+        // =====================================================================
+
+        // (a) QA-BUG-CRM6-01 (S0 — CHK-SEC-01, CHK-ARC-02, CHK-ARC-03):
+        //     - index.php desacoplado de ajax_agenda_topbar
+        //     - api_notificaciones.php responde HTTP 401 JSON sin sesión (0 redirección 302 HTML)
+        //     - requireAuth(false) NO altera $_SESSION['last_activity'] y expira tras >1800s
+        //     - RBAC en getTopbarAlertsAndAgenda() restringe tareas de terceros si ADMIN carece de permisos comerciales
+        $indexPhpSrc = (string)file_get_contents($root . '/index.php');
+        $topbarJsSrc = (string)file_get_contents($root . '/assets/js/starfi_topbar_agenda.js');
+        $probeNoSessTopbar = qa_run_cgi_http_probe_full(
+            $root . '/api_notificaciones.php',
+            'POST',
+            [
+                'CONTENT_TYPE'            => 'application/x-www-form-urlencoded',
+                'HTTP_ACCEPT'             => 'application/json',
+                'HTTP_X_REQUESTED_WITH'   => 'XMLHttpRequest',
+                'QUERY_STRING'            => 'ajax_agenda_topbar=1',
+            ],
+            'ajax_agenda_topbar=1&agenda_action=quick_create_task'
+        );
+        $noSessTopbarBody = '';
+        if ($probeNoSessTopbar && strpos($probeNoSessTopbar['stdout'], "\r\n\r\n") !== false) {
+            $noSessTopbarBody = substr($probeNoSessTopbar['stdout'], strpos($probeNoSessTopbar['stdout'], "\r\n\r\n") + 4);
+        }
+        $noSessJson = $noSessTopbarBody !== '' ? json_decode($noSessTopbarBody, true) : null;
+
+        require_once $root . '/core/auth.php';
+        $frozenActivity = time() - 900;
+        $_SESSION['agente_id'] = 1;
+        $_SESSION['last_activity'] = $frozenActivity;
+        requireAuth(false);
+        $afterPassiveAct = intval($_SESSION['last_activity'] ?? 0);
+        requireAuth(true);
+        $afterActiveAct = intval($_SESSION['last_activity'] ?? 0);
+
+        // Verificar expiración real tras >1800s vía subproceso PHP aislado para capturar HTTP 401 JSON sin terminar este proceso
+        $tmpExpScript = tempnam(sys_get_temp_dir(), 'qa_exp_');
+        file_put_contents($tmpExpScript, '<?php $_SERVER["HTTP_ACCEPT"]="application/json"; require ' . var_export($root . '/core/auth.php', true) . '; $_SESSION["agente_id"]=1; $_SESSION["last_activity"]=time()-1805; requireAuth(false); echo "SHOULD_NOT_REACH";');
+        $expOut = (string)@shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($tmpExpScript) . ' 2>&1');
+        @unlink($tmpExpScript);
+        $expJson = json_decode(trim($expOut), true);
+
+        // Verificar aislamiento RBAC de tareas de otros asesores cuando un ADMIN no posee permisos comerciales
+        $resTaskThirdParty = CommercialAgendaService::createTask($con, $agAlfaMock, [
+            'conversacion_id'        => $cvAlfa,
+            'cliente_id'             => $cAlfa,
+            'titulo'                 => 'Seguimiento confidencial asesor 99951',
+            'tipo'                   => 'LLAMADA',
+            'prioridad'              => 'ALTA',
+            'fecha_vencimiento'      => date('Y-m-d H:i:s', time() + 600),
+            'recordatorio_min_antes' => 15,
+        ]);
+        $adminNoCommPerm = ['id' => 99959, 'rol' => 'ADMIN', 'id_sede' => 9951, '__can_view_commercial_team' => 0];
+        $adminWithCommPerm = ['id' => 99959, 'rol' => 'ADMIN', 'id_sede' => 9951, '__can_view_commercial_team' => 1];
+        $feedAdminRestricted = CommercialAgendaService::getTopbarAlertsAndAgenda($con, $adminNoCommPerm, false);
+        $feedAdminAllowed = CommercialAgendaService::getTopbarAlertsAndAgenda($con, $adminWithCommPerm, false);
+
+        qa_check("QA-BUG-CRM6-01 (S0): ajax_agenda_topbar desacoplado a api_notificaciones.php con HTTP 401 JSON sin sesión, requireAuth(false) sin renovar last_activity, expiración exacta >1800s y RBAC modular",
+            strpos($indexPhpSrc, 'ajax_agenda_topbar') === false &&
+            strpos($topbarJsSrc, "'X-Requested-With': 'XMLHttpRequest'") !== false &&
+            ($probeNoSessTopbar === null || ($probeNoSessTopbar['code'] === 401 && stripos($probeNoSessTopbar['stdout'], 'Location:') === false && is_array($noSessJson) && ($noSessJson['code'] ?? '') === 'NO_SESSION')) &&
+            $afterPassiveAct === $frozenActivity &&
+            $afterActiveAct >= (time() - 3) &&
+            is_array($expJson) && ($expJson['code'] ?? '') === 'SESSION_EXPIRED' &&
+            !empty($resTaskThirdParty['ok']) &&
+            intval($feedAdminRestricted['total_pending'] ?? -1) === 0 &&
+            intval($feedAdminAllowed['total_pending'] ?? 0) >= 1
+        );
+
+        // (b) QA-BUG-CRM6-02 (S1 — CHK-CLD-01, CHK-UIX-03, CHK-UIX-05):
+        //     - Aislamiento estricto de empresa_perfil por id_sede sin fugas de RIF entre sedes
+        //     - Paginación coherente FPDF multipágina (18 ítems + 12 líneas de notas)
+        $con->query("INSERT INTO empresa_perfil (id_sede, razon_social, letra, rif, direccion) VALUES (9951, 'Corporacion Exclusiva Sede Alfa C.A.', 'J', '995188880', 'Av. Principal Sede Alfa')");
+        $lhAlfa = QuickQuotePdfService::resolveSedeLetterhead($con, 9951, 1, 1);
+        $lhBeta = QuickQuotePdfService::resolveSedeLetterhead($con, 9952, 1, 1);
+
+        $stressItems = [];
+        for ($k = 1; $k <= 18; $k++) {
+            $stressItems[] = [
+                'descripcion'         => "Tablero Melamina Corporativo Ítem #$k (2.44m x 1.22m)",
+                'cantidad'            => 2,
+                'precio_unitario_usd' => 35.50,
+            ];
+        }
+        $stressCalc = QuickQuotePdfService::calculateQuoteTotals($stressItems, 10.00, true, 16.0);
+        $stressNotes = implode("\n", array_fill(0, 12, "Condición operativa de entrega, embalaje certificado y verificación de lote en almacén de sede."));
+        $stressPdfBin = QuickQuotePdfService::renderQuotePdfBinary(
+            $lhBeta,
+            ['nombre' => 'Cliente Stress Multipágina', 'numero_whatsapp' => '584140001122', 'email' => 'stress@cliente.local'],
+            [
+                'codigo'        => 'COT-S9952-STRESS',
+                'fecha_emision' => date('d/m/Y'),
+                'fecha_validez' => date('d/m/Y', strtotime('+7 days')),
+                'validez_dias'  => 7,
+                'condiciones'   => 'Precios sujetos a disponibilidad inmediata.',
+                'notas'         => $stressNotes,
+            ],
+            $stressCalc
+        );
+        // Descomprimir los flujos FlateDecode por página para verificar que TOTAL USD: y CONDICIONES COMERCIALES residan exactamente en la misma página
+        $hasMultiPage = (preg_match('/\/Count\s+([2-9]|\d{2,})\b/', $stressPdfBin) === 1);
+        $samePageSummary = false;
+        if (preg_match_all('/stream[\r\n]+(.*?)[\r\n]+endstream/s', $stressPdfBin, $mStreams)) {
+            foreach ($mStreams[1] as $rawStream) {
+                $decodedStream = @gzuncompress($rawStream);
+                if ($decodedStream === false) {
+                    $decodedStream = $rawStream;
+                }
+                if (strpos($decodedStream, '(TOTAL USD:)') !== false && strpos($decodedStream, 'CONDICIONES COMERCIALES') !== false) {
+                    $samePageSummary = true;
+                    break;
+                }
+            }
+        }
+
+        qa_check("QA-BUG-CRM6-02 (S1): resolveSedeLetterhead() aísla empresa_perfil por id_sede (0 fuga de RIF a Sede Beta) y FPDF alinea TOTAL USD + Condiciones en la misma página en cotización de 18 ítems",
+            ($lhAlfa['rif'] ?? '') === 'J-995188880' &&
+            ($lhBeta['rif'] ?? '') === 'N/A' &&
+            substr($stressPdfBin, 0, 5) === '%PDF-' &&
+            $hasMultiPage &&
+            $samePageSummary
+        );
+
+        // (c) QA-BUG-CRM6-03 (S1 — CHK-SEC-05, CHK-ARC-07):
+        //     - Correlativo MAX(...) + 1 inmune a eliminación de #0001
+        //     - Limpieza garantizada de PDF en disco ante fallo transaccional / rollback
+        $con->query("INSERT INTO mensajes_y_eventos (id_conversacion, origen, tipo, contenido, timestamp) VALUES ($cvBeta, 'CLIENTE', 'TEXTO', 'Solicito cotización en Sede Beta', NOW())");
+        $con->query("UPDATE lineas_whatsapp SET meta_token = 'temp_token' WHERE id = $lBeta");
+        $agBetaAssigned = ['id' => $opA, 'rol' => 'OPERADOR', 'id_sede' => 9952];
+
+        $qBeta1 = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agBetaAssigned, [
+            'conversacion_id' => $cvBeta,
+            'cliente_id'      => $cBeta,
+            'items'           => [['descripcion' => 'Ítem Correlativo 1', 'cantidad' => 1, 'precio_unitario_usd' => 50]],
+        ], true);
+        $qBeta2 = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agBetaAssigned, [
+            'conversacion_id' => $cvBeta,
+            'cliente_id'      => $cBeta,
+            'items'           => [['descripcion' => 'Ítem Correlativo 2', 'cantidad' => 1, 'precio_unitario_usd' => 60]],
+        ], true);
+
+        // Eliminar el registro #0001 y emitir una tercera cotización: debe obtener sufijo -0003 sin colisionar con -0002
+        $idCotB1 = intval($qBeta1['id_cotizacion'] ?? 0);
+        if ($idCotB1 > 0) {
+            $con->query("DELETE FROM cotizaciones_rapidas WHERE id = $idCotB1");
+        }
+        $qBeta3 = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agBetaAssigned, [
+            'conversacion_id' => $cvBeta,
+            'cliente_id'      => $cBeta,
+            'items'           => [['descripcion' => 'Ítem Correlativo 3 post-baja', 'cantidad' => 1, 'precio_unitario_usd' => 70]],
+        ], true);
+
+        foreach ([$qBeta1, $qBeta2, $qBeta3] as $qClean) {
+            $pClean = (string)($qClean['pdf_abs_path'] ?? '');
+            if ($pClean !== '' && is_file($pClean)) {
+                @unlink($pClean);
+            }
+        }
+
+        // Forzar fallo transaccional después de escribir el PDF y comprobar 0 archivos huérfanos en assets/uploads/
+        $uploadsDirReal = $root . '/assets/uploads';
+        $beforeFiles = glob($uploadsDirReal . '/media_cot_COT_S9952_*.pdf') ?: [];
+        $qFailRollback = QuickQuotePdfService::createAndDispatchQuickQuote($con, $agBetaAssigned, [
+            'conversacion_id'              => $cvBeta,
+            'cliente_id'                   => $cBeta,
+            'items'                        => [['descripcion' => 'Ítem Rollback Test', 'cantidad' => 1, 'precio_unitario_usd' => 99]],
+            '__qa_force_rollback_after_pdf' => 1,
+        ], true);
+        $afterFiles = glob($uploadsDirReal . '/media_cot_COT_S9952_*.pdf') ?: [];
+
+        qa_check("QA-BUG-CRM6-03 (S1): Correlativo COT-S* aplica MAX(...) + 1 sin colisionar tras bajas (-0003) y elimina archivos PDF huérfanos en rollback",
+            !empty($qBeta1['ok']) && substr((string)$qBeta1['codigo_cotizacion'], -5) === '-0001' &&
+            !empty($qBeta2['ok']) && substr((string)$qBeta2['codigo_cotizacion'], -5) === '-0002' &&
+            !empty($qBeta3['ok']) && substr((string)$qBeta3['codigo_cotizacion'], -5) === '-0003' &&
+            empty($qFailRollback['ok']) &&
+            count($afterFiles) === count($beforeFiles)
+        );
+
+        // (d) QA-BUG-CRM6-04 (S2 — CHK-CLD-02, CHK-UIX-02, CHK-UIX-08):
+        //     - Validación preventiva de codecs audio/webm y audio/wav frente a líneas Meta reales cuando no hay FFmpeg
+        //     - Bloqueos UI de ventana 24h y Nota Interna en funciones_bandeja.js
+        //     - 0 inputs/textareas sin autocomplete="off" (incl. core/auth.php, funciones_bandeja.js, starfi_topbar_agenda.js)
+        //     - 0 archivos con BOM UTF-8 en todo el repositorio
+        $webmGuardRes = starfi_prepare_meta_compatible_voice_audio(
+            __FILE__,
+            ['ext' => 'webm', 'mime' => 'audio/webm', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+            true,
+            null
+        );
+        $oggPassRes = starfi_prepare_meta_compatible_voice_audio(
+            __FILE__,
+            ['ext' => 'ogg', 'mime' => 'audio/ogg', 'tipo_bd' => 'AUDIO', 'meta_type' => 'audio'],
+            true,
+            null
+        );
+
+        $missingAutoGlobal = [];
+        foreach ([
+            'core/auth.php',
+            'modules/bandeja/funciones_bandeja.js',
+            'assets/js/starfi_topbar_agenda.js',
+        ] as $chkRelAuto) {
+            $srcAuto = (string)file_get_contents($root . '/' . $chkRelAuto);
+            if (preg_match_all('/<(input|textarea)\b[^>]*>/is', $srcAuto, $mAuto, PREG_OFFSET_CAPTURE)) {
+                foreach ($mAuto[0] as $hAuto) {
+                    $tAuto = $hAuto[0];
+                    if (preg_match('/type\s*=\s*[\'"](checkbox|radio|hidden|file|button|submit)[\'"]/i', $tAuto)) {
+                        continue;
+                    }
+                    if (stripos($tAuto, 'autocomplete="off"') === false && stripos($tAuto, "autocomplete='off'") === false) {
+                        $lnAuto = substr_count(substr($srcAuto, 0, $hAuto[1]), "\n") + 1;
+                        $missingAutoGlobal[] = "{$chkRelAuto}:L{$lnAuto}";
+                    }
+                }
+            }
+        }
+
+        $bomRepoFiles = [];
+        $riiBom = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+        foreach ($riiBom as $fBom) {
+            $pBom = str_replace('\\', '/', $fBom->getPathname());
+            if (strpos($pBom, '/.git/') !== false) {
+                continue;
+            }
+            $extBom = strtolower($fBom->getExtension());
+            if ($fBom->getFilename() !== '.htaccess' && !in_array($extBom, ['php', 'js', 'css', 'md', 'sql'], true)) {
+                continue;
+            }
+            $fpBom = @fopen($pBom, 'rb');
+            if ($fpBom) {
+                $hdr3 = (string)fread($fpBom, 3);
+                fclose($fpBom);
+                if ($hdr3 === "\xEF\xBB\xBF") {
+                    $bomRepoFiles[] = substr($pBom, strlen($root) + 1);
+                }
+            }
+        }
+
+        qa_check("QA-BUG-CRM6-04 (S2): Bloqueo preventivo de audio/webm no nativo en Meta v23.0, sincronización UI 24h/Nota Interna, 100% autocomplete=\"off\" en JS/PHP y 0 archivos con BOM en el repositorio",
+            empty($webmGuardRes['ok']) && ($webmGuardRes['code'] ?? '') === 'UNSUPPORTED_VOICE_CODEC' &&
+            !empty($oggPassRes['ok']) &&
+            strpos($bandejaJsSrc, "btnQuotePdf.prop('disabled', true)") !== false &&
+            strpos($bandejaJsSrc, "btnVoice.prop('disabled', true).hide()") !== false &&
+            empty($missingAutoGlobal) &&
+            empty($bomRepoFiles),
+            implode(', ', array_merge($missingAutoGlobal, $bomRepoFiles))
+        );
+
         // ROLLBACK OBLIGATORIO (0 residuos en base de datos)
         $con->rollback();
         starfi_tx_set_active($con, false);

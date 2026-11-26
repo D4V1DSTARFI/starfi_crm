@@ -640,6 +640,15 @@ class CommercialAgendaService
             ];
         }
 
+        $canViewCommercialTeam = array_key_exists('__can_view_commercial_team', $agenteInfo)
+            ? (intval($agenteInfo['__can_view_commercial_team']) === 1)
+            : (
+                !function_exists('hasPermission')
+                || hasPermission('bandeja')
+                || hasPermission('pipeline')
+                || hasPermission('directorio')
+            );
+
         $where = "t.estado = 'PENDIENTE'";
         $types = "";
         $params = [];
@@ -647,7 +656,7 @@ class CommercialAgendaService
         if ($scope['is_master']) {
             // Master ve sus propias tareas y las tareas pendientes/vencidas de todas las sedes
             $where .= " AND 1=1";
-        } elseif ($scope['is_admin']) {
+        } elseif ($scope['is_admin'] && $canViewCommercialTeam) {
             $where .= " AND t.id_sede = ?";
             $types .= "i";
             $params[] = $scope['id_sede'];
@@ -728,7 +737,11 @@ class CommercialAgendaService
                     $minRem = intval($row['min_para_vencer'] ?? 999999);
                     $recBefore = intval($row['recordatorio_min_antes'] ?? 15);
                     $alreadyAlerted = intval($row['alerta_disparada'] ?? 0) === 1;
-                    $isMineOrManager = (intval($row['id_agente_asignado'] ?? 0) === $scope['agente_id'] || $scope['is_master'] || $scope['is_admin']);
+                    $isMineOrManager = (
+                        intval($row['id_agente_asignado'] ?? 0) === $scope['agente_id']
+                        || $scope['is_master']
+                        || ($scope['is_admin'] && $canViewCommercialTeam)
+                    );
 
                     if (!$alreadyAlerted && $minRem <= $recBefore && $isMineOrManager) {
                         $newlyTriggered[] = $item;

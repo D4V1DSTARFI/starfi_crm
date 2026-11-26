@@ -1,4 +1,4 @@
-﻿# STARFI 2.0 - Arquitectura de Blindaje de Kardex y UX
+# STARFI 2.0 - Arquitectura de Blindaje de Kardex y UX
 
 ## Contexto y Problema Resuelto
 El mÃ³dulo de Venta MÃ³vil presentaba anomalÃ­as contables llamadas 'Phantom Reads' (Condiciones de carrera) impulsadas por mÃºltiples terminales y asesores insertando facturas simultÃ¡neamente en una brecha menor a 1 segundo. Al referenciar variables no bloqueadas desde la tabla producto_existencia, la cadena de custodia del Kardex se rompÃ­a, generando saltos de stock ilÃ³gicos (Ej. Existencia Anterior: 228 -> Venta: 1 -> Existencia Nueva: 228).

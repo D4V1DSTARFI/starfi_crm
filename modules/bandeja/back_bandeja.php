@@ -1414,6 +1414,44 @@ switch ($action) {
             exit;
         }
 
+        // QA-BUG-CRM6-04: Verificar si la línea destino posee token productivo Meta activo antes de aceptar audio/webm o audio/wav
+        $line_has_live_meta = false;
+        if ($is_voice_note) {
+            if ($conversacion_id > 0) {
+                $rowTokChk = bandeja_fetch_one(
+                    $con,
+                    "SELECT l.meta_token, l.meta_app_id FROM conversaciones c JOIN lineas_whatsapp l ON c.id_linea = l.id WHERE c.id = ? LIMIT 1",
+                    "i",
+                    [$conversacion_id]
+                );
+            } elseif ($id_linea_upload > 0) {
+                $rowTokChk = bandeja_fetch_one(
+                    $con,
+                    "SELECT meta_token, meta_app_id FROM lineas_whatsapp WHERE id = ? LIMIT 1",
+                    "i",
+                    [$id_linea_upload]
+                );
+            } else {
+                $rowTokChk = null;
+            }
+            $tokCandidate = trim((string)($rowTokChk['meta_token'] ?? ''));
+            $appCandidate = trim((string)($rowTokChk['meta_app_id'] ?? ''));
+            $line_has_live_meta = ($tokCandidate !== '' && $tokCandidate !== 'temp_token' && $appCandidate !== '');
+
+            $voice_prep = starfi_prepare_meta_compatible_voice_audio($file['tmp_name'], $media_spec, $line_has_live_meta);
+            if (empty($voice_prep['ok'])) {
+                echo json_encode([
+                    'status'  => 'error',
+                    'code'    => $voice_prep['code'] ?? 'UNSUPPORTED_VOICE_CODEC',
+                    'message' => $voice_prep['message'] ?? 'Formato de nota de voz no compatible con WhatsApp Cloud API.'
+                ]);
+                exit;
+            }
+            $media_spec = $voice_prep['spec'];
+        } else {
+            $voice_prep = ['transcoded' => false, 'temp_file' => null, 'source' => $file['tmp_name']];
+        }
+
         $ext = $media_spec['ext'];
         $mime = $media_spec['mime'];
         $tipo_bd = $media_spec['tipo_bd'];
@@ -1425,8 +1463,19 @@ switch ($action) {
             @mkdir($upload_dir_abs, 0775, true);
         }
         $dest_path = $upload_dir_abs . '/' . $filename;
-        
-        if (@move_uploaded_file($file['tmp_name'], $dest_path)) {
+
+        $moved_ok = false;
+        if (!empty($voice_prep['transcoded']) && !empty($voice_prep['temp_file']) && is_file($voice_prep['temp_file'])) {
+            $moved_ok = @rename($voice_prep['temp_file'], $dest_path);
+            if (!$moved_ok) {
+                $moved_ok = @copy($voice_prep['temp_file'], $dest_path);
+                @unlink($voice_prep['temp_file']);
+            }
+        } else {
+            $moved_ok = @move_uploaded_file($file['tmp_name'], $dest_path);
+        }
+
+        if ($moved_ok) {
             $url_archivo = '../../assets/uploads/' . $filename;
             if ($is_voice_note) {
                 $dur_fmt = $voice_duration_sec > 0

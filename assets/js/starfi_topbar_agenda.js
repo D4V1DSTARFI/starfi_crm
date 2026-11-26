@@ -1,7 +1,7 @@
 /**
  * assets/js/starfi_topbar_agenda.js
  * Centro Global de Alertas en Tiempo Real y Agenda Comercial en la Barra Superior ([OMN-02] SPRINT 4).
- * 100% Vanilla JS local (Cero CDN CHK-LAN-01, Cero alert(), 100% escapeHtml DOM-XSS safe, locks anti-doble clic).
+ * 100% Vanilla JS local (Cero CDN CHK-LAN-01, Cero alert(), 100% escapeHtml DOM-XSS safe, locks anti-doble clic, HTTP 401 JSON).
  */
 (function () {
     'use strict';
@@ -10,6 +10,12 @@
     const inFlightLocks = new Set();
     let audioCtx = null;
     let pollTimer = null;
+    let sessionRedirecting = false;
+
+    const AJAX_HEADERS = {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+    };
 
     function escHtml(val) {
         if (val === null || val === undefined) return '';
@@ -21,13 +27,49 @@
     function getAgendaEndpoint() {
         const wrap = document.getElementById('starfiTopbarAgendaWrap');
         if (!wrap) return '';
-        return wrap.getAttribute('data-endpoint') || 'index.php';
+        return wrap.getAttribute('data-endpoint') || 'api_notificaciones.php';
     }
 
     function getBandejaBaseUrl() {
         const wrap = document.getElementById('starfiTopbarAgendaWrap');
         if (!wrap) return 'modules/bandeja/bandeja.php';
         return wrap.getAttribute('data-bandeja-url') || 'modules/bandeja/bandeja.php';
+    }
+
+    function getLoginBaseUrl() {
+        const wrap = document.getElementById('starfiTopbarAgendaWrap');
+        if (!wrap) return 'login.php';
+        return wrap.getAttribute('data-login-url') || 'login.php';
+    }
+
+    function stopPollingAndRedirectLogin(redirectTarget) {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+        if (sessionRedirecting) return;
+        sessionRedirecting = true;
+        const target = redirectTarget || (getLoginBaseUrl() + '?error=expired');
+        window.location.href = target;
+    }
+
+    function parseSafeAgendaResponse(response) {
+        return response.text().then(function (txt) {
+            let parsed = null;
+            try {
+                parsed = JSON.parse(txt);
+            } catch (e) {
+                parsed = null;
+            }
+            if (response.status === 401 || (parsed && (parsed.code === 'SESSION_EXPIRED' || parsed.code === 'NO_SESSION' || parsed.code === 'ACCOUNT_INACTIVE'))) {
+                stopPollingAndRedirectLogin(parsed && parsed.redirect ? parsed.redirect : null);
+                return { __unauthorized: true };
+            }
+            if (!parsed) {
+                return { status: 'error', message: 'Respuesta inválida del servidor (HTTP ' + response.status + ').' };
+            }
+            return parsed;
+        });
     }
 
     function playReminderChime() {
@@ -200,7 +242,7 @@
 
     function pollTopbarAgenda(markDispatched) {
         const endpoint = getAgendaEndpoint();
-        if (!endpoint || inFlightLocks.has('poll')) return;
+        if (!endpoint || sessionRedirecting || inFlightLocks.has('poll')) return;
         inFlightLocks.add('poll');
 
         const fd = new FormData();
@@ -208,15 +250,17 @@
         fd.append('agenda_action', 'poll_alerts');
         fd.append('mark_dispatched', markDispatched ? '1' : '0');
 
-        fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' })
-            .then(function (r) { return r.text(); })
-            .then(function (txt) {
-                try {
-                    const res = JSON.parse(txt);
-                    if (res && res.status === 'success') {
-                        renderTopbarWidget(res);
-                    }
-                } catch (e) {}
+        fetch(endpoint, {
+            method: 'POST',
+            headers: AJAX_HEADERS,
+            body: fd,
+            credentials: 'same-origin'
+        })
+            .then(parseSafeAgendaResponse)
+            .then(function (res) {
+                if (res && !res.__unauthorized && res.status === 'success') {
+                    renderTopbarWidget(res);
+                }
             })
             .catch(function () {})
             .finally(function () {
@@ -227,7 +271,7 @@
     function mutateTopbarTask(taskId, op, btnEl, extraFields) {
         const endpoint = getAgendaEndpoint();
         const lockKey = 'task_' + taskId;
-        if (!endpoint || taskId <= 0 || inFlightLocks.has(lockKey)) return;
+        if (!endpoint || sessionRedirecting || taskId <= 0 || inFlightLocks.has(lockKey)) return;
         inFlightLocks.add(lockKey);
         if (btnEl) btnEl.disabled = true;
 
@@ -242,18 +286,20 @@
             });
         }
 
-        fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' })
-            .then(function (r) { return r.text(); })
-            .then(function (txt) {
-                try {
-                    const res = JSON.parse(txt);
-                    if (res && res.status === 'success') {
-                        pollTopbarAgenda(false);
-                        if (typeof window.refreshBandejaClientAgendaIfOpen === 'function') {
-                            window.refreshBandejaClientAgendaIfOpen();
-                        }
+        fetch(endpoint, {
+            method: 'POST',
+            headers: AJAX_HEADERS,
+            body: fd,
+            credentials: 'same-origin'
+        })
+            .then(parseSafeAgendaResponse)
+            .then(function (res) {
+                if (res && !res.__unauthorized && res.status === 'success') {
+                    pollTopbarAgenda(false);
+                    if (typeof window.refreshBandejaClientAgendaIfOpen === 'function') {
+                        window.refreshBandejaClientAgendaIfOpen();
                     }
-                } catch (e) {}
+                }
             })
             .catch(function () {})
             .finally(function () {
@@ -265,7 +311,7 @@
     function submitQuickTopbarTask(formEl) {
         const endpoint = getAgendaEndpoint();
         const btn = document.getElementById('btnSaveTopbarQuickTask');
-        if (!endpoint || !formEl || inFlightLocks.has('quick_create')) return;
+        if (!endpoint || sessionRedirecting || !formEl || inFlightLocks.has('quick_create')) return;
 
         const tituloEl = document.getElementById('topbarQuickTaskTitulo');
         const vencEl = document.getElementById('topbarQuickTaskVenc');
@@ -299,11 +345,16 @@
         fd.append('prioridad', prioEl ? prioEl.value : 'MEDIA');
         fd.append('recordatorio_min_antes', '15');
 
-        fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' })
-            .then(function (r) { return r.text(); })
-            .then(function (txt) {
-                const res = JSON.parse(txt);
-                if (res && res.status === 'success') {
+        fetch(endpoint, {
+            method: 'POST',
+            headers: AJAX_HEADERS,
+            body: fd,
+            credentials: 'same-origin'
+        })
+            .then(parseSafeAgendaResponse)
+            .then(function (res) {
+                if (!res || res.__unauthorized) return;
+                if (res.status === 'success') {
                     if (tituloEl) tituloEl.value = '';
                     if (feedbackEl) {
                         feedbackEl.textContent = '✓ Recordatorio agendado.';
@@ -311,7 +362,7 @@
                     }
                     pollTopbarAgenda(false);
                 } else if (feedbackEl) {
-                    feedbackEl.textContent = (res && res.message) ? res.message : 'No se pudo guardar.';
+                    feedbackEl.textContent = res.message || 'No se pudo guardar.';
                     feedbackEl.className = 'small text-danger mt-1';
                 }
             })

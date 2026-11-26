@@ -102,6 +102,81 @@ foreach ($raw_json as $k => $v) {
     }
 }
 
+// =========================================================================
+// RAMA 0: AGENDA COMERCIAL Y ALERTAS TOPBAR EN TIEMPO REAL (Sesión CRM)
+// =========================================================================
+if (isset($_REQUEST['ajax_agenda_topbar']) && (string)$_REQUEST['ajax_agenda_topbar'] === '1') {
+    require_once __DIR__ . '/core/auth.php';
+    require_once __DIR__ . '/core/services/CommercialAgendaService.php';
+
+    $agAction = trim((string)($_POST['agenda_action'] ?? $_GET['agenda_action'] ?? 'poll_alerts'));
+    $isPassivePoll = ($agAction === 'poll_alerts');
+    // Sondeo pasivo en segundo plano NO renueva $_SESSION['last_activity'] ni presencia Round-Robin (CHK-SEC-01)
+    requireAuth(!$isPassivePoll);
+
+    $agente = getAgenteInfo();
+    if (!is_array($agente) || empty($agente['id'])) {
+        http_response_code(401);
+        echo json_encode(['status' => 'error', 'code' => 'NO_SESSION', 'message' => 'Sesión no válida.']);
+        exit;
+    }
+    $agente['__can_view_commercial_team'] = (
+        hasPermission('bandeja')
+        || hasPermission('pipeline')
+        || hasPermission('directorio')
+    ) ? 1 : 0;
+    session_write_close();
+
+    $conAgenda = getDbConnection('core');
+    if (!$conAgenda) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'Base de datos no disponible.']);
+        exit;
+    }
+
+    if ($agAction === 'poll_alerts') {
+        $markDisp = (intval($_POST['mark_dispatched'] ?? 0) === 1);
+        $feed = CommercialAgendaService::getTopbarAlertsAndAgenda($conAgenda, $agente, $markDisp);
+        if (empty($feed['ok'])) {
+            http_response_code(intval($feed['http_code'] ?? 500));
+            echo json_encode(['status' => 'error', 'message' => $feed['message'] ?? 'Error al consultar agenda.']);
+            exit;
+        }
+        $feed['status'] = 'success';
+        echo json_encode($feed);
+        exit;
+    } elseif ($agAction === 'update_task') {
+        $tid = intval($_POST['task_id'] ?? 0);
+        $op = strtoupper(trim((string)($_POST['operacion'] ?? 'COMPLETAR')));
+        $upd = CommercialAgendaService::updateTaskStatus($conAgenda, $agente, $tid, $op, [
+            'snooze_min'  => intval($_POST['snooze_min'] ?? 30),
+            'nueva_fecha' => (string)($_POST['nueva_fecha'] ?? ''),
+        ], 'agenda_comercial');
+        if (empty($upd['ok'])) {
+            http_response_code(intval($upd['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $upd['message'] ?? 'No se pudo actualizar la tarea.']);
+            exit;
+        }
+        $upd['status'] = 'success';
+        echo json_encode($upd);
+        exit;
+    } elseif ($agAction === 'quick_create_task') {
+        $created = CommercialAgendaService::createTask($conAgenda, $agente, $_POST, 'agenda_comercial');
+        if (empty($created['ok'])) {
+            http_response_code(intval($created['http_code'] ?? 400));
+            echo json_encode(['status' => 'error', 'message' => $created['message'] ?? 'No se pudo crear la tarea.']);
+            exit;
+        }
+        $created['status'] = 'success';
+        echo json_encode($created);
+        exit;
+    }
+
+    http_response_code(400);
+    echo json_encode(['status' => 'error', 'message' => 'Acción de agenda no válida.']);
+    exit;
+}
+
 $api_token_validado = starfi_extract_bearer_or_token($raw_json);
 
 // =========================================================================
